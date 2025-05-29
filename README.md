@@ -106,3 +106,7 @@ The menu at the bottom of the screen shows available commands:
 ### License
 
 [AGPL-3.0](LICENSE.md)
+
+### Star History
+
+[![Star History Chart](https://api.star-history.com/svg?repos=smtg-ai/claude-squad&type=Date)](https://www.star-history.com/#smtg-ai/claude-squad&Date)
