@@ -3,10 +3,14 @@ name: Deploy to GitHub Pages
 on:
   push:
     branches:
-      - main  # Set this to the branch you want to deploy from
+      - main
+    paths:
+      - 'web/*'
   pull_request:
     branches:
-      - main  # This will build on PRs to main
+      - main
+    paths:
+      - 'web/*'
 
 permissions:
   contents: read
