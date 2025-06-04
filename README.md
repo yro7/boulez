@@ -19,7 +19,7 @@ https://github.com/user-attachments/assets/aef18253-e58f-4525-9032-f5a3d66c975a
 
 ### Installation
 
-Both Homebrew and manual installation will install the `cs` on your system.
+Both Homebrew and manual installation will install Claude Squad as `cs` on your system.
 
 #### Homebrew
 
