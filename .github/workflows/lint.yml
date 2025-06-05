@@ -28,13 +28,11 @@ jobs:
           cache: false
 
       - name: golangci-lint
-        uses: golangci/golangci-lint-action@v8
+        uses: golangci/golangci-lint-action@v6
         with:
-          version: v1.60.0
+          version: v1.60.1
           args: --timeout=3m --out-format=line-number --fast --max-issues-per-linter=0 --max-same-issues=0
           skip-cache: false
-          skip-pkg-cache: false
-          skip-build-cache: false
           only-new-issues: true
 
       - name: Check formatting
@@ -45,4 +43,4 @@ jobs:
             echo "Fix these issues"
             gofmt -d .
             exit 1
-          fi 
+          fi
