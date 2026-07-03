@@ -75,8 +75,11 @@ type Instance struct {
 	started bool
 	// tmuxSession is the tmux session for the instance.
 	tmuxSession *tmux.TmuxSession
-	// gitWorktree is the git worktree for the instance.
-	gitWorktree *git.GitWorktree
+	// gitWorktree is the worktree for the instance. Polymorphic: a Worker gets
+	// a real *git.GitWorktree, an Orchestrator gets a headlessWorktree. The
+	// Kind decides which at Start time (the single factory point); no other
+	// code branches on Kind. See Worktree in worktree.go.
+	gitWorktree Worktree
 }
 
 // ToInstanceData converts an Instance to its serializable form
@@ -460,8 +463,11 @@ func (i *Instance) SetPreviewSize(width, height int) error {
 	return i.tmuxSession.SetDetachedSize(width, height)
 }
 
-// GetGitWorktree returns the git worktree for the instance
-func (i *Instance) GetGitWorktree() (*git.GitWorktree, error) {
+// GetGitWorktree returns the worktree for the instance. The concrete type
+// depends on the instance Kind: a *git.GitWorktree for a Worker, a
+// headlessWorktree for an Orchestrator. Callers operate on the Worktree
+// interface, so they are agnostic to the Kind.
+func (i *Instance) GetGitWorktree() (Worktree, error) {
 	if !i.started {
 		return nil, fmt.Errorf("cannot get git worktree for instance that has not been started")
 	}
