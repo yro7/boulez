@@ -48,14 +48,14 @@ func TestRepoSelectorFreePathBackspace(t *testing.T) {
 	r := NewRepoSelector(nil)
 	r.HandleKeyPress(tea.KeyMsg{Type: tea.KeyRunes, Runes: []rune("abc")})
 	r.HandleKeyPress(tea.KeyMsg{Type: tea.KeyBackspace})
-	assert.Equal(t, "ab", r.freePath)
+	assert.Equal(t, "ab", r.freeText)
 }
 
 func TestRepoSelectorTypingOnRepoRowDoesNotEditFreePath(t *testing.T) {
 	r := NewRepoSelector([]string{"/a"})
 	// cursor on repo row.
 	r.HandleKeyPress(tea.KeyMsg{Type: tea.KeyRunes, Runes: []rune("x")})
-	assert.Equal(t, "", r.freePath)
+	assert.Equal(t, "", r.freeText)
 }
 
 func TestRepoSelectorCancelReturnsEmpty(t *testing.T) {

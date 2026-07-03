@@ -52,14 +52,14 @@ func TestHostSelectorFreeAliasBackspace(t *testing.T) {
 	h.HandleKeyPress(tea.KeyMsg{Type: tea.KeyDown})
 	h.HandleKeyPress(tea.KeyMsg{Type: tea.KeyRunes, Runes: []rune("abc")})
 	h.HandleKeyPress(tea.KeyMsg{Type: tea.KeyBackspace})
-	assert.Equal(t, "ab", h.freeAlias)
+	assert.Equal(t, "ab", h.freeText)
 }
 
 func TestHostSelectorTypingOnLocalRowDoesNotEditFreeAlias(t *testing.T) {
 	h := NewHostSelector([]string{"dev-machine"})
 	// cursor on local row (row 0).
 	h.HandleKeyPress(tea.KeyMsg{Type: tea.KeyRunes, Runes: []rune("x")})
-	assert.Equal(t, "", h.freeAlias)
+	assert.Equal(t, "", h.freeText)
 }
 
 func TestHostSelectorCancelReturnsEmpty(t *testing.T) {
