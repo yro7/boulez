@@ -2,6 +2,7 @@ package git
 
 import (
 	"claude-squad/cmd"
+	"claude-squad/session/fs"
 	"os"
 	"os/exec"
 	"path/filepath"
@@ -48,6 +49,7 @@ func TestSetupFromExistingBranch_RemovesOrphanedDirectory(t *testing.T) {
 		branchName:       "feature/test",
 		isExistingBranch: true,
 		cmdExec:          cmd.MakeExecutor(),
+		fs:               fs.LocalFS{},
 	}
 
 	if err := g.Setup(); err != nil {

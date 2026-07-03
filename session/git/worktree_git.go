@@ -118,19 +118,34 @@ func (g *GitWorktree) IsDirty() (bool, error) {
 // .git entry, i.e. git can still recognize it as a working tree.
 // Returns (false, nil) if the worktree is orphaned (path or .git missing).
 func (g *GitWorktree) IsValidWorktree() (bool, error) {
-	if _, err := os.Stat(g.worktreePath); err != nil {
+	if _, err := g.fs.Stat(g.worktreePath); err != nil {
 		if os.IsNotExist(err) {
 			return false, nil
 		}
 		return false, fmt.Errorf("failed to stat worktree path: %w", err)
 	}
-	if _, err := os.Stat(filepath.Join(g.worktreePath, ".git")); err != nil {
+	if _, err := g.fs.Stat(filepath.Join(g.worktreePath, ".git")); err != nil {
 		if os.IsNotExist(err) {
 			return false, nil
 		}
 		return false, fmt.Errorf("failed to stat worktree .git: %w", err)
 	}
 	return true, nil
+}
+
+// WorktreeDirExists reports whether the worktree directory is present on the
+// filesystem. Used by Pause to decide whether to attempt removal. Routes
+// through g.fs so a remote worktree is checked on the right host.
+func (g *GitWorktree) WorktreeDirExists() bool {
+	_, err := g.fs.Stat(g.worktreePath)
+	return err == nil
+}
+
+// RemoveWorktreeDir removes the worktree directory (and any children) from the
+// filesystem. Used by Pause to drop an orphaned directory that git no longer
+// tracks. Routes through g.fs so a remote worktree is removed on the right host.
+func (g *GitWorktree) RemoveWorktreeDir() error {
+	return g.fs.RemoveAll(g.worktreePath)
 }
 
 // IsBranchCheckedOut checks if the instance branch is currently checked out

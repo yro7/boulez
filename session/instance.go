@@ -8,7 +8,6 @@ import (
 	"path/filepath"
 
 	"fmt"
-	"os"
 	"strings"
 	"time"
 
@@ -432,7 +431,7 @@ func (i *Instance) Pause() error {
 			log.ErrorLog.Print(err)
 		}
 		// Drop any leftover directory so a future Resume's `git worktree add` won't conflict.
-		if err := os.RemoveAll(i.gitWorktree.GetWorktreePath()); err != nil {
+		if err := i.gitWorktree.RemoveWorktreeDir(); err != nil {
 			errs = append(errs, fmt.Errorf("failed to remove orphaned worktree directory: %w", err))
 			log.ErrorLog.Print(err)
 		}
@@ -468,7 +467,7 @@ func (i *Instance) Pause() error {
 	}
 
 	// Check if worktree exists before trying to remove it
-	if _, err := os.Stat(i.gitWorktree.GetWorktreePath()); err == nil {
+	if i.gitWorktree.WorktreeDirExists() {
 		// Remove worktree but keep branch
 		if err := i.gitWorktree.Remove(); err != nil {
 			errs = append(errs, fmt.Errorf("failed to remove git worktree: %w", err))
