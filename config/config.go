@@ -17,13 +17,24 @@ const (
 	defaultProgram = "claude"
 )
 
-// GetConfigDir returns the path to the application's configuration directory
+// configDirName is the dedicated config directory for cs2. It is intentionally
+// separate from the official `cs` (`.claude-squad`) so the two binaries can run
+// side by side without sharing state.
+const configDirName = ".cs2"
+
+// GetConfigDir returns the path to the application's configuration directory and
+// ensures it exists (creating it on demand). On a cold start the directory is
+// empty — no migration from the official `cs` is performed.
 func GetConfigDir() (string, error) {
 	homeDir, err := os.UserHomeDir()
 	if err != nil {
 		return "", fmt.Errorf("failed to get config home directory: %w", err)
 	}
-	return filepath.Join(homeDir, ".claude-squad"), nil
+	dir := filepath.Join(homeDir, configDirName)
+	if err := os.MkdirAll(dir, 0755); err != nil {
+		return "", fmt.Errorf("failed to create config directory: %w", err)
+	}
+	return dir, nil
 }
 
 // Profile represents a named program configuration

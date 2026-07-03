@@ -67,7 +67,7 @@ is left untouched for side-by-side comparison.
 - `cs2` binary is built to `~/bin/cs2` (on `PATH` via `~/.zshrc`). Rebuild after
   Go changes: `cd ~/cs-multirepo && go build -o ~/bin/cs2 .`
 - Go 1.26+ (`brew install go`). Baseline: `go build ./... && go test ./...` green.
-- cs2 shares `~/.claude-squad/config.json` and `state.json` with the official
-  `cs` for now (separate config dir is a future task).
-- See `PLAN.md` for the (completed) modularity plan. A multi-repo plan is not
-  yet written.
+- cs2 uses a dedicated `~/.cs2/` config dir (separate from the official `cs`'
+  `~/.claude-squad/`). Cold start: no migration from `cs`. See `PLAN-multi-repo.md`.
+- See `PLAN.md` for the (completed) modularity plan. See `PLAN-multi-repo.md`
+  for the multi-repo plan.
