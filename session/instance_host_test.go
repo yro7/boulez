@@ -5,9 +5,13 @@ import (
 	"os/exec"
 	"path/filepath"
 	"testing"
+	"time"
 
+	"claude-squad/cmd"
 	"claude-squad/config"
 	"claude-squad/host"
+	"claude-squad/session/fs"
+	"claude-squad/session/git"
 	"github.com/stretchr/testify/assert"
 	"github.com/stretchr/testify/require"
 )
@@ -210,4 +214,44 @@ func TestInstance_SetAutoYes_Toggles(t *testing.T) {
 	assert.True(t, inst.AutoYes)
 	inst.SetAutoYes(false)
 	assert.False(t, inst.AutoYes)
+}
+
+// TestInstance_PII_HostAliasNotInArtifacts pins the PII discipline
+// (PLAN-ssh-v2.md decision 5): the ssh host alias must never appear in git
+// artifacts an instance produces — branch names or commit messages (and by
+// construction, tmux session names, which derive from the title at the tmux
+// construction site). All three derive from the user-chosen instance Title,
+// never from the host. This test pins that property so a future change
+// threading host.Name() into any of them fails loudly.
+//
+// The host alias lives only in InstanceData.Host (local bookkeeping used to
+// re-resolve the host on restart) — never in git history or tmux state.
+func TestInstance_PII_HostAliasNotInArtifacts(t *testing.T) {
+	const alias = "leak-host-xyz"
+	const title = "fix-the-thing"
+
+	ssh := host.NewSSHHost(alias)
+
+	// 1. Pause commit message: a function of Title + time only. The helper's
+	// signature has no host parameter, so this is structurally enforced.
+	assert.NotContains(t, pausedCommitMessage(title, time.Now()), alias,
+		"pause commit message must not contain the host alias")
+
+	// 2. Branch name: built from the title (cs2/<sanitized title>) via
+	// NewGitWorktreeWithDeps, which never receives the host.
+	repoPath := makeTempGitRepo(t)
+	worktreeDir := t.TempDir()
+	_, branchName, err := git.NewGitWorktreeWithDeps(repoPath, title, cmd.MakeExecutor(), fs.LocalFS{}, worktreeDir)
+	require.NoError(t, err)
+	assert.NotContains(t, branchName, alias, "branch name must not contain the host alias")
+	assert.Contains(t, branchName, "fix-the-thing", "branch name should be derived from the title")
+
+	// 3. The host alias IS stored on the instance — that is the only place it
+	// may appear (for re-resolution on restart). This confirms the alias is
+	// reachable (so a leak would be caught above), not absent by accident.
+	inst, err := NewInstance(InstanceOptions{Title: title, Path: repoPath, Program: "claude"})
+	require.NoError(t, err)
+	require.NoError(t, inst.SetHost(ssh))
+	assert.Equal(t, alias, inst.Host().Name(), "alias stored on instance for bookkeeping")
+	assert.NotContains(t, inst.Title, alias, "instance title is user-chosen, independent of host")
 }

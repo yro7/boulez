@@ -62,6 +62,15 @@ func TestSSHExecutor_Wrap_Quoting(t *testing.T) {
 		{"path with single quote", []string{"git", "-C", "/a/b'c"}},
 		{"dollar metachar", []string{"sh", "-c", "echo $HOME"}},
 		{"backtick", []string{"sh", "-c", "echo `whoami`"}},
+		// Injection vectors: each must stay a single arg so it cannot break out
+		// of the remote shell. The round-trip below is the real safety property.
+		{"command substitution", []string{"sh", "-c", "$(reboot)"}},
+		{"command separator", []string{"git", "-C", "/repo; rm -rf /", "status"}},
+		{"pipe", []string{"git", "-C", "/repo | cat", "status"}},
+		{"redirect", []string{"git", "-C", "/repo > /etc/passwd", "status"}},
+		{"newline", []string{"git", "-C", "/repo\nrm -rf /", "status"}},
+		{"empty arg", []string{"git", "", "status"}},
+		{"leading dash arg injection", []string{"git", "-C", "--upload-pack=evil", "status"}},
 	}
 	for _, tc := range cases {
 		t.Run(tc.name, func(t *testing.T) {
@@ -83,14 +92,15 @@ func TestSSHExecutor_Wrap_Quoting(t *testing.T) {
 
 // shellReparse parses `joined` the way a POSIX shell would, returning the
 // resulting argv. Uses the local sh (the same parser ssh's remote shell is
-// compatible with).
+// compatible with). Output is null-delimited so args containing newlines
+// round-trip correctly (a newline inside a single-quoted arg stays one arg).
 func shellReparse(t *testing.T, joined string) []string {
 	t.Helper()
 	cmd := exec.Command("sh", "-c",
-		`eval "set -- $1"; for a in "$@"; do printf '%s\n' "$a"; done`, "_", joined)
+		`eval "set -- $1"; for a in "$@"; do printf '%s\0' "$a"; done`, "_", joined)
 	out, err := cmd.Output()
 	require.NoErrorf(t, err, "sh eval-reparse of %q failed: %s", joined, out)
-	parts := strings.Split(strings.TrimRight(string(out), "\n"), "\n")
+	parts := strings.Split(strings.TrimRight(string(out), "\x00"), "\x00")
 	if len(parts) == 1 && parts[0] == "" {
 		return nil
 	}
