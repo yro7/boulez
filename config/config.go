@@ -88,6 +88,18 @@ func (c *Config) GetProgram() string {
 	return c.DefaultProgram
 }
 
+// GetProfileByName returns the program string for the named profile and true
+// if it exists. A name matching no profile returns ("", false). Used by the
+// preset flow to resolve a preset's profile name to a runnable program.
+func (c *Config) GetProfileByName(name string) (string, bool) {
+	for _, p := range c.Profiles {
+		if p.Name == name {
+			return p.Program, true
+		}
+	}
+	return "", false
+}
+
 // GetProfiles returns a unified list of profiles. If Profiles is defined,
 // those are returned with the default profile first. Otherwise, a single
 // profile is synthesized from DefaultProgram.
