@@ -90,6 +90,16 @@ type Kernel struct {
 	// instStore is the in-memory fleet. Loaded lazily from storage on first
 	// access. Owned by the kernel (single writer).
 	instStore *instances
+
+	// protectedBranches is the kernel-level set of branch names a merge may
+	// never target, beyond the conventional main/master the Merger already
+	// refuses (defense in depth lives there). This carries the host repo's
+	// currently checked-out branch (spec decision 7): merging into the branch
+	// the user is actively standing on would clobber their working tree. The
+	// daemon resolves it once at startup and injects it here; tests inject
+	// directly. The Merger cannot know the host repo, so this guard lives in
+	// the kernel — the authority that applies guards no client can bypass.
+	protectedBranches []string
 }
 
 // Option configures a Kernel.
@@ -111,6 +121,15 @@ func WithMerger(m git.Merger) Option {
 // to keep the kernel pure (no disk writes) and inspect in-memory state.
 func WithoutAutosave() Option {
 	return func(k *Kernel) { k.autosave = false }
+}
+
+// WithProtectedBranches injects the kernel-level protected-branch set: branch
+// names a merge may never target, on top of the conventional main/master the
+// Merger already refuses. The daemon passes the host repo's current branch
+// here so an orchestrator cannot merge into the branch the user is standing
+// on (spec decision 7, non-contournable by the client).
+func WithProtectedBranches(branches []string) Option {
+	return func(k *Kernel) { k.protectedBranches = append([]string(nil), branches...) }
 }
 
 // New builds a Kernel over the given storage. The spawner defaults to a
@@ -295,6 +314,15 @@ func (k *Kernel) Kill(id string) error {
 // auto-resolve conflicts — a conflict returns MergeConflict and the caller
 // (an orchestrator, Shape B) decides to spawn a resolver. Mutating.
 func (k *Kernel) Merge(caller CallerContext, repoPath, targetBranch string, sourceBranches []string, strategy git.Strategy) (git.MergeResult, error) {
+	// Kernel-level guard (spec decision 7, non-contournable): refuse to merge
+	// into the host repo's current branch (and any extra protected branch the
+	// daemon injected). The Merger defends main/master in depth; this guard
+	// covers the host-current-branch case the Merger cannot see (it only knows
+	// the target repo, not which repo is the user's working repo).
+	if isKernelProtected(k.protectedBranches, targetBranch) {
+		return git.MergeResult{Status: git.MergeConflict, Message: "protected branch"}, git.ErrProtectedBranch{Branch: targetBranch}
+	}
+
 	k.mu.Lock()
 	merger := k.merger
 	k.mu.Unlock()
