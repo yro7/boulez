@@ -91,12 +91,14 @@ se migrera trivialement le moment venu.
 atomique. v2 part de cette liste explicite — rien ne reste implicite.
 Voir `PLAN-ssh-support.md`, décision 8.)*
 
-1. **`CleanupWorktrees` (`session/git/worktree_ops.go:165`)** — lance
+1. **`CleanupWorktrees` (`session/git/worktree_ops.go:165`)** — ~~lance
    `git worktree list` **sans `-C`** (opère sur cwd) et `git branch -D`
-   sans contexte repo. Bug latent multi-repo, pré-existant. Pas corrigé en
-   v1 : on attend v2 pour voir émerger les vrais besoins (cleanup distant,
-   multi-repo, multi-host — la forme correcte dépend du package `Host` qui
-   n'existe pas encore).
+   sans contexte repo. Bug latent multi-repo, pré-existant.~~ **Résolu en
+   v2 (étape 8).** `CleanupWorktreesWithDeps(cmd.Executor, fs.FS, worktreeDir)`
+   route chaque worktree via `git -C <repo-root> ...` (repo-aware, indépendant
+   du cwd) et passe par l'Executor/FS injectés. Le wrapper sans args
+   `CleanupWorktrees()` defaulte au local (zéro ripple côté `main.go`). Tests :
+   multi-repo (deux repos, cwd neutre), routing via fakes, fallback orphelin.
 
 2. **Couplage `gh` (GitHub CLI) dans `PushChanges` / `OpenBranchURL` /
    `checkGHCLI` (`session/git/worktree_git.go`).** Rend cs2 inopérant sur
