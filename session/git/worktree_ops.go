@@ -17,7 +17,7 @@ func (g *GitWorktree) Setup() error {
 		return fmt.Errorf("failed to get worktree directory: %w", err)
 	}
 
-	if err := os.MkdirAll(worktreesDir, 0755); err != nil {
+	if err := g.fs.MkdirAll(worktreesDir, 0755); err != nil {
 		return err
 	}
 
@@ -42,7 +42,7 @@ func (g *GitWorktree) setupFromExistingBranch() error {
 	// Clean up any existing worktree first
 	_, _ = g.runGitCommand(g.repoPath, "worktree", "remove", "-f", g.worktreePath) // Ignore error if worktree doesn't exist
 	// If the directory is still there (orphaned, not registered with git), drop it so `git worktree add` won't fail.
-	_ = os.RemoveAll(g.worktreePath)
+	_ = g.fs.RemoveAll(g.worktreePath)
 
 	// Check if the local branch exists
 	_, localErr := g.runGitCommand(g.repoPath, "show-ref", "--verify", fmt.Sprintf("refs/heads/%s", g.branchName))
@@ -72,7 +72,7 @@ func (g *GitWorktree) setupNewWorktree() error {
 	// Clean up any existing worktree first
 	_, _ = g.runGitCommand(g.repoPath, "worktree", "remove", "-f", g.worktreePath) // Ignore error if worktree doesn't exist
 	// If the directory is still there (orphaned, not registered with git), drop it so `git worktree add` won't fail.
-	_ = os.RemoveAll(g.worktreePath)
+	_ = g.fs.RemoveAll(g.worktreePath)
 
 	// Clean up any existing branch using git CLI (much faster than go-git PlainOpen)
 	_, _ = g.runGitCommand(g.repoPath, "branch", "-D", g.branchName) // Ignore error if branch doesn't exist
@@ -105,7 +105,7 @@ func (g *GitWorktree) Cleanup() error {
 	var errs []error
 
 	// Check if worktree path exists before attempting removal
-	if _, err := os.Stat(g.worktreePath); err == nil {
+	if _, err := g.fs.Stat(g.worktreePath); err == nil {
 		// Remove the worktree using git command
 		if _, err := g.runGitCommand(g.repoPath, "worktree", "remove", "-f", g.worktreePath); err != nil {
 			errs = append(errs, err)
