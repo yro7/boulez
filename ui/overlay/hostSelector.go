@@ -17,7 +17,7 @@ type HostSelector struct {
 const localLabel = "local"
 
 // localHints is the help line shown at the bottom of the host selector.
-const localHints = "↑↓ move · enter select · type to enter alias · esc cancel"
+const localHints = "type to filter · ↑↓ move · enter select · esc cancel"
 
 // NewHostSelector creates a selector pre-populated with the given known ssh
 // aliases (local is always prepended as the first, non-deletable row).
@@ -44,8 +44,12 @@ func (h *HostSelector) SelectedAlias() string { return h.SelectedValue() }
 // caller uses this to decide whether to register the alias in the registry).
 func (h *HostSelector) IsFreeAlias() bool { return h.IsFreeValue() }
 
-// isLocalRow reports whether the cursor is on the "local" row (row 0).
-func (h *HostSelector) isLocalRow() bool { return h.cursor == 0 }
+// isLocalRow reports whether the cursor is on the "local" row.
+func (h *HostSelector) isLocalRow() bool {
+	items := h.filteredItems()
+	return h.cursor < len(items) && items[h.cursor].value == localLabel
+}
 
-// isFreeAliasRow reports whether the cursor is on the free-text input row.
+// isFreeAliasRow reports whether a submit would resolve to a free-text alias
+// (i.e. no item is highlighted). Kept for compatibility with the fused model.
 func (h *HostSelector) isFreeAliasRow() bool { return h.isFreeRow() }

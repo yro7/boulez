@@ -12,7 +12,7 @@ type RepoSelector struct {
 }
 
 // repoHints is the help line shown at the bottom of the repo selector.
-const repoHints = "↑↓ move · enter select · type to enter path · esc cancel"
+const repoHints = "type to filter · ↑↓ move · enter select · esc cancel"
 
 // NewRepoSelector creates a selector pre-populated with the given known repos.
 func NewRepoSelector(repos []string) *RepoSelector {
@@ -45,5 +45,6 @@ func (r *RepoSelector) SelectedPath() string { return r.SelectedValue() }
 // caller uses this to decide whether to register the path in the registry).
 func (r *RepoSelector) IsFreePath() bool { return r.IsFreeValue() }
 
-// isFreePathRow reports whether the cursor is on the free-text input row.
+// isFreePathRow reports whether a submit would resolve to a free-text path
+// (i.e. no item is highlighted). Kept for compatibility with the fused model.
 func (r *RepoSelector) isFreePathRow() bool { return r.isFreeRow() }

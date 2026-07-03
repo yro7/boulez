@@ -7,15 +7,11 @@ import (
 	"github.com/stretchr/testify/assert"
 )
 
-func TestHostSelectorDefaultsToLocalWhenNoHosts(t *testing.T) {
-	h := NewHostSelector(nil)
-	// rows: local + (no hosts) + free = 2
-	assert.Equal(t, 2, h.NumRows())
-	assert.True(t, h.isLocalRow())
-}
-
-func TestHostSelectorSelectLocalByDefault(t *testing.T) {
+func TestHostSelectorSelectsLocalByDefaultWhenNoFilter(t *testing.T) {
 	h := NewHostSelector([]string{"dev-machine", "gpu-box"})
+	// Empty filter → local is the first item and is highlighted by default.
+	assert.True(t, h.isLocalRow())
+
 	close := h.HandleKeyPress(tea.KeyMsg{Type: tea.KeyEnter})
 	assert.True(t, close)
 	assert.True(t, h.Submitted)
@@ -25,41 +21,50 @@ func TestHostSelectorSelectLocalByDefault(t *testing.T) {
 
 func TestHostSelectorNavigateAndSelectKnownAlias(t *testing.T) {
 	h := NewHostSelector([]string{"dev-machine", "gpu-box"})
-	// cursor 0=local, 1=dev-machine, 2=gpu-box, 3=free.
-	h.HandleKeyPress(tea.KeyMsg{Type: tea.KeyDown}) // → dev-machine
+	// cursor starts on local (filtered row 0); move down to dev-machine.
+	h.HandleKeyPress(tea.KeyMsg{Type: tea.KeyDown})
 	h.HandleKeyPress(tea.KeyMsg{Type: tea.KeyEnter})
 	assert.False(t, h.IsFreeAlias())
 	assert.Equal(t, "dev-machine", h.SelectedAlias())
 }
 
-func TestHostSelectorFreeAliasTypedAndSelected(t *testing.T) {
+func TestHostSelectorFilterNarrowsAndSelectsMatch(t *testing.T) {
+	h := NewHostSelector([]string{"dev-machine", "gpu-box"})
+	// Type a filter that matches only dev-machine.
+	h.HandleKeyPress(tea.KeyMsg{Type: tea.KeyRunes, Runes: []rune("dev")})
+	assert.Equal(t, 1, h.NumRows()) // only dev-machine matches
+	h.HandleKeyPress(tea.KeyMsg{Type: tea.KeyEnter})
+	assert.False(t, h.IsFreeAlias())
+	assert.Equal(t, "dev-machine", h.SelectedAlias())
+}
+
+func TestHostSelectorFreeAliasTypedWhenNoMatch(t *testing.T) {
 	h := NewHostSelector([]string{"dev-machine"})
-	// Navigate to the free-alias row (last row): local, dev-machine, free.
-	h.HandleKeyPress(tea.KeyMsg{Type: tea.KeyDown})
-	h.HandleKeyPress(tea.KeyMsg{Type: tea.KeyDown})
+	// Type an alias that matches nothing → Enter submits it as a free alias.
+	h.HandleKeyPress(tea.KeyMsg{Type: tea.KeyRunes, Runes: []rune("prod-box")})
+	assert.Equal(t, 0, h.NumRows()) // no matches
 	assert.True(t, h.isFreeAliasRow())
 
-	h.HandleKeyPress(tea.KeyMsg{Type: tea.KeyRunes, Runes: []rune("prod-box")})
 	h.HandleKeyPress(tea.KeyMsg{Type: tea.KeyEnter})
-
 	assert.True(t, h.IsFreeAlias())
 	assert.Equal(t, "prod-box", h.SelectedAlias())
 }
 
-func TestHostSelectorFreeAliasBackspace(t *testing.T) {
+func TestHostSelectorFilterBackspace(t *testing.T) {
 	h := NewHostSelector(nil)
-	// Move to free row (cursor 0=local, 1=free).
-	h.HandleKeyPress(tea.KeyMsg{Type: tea.KeyDown})
 	h.HandleKeyPress(tea.KeyMsg{Type: tea.KeyRunes, Runes: []rune("abc")})
 	h.HandleKeyPress(tea.KeyMsg{Type: tea.KeyBackspace})
-	assert.Equal(t, "ab", h.freeText)
+	assert.Equal(t, "ab", h.filter)
 }
 
-func TestHostSelectorTypingOnLocalRowDoesNotEditFreeAlias(t *testing.T) {
-	h := NewHostSelector([]string{"dev-machine"})
-	// cursor on local row (row 0).
-	h.HandleKeyPress(tea.KeyMsg{Type: tea.KeyRunes, Runes: []rune("x")})
-	assert.Equal(t, "", h.freeText)
+func TestHostSelectorEnterWithEmptyFilterSelectsLocal(t *testing.T) {
+	h := NewHostSelector(nil)
+	// No registered aliases, but "local" is always present. Empty filter →
+	// local is the highlighted match and Enter selects it.
+	close := h.HandleKeyPress(tea.KeyMsg{Type: tea.KeyEnter})
+	assert.True(t, close)
+	assert.True(t, h.Submitted)
+	assert.Equal(t, "local", h.SelectedAlias())
 }
 
 func TestHostSelectorCancelReturnsEmpty(t *testing.T) {
