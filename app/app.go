@@ -188,6 +188,12 @@ func newHome(ctx context.Context, program string, autoYes bool) *home {
 		os.Exit(1)
 	}
 
+	// Pin orchestrators to the front of the list (stable partition). The list's
+	// selection starts at index 0 on cs2 open, so the orchestrator ("instance 0")
+	// must be first to be selected and accessible by default. Relative order
+	// among orchestrators and among workers is preserved.
+	instances = pinOrchestratorsFirst(instances)
+
 	// Add loaded instances to the list
 	for _, instance := range instances {
 		// Call the finalizer immediately.
@@ -1473,4 +1479,28 @@ func (m *home) View() string {
 	}
 
 	return mainView
+}
+
+// pinOrchestratorsFirst performs a stable partition of the loaded instances:
+// all KindOrchestrator instances come first, then all workers, with the
+// relative order within each group preserved. This guarantees the
+// orchestrator (cs2's "instance 0") is at the head of the list on cs2 open,
+// so the default selection (index 0) lands on it and the user can interact
+// with it immediately. A simple two-slice split+concat is stable by
+// construction and avoids pulling in sort.Slice (whose stability is not
+// guaranteed for the zero-struct comparator we'd otherwise need).
+func pinOrchestratorsFirst(instances []*session.Instance) []*session.Instance {
+	if len(instances) <= 1 {
+		return instances
+	}
+	orchs := make([]*session.Instance, 0, len(instances))
+	workers := make([]*session.Instance, 0, len(instances))
+	for _, in := range instances {
+		if in.Kind() == session.KindOrchestrator {
+			orchs = append(orchs, in)
+		} else {
+			workers = append(workers, in)
+		}
+	}
+	return append(orchs, workers...)
 }

@@ -26,8 +26,9 @@ type API interface {
 //
 // First creation (no orchestrator in the fleet): spawn one, write the context
 // file (ORCHESTRATOR.md), and inject the fleet snapshot into its pane ONCE.
-// The orchestrator is then autonomous — it re-fetches state and drives the
-// fleet via `cs2 ctl` at its own pace.
+// The orchestrator is then supervised — it does not act on its own initiative;
+// it waits for an explicit task (a human attaching to its pane, or a
+// send_prompt) and executes only that, then stops.
 //
 // Restart (an orchestrator already exists): refresh ORCHESTRATOR.md only (so
 // the documentation stays current across cs2 upgrades) and do NOT re-inject.
