@@ -102,3 +102,41 @@ func TestRepo_IsGitRepo_RoutesViaExecutor(t *testing.T) {
 	assert.True(t, r.IsGitRepo())
 	assert.Equal(t, 1, calls, "IsGitRepo should issue exactly one Run via the executor")
 }
+
+// TestFilterExistingRepos_KeepsAccessibleDropsMissing proves the host-aware
+// filter: only paths whose `git -C <path> rev-parse` succeeds via the executor
+// are kept. This is what the repo selector uses so a remote host shows only
+// repos that exist on that host (a local-only repo is filtered out for SSH).
+func TestFilterExistingRepos_KeepsAccessibleDropsMissing(t *testing.T) {
+	// Simulate a host where /repo/a and /repo/c exist, /repo/b does not.
+	accessible := map[string]bool{
+		"/repo/a": true,
+		"/repo/b": false,
+		"/repo/c": true,
+	}
+	executor := cmdtest.MockCmdExec{
+		RunFunc: func(c *exec.Cmd) error {
+			joined := strings.Join(c.Args, " ")
+			for path, ok := range accessible {
+				if strings.Contains(joined, "-C "+path) {
+					if ok {
+						return nil
+					}
+					return assert.AnError
+				}
+			}
+			return assert.AnError
+		},
+	}
+
+	got := FilterExistingRepos([]string{"/repo/a", "/repo/b", "/repo/c"}, executor)
+	assert.Equal(t, []string{"/repo/a", "/repo/c"}, got, "only accessible repos kept, order preserved")
+}
+
+// TestFilterExistingRepos_NilExecutorPassesThrough pins the nil-guard: a nil
+// executor (defensive) returns paths unchanged so the caller never blocks.
+func TestFilterExistingRepos_NilExecutorPassesThrough(t *testing.T) {
+	in := []string{"/a", "/b"}
+	assert.Equal(t, in, FilterExistingRepos(in, nil))
+	assert.Nil(t, FilterExistingRepos(nil, cmdtest.MockCmdExec{}))
+}
