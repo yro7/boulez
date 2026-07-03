@@ -288,3 +288,38 @@ func TestKernel_Spawn_ErrorPropagates(t *testing.T) {
 	assert.Contains(t, err.Error(), "tmux exploded")
 	assert.Empty(t, k.ListInstances(ListFilter{}), "failed spawn registers nothing")
 }
+
+// TestKernel_LiveInstances_IsSingleSourceOfTruth proves the daemon's poll
+// source reflects every mutation the kernel makes — including an
+// orchestrator spawned via Ensure-style top-level Spawn. This is the
+// regression pin for the double-writer bug: previously the daemon kept its
+// own slice loaded once at startup, which never saw the orchestrator the
+// kernel spawned, and the daemon's shutdown-save then clobbered the
+// kernel's persisted orchestrator. LiveInstances reads from the kernel's
+// in-memory fleet, so it always sees the current truth.
+func TestKernel_LiveInstances_IsSingleSourceOfTruth(t *testing.T) {
+	k, _, _ := newTestKernel(t)
+
+	// Fresh: empty.
+	assert.Empty(t, k.LiveInstances())
+
+	// Spawn a worker then an orchestrator (the bootstrap order: the kernel
+	// loads the fleet, then Ensure spawns the orchestrator). LiveInstances
+	// must reflect both, in the order they were registered.
+	workerID, err := k.Spawn(CallerContext{}, SpawnOptions{Repo: "/r", Title: "w1", Kind: session.KindWorker})
+	require.NoError(t, err)
+	orchID, err := k.Spawn(CallerContext{}, SpawnOptions{Repo: "/r", Title: "orch", Kind: session.KindOrchestrator})
+	require.NoError(t, err)
+
+	live := k.LiveInstances()
+	require.Len(t, live, 2)
+	assert.Equal(t, workerID, live[0].GetID())
+	assert.Equal(t, orchID, live[1].GetID())
+	assert.Equal(t, session.KindOrchestrator, live[1].Kind(),
+		"the orchestrator the kernel spawned is visible to the daemon poll loop")
+
+	// LiveInstances returns a defensive copy: mutating the returned slice
+	// must not corrupt the kernel's internal fleet.
+	live[0] = nil
+	assert.NotNil(t, k.LiveInstances()[0], "returned slice must be a copy")
+}
