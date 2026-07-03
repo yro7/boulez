@@ -68,6 +68,9 @@ var _ program.Responder = (*TmuxSession)(nil)
 var whiteSpaceRegex = regexp.MustCompile(`\s+`)
 
 func toClaudeSquadTmuxName(str string) string {
+	// PII: str is the instance Title only — the host alias is never passed in
+	// — so a remote host never appears in tmux session names (decision 5).
+	// The host lives only in InstanceData.Host (local bookkeeping).
 	str = whiteSpaceRegex.ReplaceAllString(str, "")
 	str = strings.ReplaceAll(str, ".", "_") // tmux replaces all . with _
 	return fmt.Sprintf("%s%s", TmuxPrefix, str)

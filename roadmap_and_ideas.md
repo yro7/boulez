@@ -107,3 +107,41 @@ Voir `PLAN-ssh-support.md`, décision 8.)*
 3. **`worktree_branch.go` = 1 fonction (`combineErrors`).** Module trop
    peu profound. À fusionner dans `worktree_ops.go` ou `worktree_git.go`
    si on touche ces fichiers, sinon reporter.
+
+### Dette technique (observée pendant le transport SSH v2)
+
+*(Choses vues pendant v2 mais non corrigées, pour rester atomique. Reprend
+la décision 8 : la dette est persistée au fur et à mesure.)*
+
+1. **Master SSH managé par cs2 (décision B du plan, defer).** Chaque opération
+   `git status` / `tmux has-session` ouvre une nouvelle connexion SSH. v2
+   documente ControlMaster dans `~/.ssh/config` (recommandation utilisateur) ;
+   cs2 ne gère pas de master lui-même. À réévaluer si le polling distant
+   multi-instances devient trop lent. Forme possible : un master partagé par
+   host alias, démarré/tué par cs2.
+
+2. **Registre de repos per-host (décision D du plan, defer).** v2 ne maintient
+   qu'un registre d'aliases SSH (`~/.cs2/hosts.json`), pas de mapping
+   host → repos connus. La sélection d'un repo sur un host distant est du
+   free-text path uniquement (validé via `ssh host git -C <path> rev-parse`).
+   Un registre per-host deviendrait pertinent si l'on réutilise souvent les
+   mêmes repos distants — migration triviale quand le besoin émerge.
+
+3. **`sshExecutor` ignore `cmd.Dir` / `cmd.Env`.** `SSHHost.Executor()` wrap
+   `exec.Command(sshBin, alias, joinShellQuoted(c.Args)...)` — il reconstruit
+   la commande et droppe silencieusement `c.Dir` et `c.Env`. Aucun appelant
+   git n'est affecté (tous utilisent `git -C <path>`, pas `.Dir`). Les seuls
+   appelants utilisant `.Dir` sont les commandes `gh` (`PushChanges`,
+   `OpenBranchURL`) — qui sont déjà la dette #2 (couplage gh). Donc ce
+   comportement est subsumé par le découplage gh : quand `gh` sera routé
+   correctement (soit abstrait, soit via `git -C`-équivalent), le `.Dir`
+   deviendra moot. Noté pour ne pas l'oublier.
+
+4. **Audit PII v2 effectué (décision 5, vérifiée).** L'alias SSH ne flue que
+   vers `InstanceData.Host` (bookkeeping local) + `host.Lookup` (résolution
+   au restore) + `pendingHost` (flow de création). Il n'apparaît **jamais**
+   dans : les commit messages (`pausedCommitMessage(title, t)` — signature
+   sans host), les noms de branche (`cs2/` + `sanitizeBranchName(title)`),
+   ni les noms de session tmux (`toClaudeSquadTmuxName(title)`). Invariant
+   structurel, piné par `TestInstance_PII_HostAliasNotInArtifacts`. Pas une
+   dette — un audit clôturé, consigné ici pour traçabilité.

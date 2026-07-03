@@ -116,6 +116,9 @@ func NewGitWorktreeWithDeps(repoPath string, sessionName string, cmdExec cmd.Exe
 	// Sanitize the final branch name to handle invalid characters from any source
 	// (e.g., backslashes from Windows domain usernames like DOMAIN\user)
 	branchName = sanitizeBranchName(branchName)
+	// PII: branchName derives from sessionName (the instance Title) only — the
+	// host alias is never an input — so a remote host never appears in branch
+	// names (PLAN-ssh-v2.md decision 5).
 
 	repoPath, worktreePath, err := resolveWorktreePaths(repoPath, branchName, cmdExec, worktreeDir)
 	if err != nil {

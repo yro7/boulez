@@ -225,6 +225,15 @@ func (i *Instance) SetAutoYes(on bool) {
 	i.AutoYes = on
 }
 
+// pausedCommitMessage builds the local commit message used when pausing an
+// instance. It is a function of the instance Title and the pause time only —
+// never of the host. The signature enforces this PII invariant (decision 5):
+// no host can be threaded in, so a remote host's alias can never leak into git
+// history via the pause commit. Tested by TestInstance_PII_HostAliasNotInArtifacts.
+func pausedCommitMessage(title string, t time.Time) string {
+	return fmt.Sprintf("[claudesquad] update from '%s' on %s (paused)", title, t.Format(time.RFC822))
+}
+
 // firstTimeSetup is true if this is a new instance. Otherwise, it's one loaded from storage.
 func (i *Instance) Start(firstTimeSetup bool) error {
 	if i.Title == "" {
@@ -236,8 +245,10 @@ func (i *Instance) Start(firstTimeSetup bool) error {
 		// Use existing tmux session (useful for testing)
 		tmuxSession = i.tmuxSession
 	} else {
-		// Create new tmux session bound to this instance's host (local today;
-		// v2 SSHHost swaps in ssh-backed deps here).
+	// Create new tmux session bound to this instance's host (local today;
+		// v2 SSHHost swaps in ssh-backed deps here). The session name is derived
+		// from i.Title only — never the host alias — so a remote host never
+		// appears in tmux session names (PII discipline, decision 5).
 		tmuxSession = tmux.NewTmuxSessionWithDeps(i.Title, i.Program, i.host.PtyFactory(), i.host.Executor())
 	}
 	i.tmuxSession = tmuxSession
@@ -481,8 +492,11 @@ func (i *Instance) Pause() error {
 		errs = append(errs, fmt.Errorf("failed to check if worktree is dirty: %w", err))
 		log.ErrorLog.Print(err)
 	} else if dirty {
-		// Commit changes locally (without pushing to GitHub)
-		commitMsg := fmt.Sprintf("[claudesquad] update from '%s' on %s (paused)", i.Title, time.Now().Format(time.RFC822))
+		// Commit changes locally (without pushing to GitHub). The message is a
+		// function of the instance Title + time only — never the host (PII
+		// discipline, PLAN-ssh-v2.md decision 5): a remote host's alias must
+		// not leak into git history.
+		commitMsg := pausedCommitMessage(i.Title, time.Now())
 		if err := i.gitWorktree.CommitChanges(commitMsg); err != nil {
 			errs = append(errs, fmt.Errorf("failed to commit changes: %w", err))
 			log.ErrorLog.Print(err)
