@@ -1178,6 +1178,10 @@ func (m *home) handleHostSelectState(msg tea.KeyMsg) (tea.Model, tea.Cmd) {
 		m.hostSelector.Canceled = true
 	} else {
 		shouldClose := m.hostSelector.HandleKeyPress(msg)
+		// Apply silent ctrl+d removals to the persistent host registry. Done
+		// on every non-close keypress (TakeDeletedValues is a no-op when
+		// nothing was deleted); local is protected inside the selector.
+		m.applyHostDeletions()
 		if !shouldClose {
 			return m, nil
 		}
@@ -1250,6 +1254,10 @@ func (m *home) handleRepoSelectState(msg tea.KeyMsg) (tea.Model, tea.Cmd) {
 		m.repoSelector.Canceled = true
 	} else {
 		shouldClose := m.repoSelector.HandleKeyPress(msg)
+		// Apply silent ctrl+d removals to the persistent repo registry. Done
+		// on every non-close keypress (TakeDeletedValues is a no-op when
+		// nothing was deleted).
+		m.applyRepoDeletions()
 		if !shouldClose {
 			return m, nil
 		}
@@ -1288,6 +1296,29 @@ func (m *home) handleRepoSelectState(msg tea.KeyMsg) (tea.Model, tea.Cmd) {
 	repoPath := selected
 	m.repoSelector = nil
 	return m, m.startNewInstance(repoPath, promptFlow)
+}
+
+// applyHostDeletions persists any hosts removed via ctrl+d in the host
+// selector. Silent and best-effort: a failure to write does not block the
+// selection flow. "local" is never deletable (protected in ListSelector).
+func (m *home) applyHostDeletions() {
+	if m.hostSelector == nil || m.hostRegistry == nil {
+		return
+	}
+	for _, alias := range m.hostSelector.TakeDeletedValues() {
+		_ = m.hostRegistry.Remove(alias)
+	}
+}
+
+// applyRepoDeletions persists any repos removed via ctrl+d in the repo
+// selector. Silent and best-effort.
+func (m *home) applyRepoDeletions() {
+	if m.repoSelector == nil || m.repoRegistry == nil {
+		return
+	}
+	for _, path := range m.repoSelector.TakeDeletedValues() {
+		_ = m.repoRegistry.Remove(path)
+	}
 }
 
 // startNewInstance creates a new instance bound to repoPath, registers it in

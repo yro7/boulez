@@ -17,7 +17,7 @@ type HostSelector struct {
 const localLabel = "local"
 
 // localHints is the help line shown at the bottom of the host selector.
-const localHints = "type to filter · ↑↓ move · enter select · esc cancel"
+const localHints = "type to filter · ↑↓ move · ctrl+d delete · enter select · esc cancel"
 
 // NewHostSelector creates a selector pre-populated with the given known ssh
 // aliases (local is always prepended as the first, non-deletable row).

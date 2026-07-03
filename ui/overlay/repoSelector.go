@@ -12,7 +12,7 @@ type RepoSelector struct {
 }
 
 // repoHints is the help line shown at the bottom of the repo selector.
-const repoHints = "type to filter · ↑↓ move · enter select · esc cancel"
+const repoHints = "type to filter · ↑↓ move · ctrl+d delete · enter select · esc cancel"
 
 // NewRepoSelector creates a selector pre-populated with the given known repos.
 func NewRepoSelector(repos []string) *RepoSelector {
