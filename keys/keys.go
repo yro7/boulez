@@ -32,6 +32,9 @@ const (
 	// Reorder keybindings
 	KeyMoveUp
 	KeyMoveDown
+
+	// KeyToggleAutoYes toggles the per-instance AutoYes flag.
+	KeyToggleAutoYes
 )
 
 // GlobalKeyStringsMap is a global, immutable map string to keybinding.
@@ -44,6 +47,7 @@ var GlobalKeyStringsMap = map[string]KeyName{
 	"shift+down": KeyShiftDown,
 	"J":          KeyMoveDown,
 	"K":          KeyMoveUp,
+	"a":          KeyToggleAutoYes,
 	"N":          KeyPrompt,
 	"enter":      KeyEnter,
 	"o":          KeyEnter,
@@ -123,6 +127,11 @@ var GlobalkeyBindings = map[KeyName]key.Binding{
 	KeyMoveDown: key.NewBinding(
 		key.WithKeys("J"),
 		key.WithHelp("J", "move down"),
+	),
+
+	KeyToggleAutoYes: key.NewBinding(
+		key.WithKeys("a"),
+		key.WithHelp("a", "toggle auto-yes"),
 	),
 
 	// -- Special keybindings --

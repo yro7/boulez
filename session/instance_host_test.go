@@ -6,6 +6,7 @@ import (
 	"path/filepath"
 	"testing"
 
+	"claude-squad/config"
 	"claude-squad/host"
 	"github.com/stretchr/testify/assert"
 	"github.com/stretchr/testify/require"
@@ -163,4 +164,50 @@ func TestInstance_SetHost_RefusedAfterStart(t *testing.T) {
 	inst := &Instance{host: host.Local, started: true}
 	err := inst.SetHost(host.NewSSHHost("dev-machine"))
 	assert.Error(t, err, "SetHost after Start must error")
+}
+
+// TestInstance_AutoYes_RestoredFromStorage proves AutoYes is truly per-instance
+// now: FromInstanceData restores the persisted value instead of the daemon
+// force-setting it to true globally. This is the v2 AutoYes contract — a
+// remote instance created with AutoYes off stays off across a restart.
+func TestInstance_AutoYes_RestoredFromStorage(t *testing.T) {
+	repoPath := makeTempGitRepo(t)
+
+	// An instance persisted with AutoYes ON restores ON.
+	dataOn := InstanceData{
+		Title: "on", Path: repoPath, Status: Paused, Program: "claude", AutoYes: true,
+		Worktree: GitWorktreeData{RepoPath: repoPath, WorktreePath: "/tmp/wt"},
+	}
+	instOn, err := FromInstanceData(dataOn)
+	require.NoError(t, err)
+	assert.True(t, instOn.AutoYes, "persisted AutoYes=true must restore as true")
+
+	// An instance persisted with AutoYes OFF restores OFF (no global forcing).
+	dataOff := InstanceData{
+		Title: "off", Path: repoPath, Status: Paused, Program: "claude", AutoYes: false,
+		Worktree: GitWorktreeData{RepoPath: repoPath, WorktreePath: "/tmp/wt"},
+	}
+	instOff, err := FromInstanceData(dataOff)
+	require.NoError(t, err)
+	assert.False(t, instOff.AutoYes, "persisted AutoYes=false must restore as false (no global forcing)")
+}
+
+// TestInstance_AutoYes_HostPolicyDrivesNewInstance proves the new-instance
+// default comes from the host's policy: local follows the global config flag,
+// remote defaults to off. (The app applies Host().AutoYesDefault() at start;
+// here we assert the host policy itself.)
+func TestInstance_AutoYes_HostPolicyDrivesNewInstance(t *testing.T) {
+	assert.False(t, host.NewSSHHost("dev-machine").AutoYesDefault(),
+		"remote host AutoYes policy must be off")
+	assert.Equal(t, host.Local.AutoYesDefault(), config.LoadConfig().AutoYes,
+		"local host AutoYes policy must follow the global config flag")
+}
+
+// TestInstance_SetAutoYes_Toggles proves the per-instance toggle.
+func TestInstance_SetAutoYes_Toggles(t *testing.T) {
+	inst := &Instance{host: host.Local, AutoYes: false}
+	inst.SetAutoYes(true)
+	assert.True(t, inst.AutoYes)
+	inst.SetAutoYes(false)
+	assert.False(t, inst.AutoYes)
 }

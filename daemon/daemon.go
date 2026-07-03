@@ -29,10 +29,9 @@ func RunDaemon(cfg *config.Config) error {
 	if err != nil {
 		return fmt.Errorf("failed to load instacnes: %w", err)
 	}
-	for _, instance := range instances {
-		// Assume AutoYes is true if the daemon is running.
-		instance.AutoYes = true
-	}
+	// AutoYes is per-instance (persisted on InstanceData). The daemon respects
+	// the stored value rather than forcing it globally — this lets remote
+	// instances stay off by default while local ones follow the user's choice.
 
 	pollInterval := time.Duration(cfg.DaemonPollInterval) * time.Millisecond
 
