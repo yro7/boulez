@@ -78,6 +78,46 @@ func programBadge(programCmd string) string {
 		Render(fmt.Sprintf("[%s]", name))
 }
 
+// repoBadgePalette is a set of distinct colors assigned to repo names. A
+// stable hash of the name picks the index, so in a multi-repo list the same
+// repo always wears the same color across instances and renders, while
+// different repos get different colors — letting you tell at a glance which
+// instance works on which repo. Mirrors the program badge's per-agent color.
+var repoBadgePalette = []string{
+	"#9B59B6", // purple
+	"#E67E22", // orange
+	"#1ABC9C", // teal
+	"#3498DB", // blue
+	"#E91E63", // pink
+	"#27AE60", // green
+	"#F1C40F", // yellow
+	"#E74C3C", // red
+}
+
+// repoBadgeColor picks a stable color from repoBadgePalette for the given repo
+// name. Empty name falls back to the first color.
+func repoBadgeColor(repoName string) string {
+	if repoName == "" {
+		return repoBadgePalette[0]
+	}
+	sum := 0
+	for _, r := range repoName {
+		sum += int(r)
+	}
+	return repoBadgePalette[sum%len(repoBadgePalette)]
+}
+
+// repoBadge renders a colored [repo-name] pill for the repository an instance
+// works on, mirroring the [pi]/[claude] program badge. The background is taken
+// from the surrounding line style so the badge blends on the selected
+// (highlighted) row, just like the diff stats do.
+func repoBadge(repoName string, bg lipgloss.TerminalColor) string {
+	return lipgloss.NewStyle().
+		Foreground(lipgloss.Color(repoBadgeColor(repoName))).
+		Background(bg).
+		Render(fmt.Sprintf("[%s]", repoName))
+}
+
 type List struct {
 	items         []*session.Instance
 	selectedIdx   int
@@ -212,14 +252,26 @@ func (r *InstanceRenderer) Render(i *session.Instance, idx int, selected bool, h
 	remainingWidth -= diffWidth
 
 	branch := i.Branch
+
+	// Repo badge: a colored [repo-name] pill mirroring the [pi]/[claude]
+	// program badge. Only shown once the instance is started (the repo name
+	// is read from the worktree) and when more than one repo is in play, so a
+	// single-repo list stays uncluttered (the repo is implied). It sits next
+	// to the branch because both describe where the work happens.
+	badge := ""
 	if i.Started() && hasMultipleRepos {
-		repoName, err := i.RepoName()
-		if err != nil {
+		if repoName, err := i.RepoName(); err != nil {
 			log.ErrorLog.Printf("could not get repo name in instance renderer: %v", err)
 		} else {
-			branch += fmt.Sprintf(" (%s)", repoName)
+			// "[" + name + "]" + the leading separator space.
+			badgeWidth := runewidth.StringWidth(repoName) + 3
+			if remainingWidth >= badgeWidth {
+				badge = " " + repoBadge(repoName, descS.GetBackground())
+				remainingWidth -= badgeWidth
+			}
 		}
 	}
+
 	// Don't show branch if there's no space for it. Or show ellipsis if it's too long.
 	branchWidth := runewidth.StringWidth(branch)
 	if remainingWidth < 0 {
@@ -240,7 +292,7 @@ func (r *InstanceRenderer) Render(i *session.Instance, idx int, selected bool, h
 		spaces = strings.Repeat(" ", remainingWidth)
 	}
 
-	branchLine := fmt.Sprintf("%s %s-%s%s%s", strings.Repeat(" ", len(prefix)), branchIcon, branch, spaces, diff)
+	branchLine := fmt.Sprintf("%s %s-%s%s%s%s", strings.Repeat(" ", len(prefix)), branchIcon, branch, badge, spaces, diff)
 
 	// join title and subtitle
 	text := lipgloss.JoinVertical(
