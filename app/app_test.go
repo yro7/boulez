@@ -3,6 +3,7 @@ package app
 import (
 	"claude-squad/config"
 	"claude-squad/log"
+	"claude-squad/repo"
 	"claude-squad/session"
 	"claude-squad/ui"
 	"claude-squad/ui/overlay"
@@ -541,4 +542,131 @@ func TestRunBranchSearchFilterMatchesOnlyRelevantBranches(t *testing.T) {
 	require.True(t, ok)
 	assert.Contains(t, result.branches, "feature-one")
 	assert.NotContains(t, result.branches, "feature-two")
+}
+
+// newRepoSelectHome builds a home wired with a temp-backed repo registry, a
+// fresh list, menu and err box — enough to drive the repo selector.
+func newRepoSelectHome(t *testing.T) *home {
+	t.Helper()
+	sp := spinner.New(spinner.WithSpinner(spinner.MiniDot))
+	return &home{
+		ctx:          context.Background(),
+		state:        stateDefault,
+		appConfig:    config.DefaultConfig(),
+		program:      "claude",
+		repoRegistry: repo.NewRegistryAt(filepath.Join(t.TempDir(), "repos.json")),
+		list:         ui.NewList(&sp, false),
+		menu:         ui.NewMenu(),
+		errBox:       ui.NewErrBox(),
+	}
+}
+
+// driveRepoSelector sends a sequence of key presses to the repo selector until
+// it closes (submit or cancel). Returns the final model + cmd.
+func driveRepoSelector(t *testing.T, h *home, keys []tea.KeyMsg) (tea.Model, tea.Cmd) {
+	t.Helper()
+	var (
+		mod tea.Model = h
+		cmd tea.Cmd
+	)
+	for _, k := range keys {
+		mod, cmd = h.handleKeyPress(k)
+		if h.state != stateRepoSelect {
+			break
+		}
+	}
+	return mod, cmd
+}
+
+func TestRepoSelectFreePathValidAddsToRegistryAndCreatesInstance(t *testing.T) {
+	h := newRepoSelectHome(t)
+	repoPath := t.TempDir()
+	makeTestRepo(t, repoPath)
+
+	// Open the selector (plain new flow).
+	h.openRepoSelector(false)
+	require.Equal(t, stateRepoSelect, h.state)
+
+	// Type the free path (cursor already on the free-path row, no known repos).
+	driveRepoSelector(t, h, []tea.KeyMsg{
+		{Type: tea.KeyRunes, Runes: []rune(repoPath)},
+		{Type: tea.KeyEnter},
+	})
+
+	// Instance created with the chosen repo.
+	require.Equal(t, stateNew, h.state, "should have transitioned to name-entry")
+	instances := h.list.GetInstances()
+	require.Len(t, instances, 1)
+	abs, err := filepath.Abs(repoPath)
+	require.NoError(t, err)
+	assert.Equal(t, abs, instances[0].Path)
+
+	// The free path was registered for next time.
+	assert.True(t, h.repoRegistry.Contains(repoPath))
+
+	// Reload the registry from disk to confirm persistence.
+	reloaded := repo.NewRegistryAt(h.repoRegistry.Path())
+	paths, err := reloaded.List()
+	require.NoError(t, err)
+	assert.Contains(t, paths, abs)
+}
+
+func TestRepoSelectInvalidPathShowsErrorAndCreatesNoInstance(t *testing.T) {
+	h := newRepoSelectHome(t)
+
+	h.openRepoSelector(false)
+	require.Equal(t, stateRepoSelect, h.state)
+
+	bad := filepath.Join(t.TempDir(), "not-a-repo")
+	driveRepoSelector(t, h, []tea.KeyMsg{
+		{Type: tea.KeyRunes, Runes: []rune(bad)},
+		{Type: tea.KeyEnter},
+	})
+
+	// Still in the selector (invalid path does not close it).
+	assert.Equal(t, stateRepoSelect, h.state, "invalid path must keep the selector open")
+	// No instance created.
+	assert.Equal(t, 0, h.list.NumInstances())
+	// An error was surfaced.
+	assert.True(t, h.errBox.HasError())
+	// Path was not registered.
+	assert.False(t, h.repoRegistry.Contains(bad))
+}
+
+func TestRepoSelectKnownRepoCreatesInstanceWithoutMutatingRegistry(t *testing.T) {
+	h := newRepoSelectHome(t)
+	repoPath := t.TempDir()
+	makeTestRepo(t, repoPath)
+	require.NoError(t, h.repoRegistry.Add(repoPath))
+
+	h.openRepoSelector(false)
+	require.Equal(t, stateRepoSelect, h.state)
+
+	// Cursor starts on the first known repo; press enter to select it.
+	driveRepoSelector(t, h, []tea.KeyMsg{{Type: tea.KeyEnter}})
+
+	require.Equal(t, stateNew, h.state)
+	instances := h.list.GetInstances()
+	require.Len(t, instances, 1)
+	abs, err := filepath.Abs(repoPath)
+	require.NoError(t, err)
+	assert.Equal(t, abs, instances[0].Path)
+
+	// Selecting a known repo must not add a duplicate to the registry.
+	paths, err := h.repoRegistry.List()
+	require.NoError(t, err)
+	assert.Len(t, paths, 1)
+}
+
+func TestRepoSelectCancelReturnsToDefault(t *testing.T) {
+	h := newRepoSelectHome(t)
+
+	h.openRepoSelector(false)
+	require.Equal(t, stateRepoSelect, h.state)
+
+	driveRepoSelector(t, h, []tea.KeyMsg{{Type: tea.KeyEsc}})
+
+	assert.Equal(t, stateDefault, h.state)
+	assert.Equal(t, 0, h.list.NumInstances())
+	assert.Nil(t, h.repoSelector)
 }

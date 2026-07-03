@@ -4,6 +4,7 @@ import (
 	"claude-squad/config"
 	"claude-squad/keys"
 	"claude-squad/log"
+	"claude-squad/repo"
 	"claude-squad/session"
 	"claude-squad/session/git"
 	"claude-squad/ui"
@@ -44,6 +45,9 @@ const (
 	stateHelp
 	// stateConfirm is the state when a confirmation modal is displayed.
 	stateConfirm
+	// stateRepoSelect is the state when the user is choosing a repository for a
+	// new instance (registry + free path). It runs before instance creation.
+	stateRepoSelect
 )
 
 type home struct {
@@ -99,6 +103,18 @@ type home struct {
 	textOverlay *overlay.TextOverlay
 	// confirmationOverlay displays confirmation modals
 	confirmationOverlay *overlay.ConfirmationOverlay
+	// repoSelector displays the repo picker at instance creation
+	repoSelector *overlay.RepoSelector
+
+	// repoRegistry is the persistent set of known repository paths, used to
+	// pre-populate the repo selector. Free paths chosen at creation are added
+	// back here so they reappear next time.
+	repoRegistry *repo.Registry
+
+	// repoSelectPrompt tracks whether the repo selector was opened from the
+	// prompt (KeyPrompt) flow; if so, after the repo is chosen we continue
+	// straight into the prompt+branch overlay.
+	repoSelectPrompt bool
 }
 
 func newHome(ctx context.Context, program string, autoYes bool) *home {
@@ -115,6 +131,10 @@ func newHome(ctx context.Context, program string, autoYes bool) *home {
 		os.Exit(1)
 	}
 
+	// The registry is best-effort: if it cannot be opened, the selector still
+	// works with a free path, so a nil registry is tolerated at the call sites.
+	repoRegistry, _ := repo.NewRegistry()
+
 	h := &home{
 		ctx:          ctx,
 		spinner:      spinner.New(spinner.WithSpinner(spinner.MiniDot)),
@@ -123,6 +143,7 @@ func newHome(ctx context.Context, program string, autoYes bool) *home {
 		errBox:       ui.NewErrBox(),
 		storage:      storage,
 		appConfig:    appConfig,
+		repoRegistry: repoRegistry,
 		program:      program,
 		autoYes:      autoYes,
 		state:        stateDefault,
@@ -169,6 +190,9 @@ func (m *home) updateHandleWindowSizeEvent(msg tea.WindowSizeMsg) {
 	}
 	if m.textOverlay != nil {
 		m.textOverlay.SetWidth(int(float32(msg.Width) * 0.6))
+	}
+	if m.repoSelector != nil {
+		m.repoSelector.SetWidth(int(float32(msg.Width) * 0.6))
 	}
 
 	previewWidth, previewHeight := m.tabbedWindow.GetPreviewSize()
@@ -355,7 +379,7 @@ func (m *home) handleMenuHighlighting(msg tea.KeyMsg) (cmd tea.Cmd, returnEarly 
 		m.keySent = false
 		return nil, false
 	}
-	if m.state == statePrompt || m.state == stateHelp || m.state == stateConfirm {
+	if m.state == statePrompt || m.state == stateHelp || m.state == stateConfirm || m.state == stateRepoSelect {
 		return nil, false
 	}
 	// If it's in the global keymap, we should try to highlight it.
@@ -390,6 +414,10 @@ func (m *home) handleKeyPress(msg tea.KeyMsg) (mod tea.Model, cmd tea.Cmd) {
 
 	if m.state == stateHelp {
 		return m.handleHelpState(msg)
+	}
+
+	if m.state == stateRepoSelect {
+		return m.handleRepoSelectState(msg)
 	}
 
 	if m.state == stateNew {
@@ -614,46 +642,9 @@ func (m *home) handleKeyPress(msg tea.KeyMsg) (mod tea.Model, cmd tea.Cmd) {
 	case keys.KeyHelp:
 		return m.showHelpScreen(helpTypeGeneral{}, nil)
 	case keys.KeyPrompt:
-		instance, err := session.NewInstance(session.InstanceOptions{
-			Title:   "",
-			Path:    ".",
-			Program: m.program,
-		})
-		if err != nil {
-			return m, m.handleError(err)
-		}
-
-		// Start a background fetch so branches are up to date by the time the picker opens.
-		// The repo scanned is the instance's repo, not the process cwd.
-		repoPath := instance.Path
-		fetchCmd := func() tea.Msg {
-			git.FetchBranches(repoPath)
-			return nil
-		}
-
-		m.newInstanceFinalizer = m.list.AddInstance(instance)
-		m.list.SetSelectedInstance(m.list.NumInstances() - 1)
-		m.state = stateNew
-		m.menu.SetState(ui.StateNewInstance)
-		m.promptAfterName = true
-
-		return m, fetchCmd
+		return m, m.openRepoSelector(true /* promptAfterName flow */)
 	case keys.KeyNew:
-		instance, err := session.NewInstance(session.InstanceOptions{
-			Title:   "",
-			Path:    ".",
-			Program: m.program,
-		})
-		if err != nil {
-			return m, m.handleError(err)
-		}
-
-		m.newInstanceFinalizer = m.list.AddInstance(instance)
-		m.list.SetSelectedInstance(m.list.NumInstances() - 1)
-		m.state = stateNew
-		m.menu.SetState(ui.StateNewInstance)
-
-		return m, nil
+		return m, m.openRepoSelector(false /* plain new flow */)
 	case keys.KeyUp:
 		m.list.Up()
 		return m, m.instanceChanged()
@@ -1040,6 +1031,98 @@ func (m *home) confirmAction(message string, action tea.Cmd) tea.Cmd {
 	return nil
 }
 
+// openRepoSelector opens the repo selector overlay before creating a new
+// instance. promptFlow controls whether the prompt+branch overlay follows name
+// entry (KeyPrompt) or not (KeyNew).
+func (m *home) openRepoSelector(promptFlow bool) tea.Cmd {
+	var repos []string
+	if m.repoRegistry != nil {
+		repos, _ = m.repoRegistry.List()
+	}
+	m.repoSelector = overlay.NewRepoSelector(repos)
+	m.repoSelectPrompt = promptFlow
+	m.state = stateRepoSelect
+	return tea.WindowSize()
+}
+
+// handleRepoSelectState dispatches key presses to the repo selector overlay
+// and finalizes the selection on submit/cancel.
+func (m *home) handleRepoSelectState(msg tea.KeyMsg) (tea.Model, tea.Cmd) {
+	if m.repoSelector == nil {
+		m.state = stateDefault
+		return m, nil
+	}
+
+	// ctrl+c cancels like esc.
+	if msg.String() == "ctrl+c" {
+		m.repoSelector.Canceled = true
+	} else {
+		shouldClose := m.repoSelector.HandleKeyPress(msg)
+		if !shouldClose {
+			return m, nil
+		}
+	}
+
+	if m.repoSelector.Canceled {
+		m.repoSelector = nil
+		m.state = stateDefault
+		return m, tea.WindowSize()
+	}
+
+	// Submit: validate the chosen path.
+	selected := m.repoSelector.SelectedPath()
+	if selected == "" {
+		m.repoSelector.Submitted = false
+		return m, m.handleError(fmt.Errorf("please select a repo or type a path"))
+	}
+	if !git.IsGitRepo(selected) {
+		m.repoSelector.Submitted = false
+		return m, m.handleError(fmt.Errorf("not a git repository: %s", selected))
+	}
+
+	// If the path was typed freely (not picked from the registry), register it
+	// so it reappears next time. Best-effort: a failure here does not block
+	// instance creation.
+	if m.repoSelector.IsFreePath() && m.repoRegistry != nil {
+		_ = m.repoRegistry.Add(selected)
+	}
+
+	promptFlow := m.repoSelectPrompt
+	repoPath := selected
+	m.repoSelector = nil
+	return m, m.startNewInstance(repoPath, promptFlow)
+}
+
+// startNewInstance creates a new instance bound to repoPath, registers it in
+// the list, and enters the name-entry state. When promptFlow is true, the
+// prompt+branch overlay follows name entry, and a background branch fetch is
+// kicked off so branches are fresh by the time the picker opens.
+func (m *home) startNewInstance(repoPath string, promptFlow bool) tea.Cmd {
+	instance, err := session.NewInstance(session.InstanceOptions{
+		Title:   "",
+		Path:    repoPath,
+		Program: m.program,
+	})
+	if err != nil {
+		return m.handleError(err)
+	}
+
+	m.newInstanceFinalizer = m.list.AddInstance(instance)
+	m.list.SetSelectedInstance(m.list.NumInstances() - 1)
+	m.state = stateNew
+	m.menu.SetState(ui.StateNewInstance)
+	m.promptAfterName = promptFlow
+
+	if promptFlow {
+		// Best-effort background fetch so the branch picker is up to date.
+		return func() tea.Msg {
+			git.FetchBranches(instance.Path)
+			return nil
+		}
+	}
+	return nil
+}
+
 func (m *home) View() string {
 	listWithPadding := lipgloss.NewStyle().PaddingTop(1).Render(m.list.String())
 	previewWithPadding := lipgloss.NewStyle().PaddingTop(1).Render(m.tabbedWindow.String())
@@ -1067,6 +1150,12 @@ func (m *home) View() string {
 			log.ErrorLog.Printf("confirmation overlay is nil")
 		}
 		return overlay.PlaceOverlay(0, 0, m.confirmationOverlay.Render(), mainView, true, true)
+	} else if m.state == stateRepoSelect {
+		if m.repoSelector == nil {
+			log.ErrorLog.Printf("repo selector is nil")
+			return mainView
+		}
+		return overlay.PlaceOverlay(0, 0, m.repoSelector.Render(), mainView, true, true)
 	}
 
 	return mainView
