@@ -56,6 +56,18 @@ func (r *RepoSelector) freePathRow() int { return len(r.repos) }
 // NumRows returns the total number of selectable rows (repos + free path).
 func (r *RepoSelector) NumRows() int { return len(r.repos) + 1 }
 
+// SetRepos replaces the offered repo list, preserving the cursor and free-text
+// input when possible. Used to narrow the list after an async host-aware
+// filter lands: the selector starts with the full registry and drops entries
+// that don't exist on the chosen host once probed. Cursor is clamped to the
+// free-path row (last) if it now points past the end.
+func (r *RepoSelector) SetRepos(repos []string) {
+	r.repos = repos
+	if r.cursor > r.freePathRow() {
+		r.cursor = r.freePathRow()
+	}
+}
+
 // NewRepoSelector creates a selector pre-populated with the given known repos.
 func NewRepoSelector(repos []string) *RepoSelector {
 	return &RepoSelector{
