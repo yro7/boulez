@@ -1,6 +1,7 @@
 package session
 
 import (
+	"claude-squad/host"
 	"claude-squad/log"
 	"claude-squad/program"
 	"claude-squad/session/git"
@@ -51,6 +52,12 @@ type Instance struct {
 	AutoYes bool
 	// Prompt is the initial prompt to pass to the instance on startup
 	Prompt string
+
+	// host is the execution environment for this instance: how commands run,
+	// how the filesystem is touched, how PTYs are allocated, and where the
+	// worktree lives. Defaults to LocalHost; v2 sets an SSHHost for remote
+	// instances. Read via Host().
+	host host.Host
 
 	// DiffStats stores the current git diff statistics
 	diffStats *git.DiffStats
@@ -118,19 +125,22 @@ func FromInstanceData(data InstanceData) (*Instance, error) {
 		CreatedAt: data.CreatedAt,
 		UpdatedAt: data.UpdatedAt,
 		Program:   data.Program,
-		gitWorktree: git.NewGitWorktreeFromStorage(
-			data.Worktree.RepoPath,
-			data.Worktree.WorktreePath,
-			data.Worktree.SessionName,
-			data.Worktree.BranchName,
-			data.Worktree.BaseCommitSHA,
-			data.Worktree.IsExistingBranch,
-		),
-		diffStats: &git.DiffStats{
-			Added:   data.DiffStats.Added,
-			Removed: data.DiffStats.Removed,
-			Content: data.DiffStats.Content,
-		},
+		host:      host.Local,
+	}
+	instance.gitWorktree = git.NewGitWorktreeFromStorageWithDeps(
+		data.Worktree.RepoPath,
+		data.Worktree.WorktreePath,
+		data.Worktree.SessionName,
+		data.Worktree.BranchName,
+		data.Worktree.BaseCommitSHA,
+		data.Worktree.IsExistingBranch,
+		instance.host.Executor(),
+		instance.host.FS(),
+	)
+	instance.diffStats = &git.DiffStats{
+		Added:   data.DiffStats.Added,
+		Removed: data.DiffStats.Removed,
+		Content: data.DiffStats.Content,
 	}
 
 	if instance.Paused() {
@@ -178,6 +188,7 @@ func NewInstance(opts InstanceOptions) (*Instance, error) {
 		CreatedAt:      t,
 		UpdatedAt:      t,
 		AutoYes:        false,
+		host:          host.Local,
 		selectedBranch: opts.Branch,
 	}, nil
 }
@@ -209,21 +220,22 @@ func (i *Instance) Start(firstTimeSetup bool) error {
 		// Use existing tmux session (useful for testing)
 		tmuxSession = i.tmuxSession
 	} else {
-		// Create new tmux session
-		tmuxSession = tmux.NewTmuxSession(i.Title, i.Program)
+		// Create new tmux session bound to this instance's host (local today;
+		// v2 SSHHost swaps in ssh-backed deps here).
+		tmuxSession = tmux.NewTmuxSessionWithDeps(i.Title, i.Program, i.host.PtyFactory(), i.host.Executor())
 	}
 	i.tmuxSession = tmuxSession
 
 	if firstTimeSetup {
 		if i.selectedBranch != "" {
-			gitWorktree, err := git.NewGitWorktreeFromBranch(i.Path, i.selectedBranch, i.Title)
+			gitWorktree, err := git.NewGitWorktreeFromBranchWithDeps(i.Path, i.selectedBranch, i.Title, i.host.Executor(), i.host.FS())
 			if err != nil {
 				return fmt.Errorf("failed to create git worktree from branch: %w", err)
 			}
 			i.gitWorktree = gitWorktree
 			i.Branch = i.selectedBranch
 		} else {
-			gitWorktree, branchName, err := git.NewGitWorktree(i.Path, i.Title)
+			gitWorktree, branchName, err := git.NewGitWorktreeWithDeps(i.Path, i.Title, i.host.Executor(), i.host.FS())
 			if err != nil {
 				return fmt.Errorf("failed to create git worktree: %w", err)
 			}
@@ -633,6 +645,13 @@ func (i *Instance) PreviewFullHistory() (string, error) {
 		return "", nil
 	}
 	return i.tmuxSession.CapturePaneContentWithOptions("-", "-")
+}
+
+// Host returns the execution environment for this instance (local today; v2
+// SSHHost for remote instances). Read-only access for callers that need the
+// host's name or AutoYes policy.
+func (i *Instance) Host() host.Host {
+	return i.host
 }
 
 // SetTmuxSession sets the tmux session for testing purposes
