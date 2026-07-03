@@ -2,7 +2,9 @@ package app
 
 import (
 	"claude-squad/config"
+	"claude-squad/host"
 	"claude-squad/log"
+	"claude-squad/prefs"
 	"claude-squad/repo"
 	"claude-squad/session"
 	"claude-squad/ui"
@@ -555,6 +557,7 @@ func newRepoSelectHome(t *testing.T) *home {
 		appConfig:    config.DefaultConfig(),
 		program:      "claude",
 		repoRegistry: repo.NewRegistryAt(filepath.Join(t.TempDir(), "repos.json")),
+		prefs:         prefs.NewStoreAt(filepath.Join(t.TempDir(), "preferences.json")),
 		list:         ui.NewList(&sp, false),
 		menu:         ui.NewMenu(),
 		errBox:       ui.NewErrBox(),
@@ -717,4 +720,165 @@ func TestBranchPickerScansSelectedRepoNotCwd(t *testing.T) {
 	debounced, ok := scheduled.(branchSearchDebounceMsg)
 	require.True(t, ok)
 	assert.Equal(t, instance.Path, debounced.repoPath)
+}
+
+// newHostSelectHome builds a home wired with temp-backed host and repo
+// registries, so openHostSelector's skip logic can be exercised.
+func newHostSelectHome(t *testing.T) *home {
+	t.Helper()
+	h := newRepoSelectHome(t)
+	h.hostRegistry = host.NewRegistryAt(filepath.Join(t.TempDir(), "hosts.json"))
+	return h
+}
+
+// TestHostSelectSkippedWhenRegistryEmpty proves the trivial-host shortcut:
+// zero aliases → local is the only option → the selector is skipped and the
+// flow goes straight to repo selection with pendingHost = Local.
+func TestHostSelectSkippedWhenRegistryEmpty(t *testing.T) {
+	h := newHostSelectHome(t)
+	repoPath := t.TempDir()
+	makeTestRepo(t, repoPath)
+	require.NoError(t, h.repoRegistry.Add(repoPath))
+
+	cmd := h.openHostSelector(false)
+	_ = cmd
+
+	// No host selector overlay was opened.
+	assert.Nil(t, h.hostSelector)
+	assert.NotEqual(t, stateHostSelect, h.state)
+	// We jumped straight to the repo selector.
+	assert.Equal(t, stateRepoSelect, h.state)
+	// pendingHost is local (Lookup of "local" → LocalHost).
+	assert.NotNil(t, h.pendingHost)
+	_, isLocal := h.pendingHost.(host.LocalHost)
+	assert.True(t, isLocal, "empty host registry must resolve to LocalHost")
+}
+
+// TestHostSelectSkippedWhenSingleAlias proves the single-alias shortcut: one
+// alias → that alias is taken without opening the selector.
+func TestHostSelectSkippedWhenSingleAlias(t *testing.T) {
+	h := newHostSelectHome(t)
+	repoPath := t.TempDir()
+	makeTestRepo(t, repoPath)
+	require.NoError(t, h.repoRegistry.Add(repoPath))
+	require.NoError(t, h.hostRegistry.Add("dev-box"))
+
+	h.openHostSelector(false)
+
+	assert.Nil(t, h.hostSelector)
+	assert.NotEqual(t, stateHostSelect, h.state)
+	assert.Equal(t, stateRepoSelect, h.state)
+	ssh, ok := h.pendingHost.(host.SSHHost)
+	require.True(t, ok, "single alias must resolve to SSHHost")
+	assert.Equal(t, "dev-box", ssh.Alias())
+}
+
+// TestHostSelectOpensWhenTwoAliases proves the selector opens when there is a
+// real choice (≥2 aliases → local + 2 ≥ 3 options).
+func TestHostSelectOpensWhenTwoAliases(t *testing.T) {
+	h := newHostSelectHome(t)
+	require.NoError(t, h.hostRegistry.Add("dev-box"))
+	require.NoError(t, h.hostRegistry.Add("gpu-box"))
+
+	h.openHostSelector(false)
+
+	assert.NotNil(t, h.hostSelector)
+	assert.Equal(t, stateHostSelect, h.state)
+}
+
+// --- repo→profile preference (étape 6) ---
+
+// profilesForPrefs builds a config with two named profiles so the picker has a
+// real choice and PreselectProfile has somewhere to move the cursor.
+func profilesForPrefs(t *testing.T) *config.Config {
+	t.Helper()
+	cfg := config.DefaultConfig()
+	cfg.DefaultProgram = "claude"
+	cfg.Profiles = []config.Profile{
+		{Name: "Claude", Program: "claude"},
+		{Name: "Pi", Program: "pi"},
+	}
+	return cfg
+}
+
+// newPromptHome builds a home wired with a prefs store and multi-profile
+// config, plus a started instance bound to repoPath, so the prompt overlay can
+// be opened and the preference flow driven.
+func newPromptHome(t *testing.T, repoPath string) *home {
+	t.Helper()
+	makeTestRepo(t, repoPath)
+	h := newRepoSelectHome(t)
+	h.appConfig = profilesForPrefs(t)
+	h.state = statePrompt
+	h.menu = ui.NewMenu()
+	// Build an instance bound to repoPath and register it as selected.
+	inst, err := session.NewInstance(session.InstanceOptions{Title: "t", Path: repoPath, Program: "claude"})
+	require.NoError(t, err)
+	finalize := h.list.AddInstance(inst)
+	_ = finalize
+	h.list.SetSelectedInstance(h.list.NumInstances() - 1)
+	return h
+}
+
+// TestPromptOverlayPreselectsProfileFromPreference proves that a stored
+// repo→profile preference is applied when the prompt overlay opens: the
+// picker cursor lands on the preferred profile without user interaction.
+func TestPromptOverlayPreselectsProfileFromPreference(t *testing.T) {
+	repoPath := t.TempDir()
+	h := newPromptHome(t, repoPath)
+	require.NoError(t, h.prefs.Set(repoPath, "Pi", "pi"))
+
+	o := h.newPromptOverlay(repoPath)
+	require.NotNil(t, o)
+	assert.Equal(t, "Pi", o.GetSelectedProfileName(), "preferred profile must be preselected")
+	assert.Equal(t, "pi", o.GetSelectedProgram())
+}
+
+// TestPromptOverlayFallsBackToDefaultWhenNoPreference proves the overlay opens
+// on the default (first) profile when no preference is set for the repo.
+func TestPromptOverlayFallsBackToDefaultWhenNoPreference(t *testing.T) {
+	repoPath := t.TempDir()
+	h := newPromptHome(t, repoPath)
+
+	o := h.newPromptOverlay(repoPath)
+	assert.Equal(t, "Claude", o.GetSelectedProfileName(), "no preference → default profile")
+}
+
+// TestPromptOverlayIgnoresStalePreference proves a preference naming a profile
+// that no longer exists does not break the overlay: the default is used.
+func TestPromptOverlayIgnoresStalePreference(t *testing.T) {
+	repoPath := t.TempDir()
+	h := newPromptHome(t, repoPath)
+	require.NoError(t, h.prefs.Set(repoPath, "Ghost", "ghost"))
+
+	o := h.newPromptOverlay(repoPath)
+	assert.Equal(t, "Claude", o.GetSelectedProfileName(), "stale preference must fall back to default")
+}
+
+// TestCtrlSPersistsProfilePreference proves ctrl+s on the prompt overlay
+// records the currently-selected profile as the repo's preference, so the next
+// newPromptOverlay for that repo preselects it.
+func TestCtrlSPersistsProfilePreference(t *testing.T) {
+	repoPath := t.TempDir()
+	h := newPromptHome(t, repoPath)
+	h.textInputOverlay = h.newPromptOverlay(repoPath)
+	// Focus starts on the profile picker (FocusIndex 0). Move Claude → Pi.
+	assert.Equal(t, 0, h.textInputOverlay.FocusIndex)
+	h.textInputOverlay.HandleKeyPress(tea.KeyMsg{Type: tea.KeyRight}) // Claude → Pi
+	assert.Equal(t, "Pi", h.textInputOverlay.GetSelectedProfileName())
+
+	// ctrl+s persists the preference for the selected instance's repo.
+	inst := h.list.GetSelectedInstance()
+	require.NotNil(t, inst)
+	_, cmd := h.handleKeyPress(tea.KeyMsg{Type: tea.KeyCtrlS})
+	_ = cmd
+
+	pref, ok, err := h.prefs.Get(inst.Path)
+	require.NoError(t, err)
+	assert.True(t, ok, "preference must be persisted")
+	assert.Equal(t, prefs.Preference{Profile: "Pi", Program: "pi"}, pref)
+
+	// Reopening the overlay for the same repo now preselects Pi.
+	o := h.newPromptOverlay(inst.Path)
+	assert.Equal(t, "Pi", o.GetSelectedProfileName())
 }

@@ -48,6 +48,15 @@ type Host interface {
 	// round-trip).
 	WorktreeDir() (string, error)
 
+	// ResolveRepoPath normalizes a user-supplied repo path for this host's
+	// transport. LocalHost resolves it against the process working directory
+	// (filepath.Abs, best-effort) so a stored path survives a cwd change;
+	// SSHHost returns it unchanged so the remote shell resolves relative
+	// paths (and ~) against the remote $HOME — resolving locally would point
+	// at a path on the wrong machine. Called once at Start, after the host is
+	// known, before the worktree is built.
+	ResolveRepoPath(path string) string
+
 	// AutoYesDefault is whether new instances on this host start with
 	// AutoYes enabled. LocalHost follows the global config flag; SSHHost
 	// returns false (AutoYes is off by default on remote hosts — decision 3

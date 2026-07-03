@@ -55,6 +55,14 @@ func (h SSHHost) FS() fs.FS { return sshFS{alias: h.alias} }
 // remote shell when used in an `ssh host git -C <dir> ...` command.
 func (h SSHHost) WorktreeDir() (string, error) { return "~/.cs2/worktrees", nil }
 
+// ResolveRepoPath implements Host: a remote repo path is returned unchanged so
+// the remote shell resolves it. Relative paths and ~ expand against the
+// remote $HOME (ssh non-interactive sessions start there, stably across
+// invocations); resolving locally with filepath.Abs would produce a path on
+// the wrong machine (e.g. /Users/local/.../testgit), which is exactly the bug
+// where a remote relative path failed as "not a git repository".
+func (h SSHHost) ResolveRepoPath(path string) string { return path }
+
 // PtyFactory implements Host: a PTY factory that runs `ssh -t <alias> ...`
 // under a local PTY (creack/pty). The -t forces a remote TTY so tmux attach
 // is interactive. Used by TmuxSession.Attach/Restore for remote sessions.
@@ -74,19 +82,31 @@ type sshExecutor struct {
 }
 
 func (e sshExecutor) Run(c *exec.Cmd) error {
-	return exec.Command(sshBin, e.wrap(c.Args)...).Run()
+	return e.command(c).Run()
 }
 
 func (e sshExecutor) Output(c *exec.Cmd) ([]byte, error) {
-	return exec.Command(sshBin, e.wrap(c.Args)...).Output()
+	return e.command(c).Output()
 }
 
 func (e sshExecutor) CombinedOutput(c *exec.Cmd) ([]byte, error) {
-	return exec.Command(sshBin, e.wrap(c.Args)...).CombinedOutput()
+	return e.command(c).CombinedOutput()
 }
 
-// wrap returns the argv to run: `ssh <alias> <shell-joined-and-quoted args>`.
-// Extracted so tests can assert the wrapping without launching ssh.
+// command builds the *exec.Cmd that runs c's argv over `ssh <alias> ...`. It is
+// exactly wrap(c.Args): the leading element is sshBin, so it is used as the
+// binary (args[0]) and the rest as argv — never re-prepended. Re-prepending
+// sshBin here would make ssh treat the literal "ssh" as the hostname.
+func (e sshExecutor) command(c *exec.Cmd) *exec.Cmd {
+	args := e.wrap(c.Args)
+	return exec.Command(args[0], args[1:]...)
+}
+
+// wrap returns the full argv to run: `ssh <alias> <shell-joined-and-quoted args>`.
+// Extracted so tests can assert the wrapping without launching ssh. The
+// leading element is sshBin so callers can run the result directly as
+// exec.Command(args[0], args[1:]...) without re-prepending sshBin (which
+// would make ssh treat the literal "ssh" as the hostname).
 func (e sshExecutor) wrap(origArgs []string) []string {
 	return []string{sshBin, e.alias, joinShellQuoted(origArgs)}
 }
@@ -121,16 +141,30 @@ type sshFS struct {
 	alias string
 }
 
-func (f sshFS) Stat(name string) (os.FileInfo, error) {
-	// Emit exists/missing/dir so callers get existence + IsDir without a
-	// second round-trip. os.IsNotExist is checked by IsValidWorktree/Cleanup.
-	out, err := exec.Command("ssh", f.alias,
-		fmt.Sprintf("if [ -d %s ]; then echo dir; elif [ -e %s ]; then echo file; else echo missing; fi", shellQuote(name), shellQuote(name)),
-	).CombinedOutput()
-	if err != nil {
-		return nil, fmt.Errorf("ssh stat %s: %w (%s)", name, err, strings.TrimSpace(string(out)))
-	}
-	switch strings.TrimSpace(string(out)) {
+// command builds the *exec.Cmd that runs script on the remote host as
+// `ssh <alias> <script>`. The script is passed verbatim to the remote shell,
+// which is what expands ~ and parses the script (so paths like ~-relative
+// worktrees resolve on the right machine). Extracted so tests can assert the
+// wrapping without launching ssh — never re-prepend sshBin here (that was the
+// double-"ssh" bug; the leading element is the binary, the rest is argv).
+func (f sshFS) command(script string) *exec.Cmd {
+	return exec.Command("ssh", f.alias, script)
+}
+
+// statScript builds the remote shell test for Stat: emit dir/file/missing so
+// the caller gets existence + IsDir in a single round-trip. Pure (no f.alias)
+// so it's unit-testable independently of the transport.
+func statScript(name string) string {
+	return fmt.Sprintf("if [ -d %s ]; then echo dir; elif [ -e %s ]; then echo file; else echo missing; fi",
+		shellQuote(name), shellQuote(name))
+}
+
+// parseStat interprets statScript's output. Pure so the dir/file/missing
+// dispatch is unit-testable without an ssh round-trip. os.IsNotExist is
+// checked by IsValidWorktree/Cleanup, so the missing branch returns the
+// os.ErrNotExist sentinel (matching LocalFS).
+func parseStat(name, out string) (os.FileInfo, error) {
+	switch out {
 	case "dir":
 		return minimalFileInfo{name: name, isDir: true}, nil
 	case "file":
@@ -140,10 +174,16 @@ func (f sshFS) Stat(name string) (os.FileInfo, error) {
 	}
 }
 
+func (f sshFS) Stat(name string) (os.FileInfo, error) {
+	out, err := f.command(statScript(name)).CombinedOutput()
+	if err != nil {
+		return nil, fmt.Errorf("ssh stat %s: %w (%s)", name, err, strings.TrimSpace(string(out)))
+	}
+	return parseStat(name, strings.TrimSpace(string(out)))
+}
+
 func (f sshFS) RemoveAll(path string) error {
-	out, err := exec.Command("ssh", f.alias,
-		fmt.Sprintf("rm -rf -- %s", shellQuote(path)),
-	).CombinedOutput()
+	out, err := f.command("rm -rf -- " + shellQuote(path)).CombinedOutput()
 	if err != nil {
 		return fmt.Errorf("ssh rm %s: %w (%s)", path, err, strings.TrimSpace(string(out)))
 	}
@@ -151,29 +191,37 @@ func (f sshFS) RemoveAll(path string) error {
 }
 
 func (f sshFS) MkdirAll(path string, perm os.FileMode) error {
-	out, err := exec.Command("ssh", f.alias,
-		fmt.Sprintf("mkdir -p -- %s", shellQuote(path)),
-	).CombinedOutput()
+	out, err := f.command("mkdir -p -- " + shellQuote(path)).CombinedOutput()
 	if err != nil {
 		return fmt.Errorf("ssh mkdir %s: %w (%s)", path, err, strings.TrimSpace(string(out)))
 	}
 	return nil
 }
 
-func (f sshFS) ReadDir(name string) ([]os.DirEntry, error) {
-	// Emit one path per line, null-delimited to survive spaces.
-	cmd := exec.Command("ssh", f.alias,
-		fmt.Sprintf("find %s -mindepth 1 -maxdepth 1 -print0", shellQuote(name)))
-	out, err := cmd.Output()
-	if err != nil {
-		return nil, fmt.Errorf("ssh readdir %s: %w", name, err)
-	}
+// readdirScript builds the remote listing command: one path per entry,
+// null-delimited so names with spaces/newlines survive. Pure so it's
+// unit-testable independently of the transport.
+func readdirScript(name string) string {
+	return fmt.Sprintf("find %s -mindepth 1 -maxdepth 1 -print0", shellQuote(name))
+}
+
+// parseDirEntries splits null-delimited `find -print0` output into entries.
+// Pure so the splitting is unit-testable without an ssh round-trip.
+func parseDirEntries(out string) []os.DirEntry {
 	var entries []os.DirEntry
-	for _, p := range strings.Split(strings.TrimRight(string(out), "\x00"), "\x00") {
+	for _, p := range strings.Split(strings.TrimRight(out, "\x00"), "\x00") {
 		if p == "" {
 			continue
 		}
 		entries = append(entries, dirEntry{name: p})
 	}
-	return entries, nil
+	return entries
+}
+
+func (f sshFS) ReadDir(name string) ([]os.DirEntry, error) {
+	out, err := f.command(readdirScript(name)).Output()
+	if err != nil {
+		return nil, fmt.Errorf("ssh readdir %s: %w", name, err)
+	}
+	return parseDirEntries(string(out)), nil
 }

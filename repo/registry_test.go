@@ -100,6 +100,61 @@ func TestRegistryRemovePreservesOrder(t *testing.T) {
 	assert.Equal(t, []string{a, c}, paths)
 }
 
+func TestRegistryTouchMovesPathToHead(t *testing.T) {
+	r := newTestRegistry(t)
+	a := t.TempDir()
+	b := t.TempDir()
+	c := t.TempDir()
+
+	require.NoError(t, r.Add(a))
+	require.NoError(t, r.Add(b))
+	require.NoError(t, r.Add(c))
+
+	// Touch b → b moves to head, a and c keep relative order.
+	require.NoError(t, r.Touch(b))
+	paths, err := r.List()
+	require.NoError(t, err)
+	assert.Equal(t, []string{b, a, c}, paths)
+}
+
+func TestRegistryTouchIsIdempotent(t *testing.T) {
+	r := newTestRegistry(t)
+	a := t.TempDir()
+	b := t.TempDir()
+	require.NoError(t, r.Add(a))
+	require.NoError(t, r.Add(b))
+
+	require.NoError(t, r.Touch(a))
+	require.NoError(t, r.Touch(a)) // touching the head again is a no-op persist-wise
+	paths, err := r.List()
+	require.NoError(t, err)
+	assert.Equal(t, []string{a, b}, paths)
+}
+
+func TestRegistryTouchUnknownIsNoOp(t *testing.T) {
+	r := newTestRegistry(t)
+	a := t.TempDir()
+	require.NoError(t, r.Add(a))
+
+	require.NoError(t, r.Touch(t.TempDir())) // not registered
+	paths, err := r.List()
+	require.NoError(t, err)
+	assert.Equal(t, []string{a}, paths)
+}
+
+func TestRegistryTouchResolvesRelative(t *testing.T) {
+	r := newTestRegistry(t)
+	abs, err := filepath.Abs(".")
+	require.NoError(t, err)
+	require.NoError(t, r.Add(abs))
+
+	require.NoError(t, r.Touch(".")) // relative resolves to the registered abs path
+	paths, err := r.List()
+	require.NoError(t, err)
+	assert.Len(t, paths, 1)
+	assert.Equal(t, abs, paths[0])
+}
+
 func TestRegistryContainsHandlesRelativePath(t *testing.T) {
 	r := newTestRegistry(t)
 	abs, err := filepath.Abs(".")

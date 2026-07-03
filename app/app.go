@@ -5,6 +5,7 @@ import (
 	"claude-squad/host"
 	"claude-squad/keys"
 	"claude-squad/log"
+	"claude-squad/prefs"
 	"claude-squad/program"
 	"claude-squad/repo"
 	"claude-squad/session"
@@ -130,6 +131,12 @@ type home struct {
 	// back here so they reappear next time.
 	hostRegistry *host.Registry
 
+	// prefs is the persistent repo→profile preference store. At instance
+	// creation, if a preference exists for the selected repo, the matching
+	// profile is preselected in the prompt overlay. Set explicitly via ctrl+s
+	// on the profile picker (see handlePromptState).
+	prefs *prefs.Store
+
 	// repoSelectPrompt tracks whether the repo selector was opened from the
 	// prompt (KeyPrompt) flow; if so, after the repo is chosen we continue
 	// straight into the prompt+branch overlay.
@@ -154,6 +161,7 @@ func newHome(ctx context.Context, program string, autoYes bool) *home {
 	// works with a free path, so a nil registry is tolerated at the call sites.
 	repoRegistry, _ := repo.NewRegistry()
 	hostRegistry, _ := host.NewRegistry()
+	prefStore, _ := prefs.NewStore()
 
 	h := &home{
 		ctx:          ctx,
@@ -165,6 +173,7 @@ func newHome(ctx context.Context, program string, autoYes bool) *home {
 		appConfig:    appConfig,
 		repoRegistry: repoRegistry,
 		hostRegistry: hostRegistry,
+		prefs:         prefStore,
 		program:      program,
 		autoYes:      autoYes,
 		state:        stateDefault,
@@ -402,7 +411,7 @@ func (m *home) Update(msg tea.Msg) (tea.Model, tea.Cmd) {
 		if msg.promptAfterName {
 			m.state = statePrompt
 			m.menu.SetState(ui.StatePrompt)
-			m.textInputOverlay = m.newPromptOverlay()
+			m.textInputOverlay = m.newPromptOverlay(msg.instance.Path)
 		} else {
 			// If instance has a prompt (set from Shift+N flow), send it now
 			if msg.instance.Prompt != "" {
@@ -511,7 +520,7 @@ func (m *home) handleKeyPress(msg tea.KeyMsg) (mod tea.Model, cmd tea.Cmd) {
 				m.promptAfterName = false
 				m.state = statePrompt
 				m.menu.SetState(ui.StatePrompt)
-				m.textInputOverlay = m.newPromptOverlay()
+				m.textInputOverlay = m.newPromptOverlay(instance.Path)
 				// Trigger initial branch search (no debounce, version 0) on the
 				// instance's repo, not the process cwd.
 				repoPath := instance.Path
@@ -575,6 +584,14 @@ func (m *home) handleKeyPress(msg tea.KeyMsg) (mod tea.Model, cmd tea.Cmd) {
 		// Handle cancel via ctrl+c before delegating to the overlay
 		if msg.String() == "ctrl+c" {
 			return m, m.cancelPromptOverlay()
+		}
+
+		// ctrl+s on the profile picker records an explicit repo→profile
+		// preference for the selected instance's repo, so the prompt overlay
+		// preselects this profile next time. Best-effort: a nil prefs store
+		// or a failure to persist never blocks the prompt flow.
+		if msg.String() == "ctrl+s" {
+			return m, m.saveProfilePreference()
 		}
 
 		// Use the new TextInputOverlay component to handle all key events
@@ -1104,8 +1121,36 @@ func (m *home) notifyReady(instance *session.Instance) {
 	}()
 }
 
-func (m *home) newPromptOverlay() *overlay.TextInputOverlay {
-	return overlay.NewTextInputOverlayWithBranchPicker("Enter prompt", "", m.appConfig.GetProfiles())
+func (m *home) newPromptOverlay(repoPath string) *overlay.TextInputOverlay {
+	o := overlay.NewTextInputOverlayWithBranchPicker("Enter prompt", "", m.appConfig.GetProfiles())
+	// Preselect the profile stored as a preference for this repo (if any). A
+	// stale/unknown preference name is ignored by SetSelectedByName, so the
+	// picker falls back to the default profile rather than breaking.
+	if m.prefs != nil && repoPath != "" {
+		if pref, ok, _ := m.prefs.Get(repoPath); ok && pref.Profile != "" {
+			o.PreselectProfile(pref.Profile)
+		}
+	}
+	return o
+}
+
+// saveProfilePreference records the currently-selected profile in the prompt
+// overlay as the explicit repo→profile preference for the selected
+// instance's repo. Triggered by ctrl+s on the profile picker. Best-effort.
+func (m *home) saveProfilePreference() tea.Cmd {
+	inst := m.list.GetSelectedInstance()
+	if inst == nil || m.textInputOverlay == nil || m.prefs == nil {
+		return nil
+	}
+	profile := m.textInputOverlay.GetSelectedProgram()
+	name := m.textInputOverlay.GetSelectedProfileName()
+	if name == "" {
+		return nil
+	}
+	if err := m.prefs.Set(inst.Path, name, profile); err != nil {
+		return m.handleError(err)
+	}
+	return nil
 }
 
 // cancelPromptOverlay cancels the prompt overlay, cleaning up unstarted instances.
@@ -1159,6 +1204,19 @@ func (m *home) openHostSelector(promptFlow bool) tea.Cmd {
 	if m.hostRegistry != nil {
 		aliases, _ = m.hostRegistry.List()
 	}
+	// Skip the selector when there is no real choice: 0 registered aliases
+	// → local (always implicit), 1 alias → that alias. The selector only opens
+	// when there are ≥2 options (local + ≥1 alias, or ≥2 aliases). Avoids a
+	// gratuitous Enter in the common all-local case.
+	if len(aliases) < 2 {
+		alias := host.LocalAlias
+		if len(aliases) == 1 {
+			alias = aliases[0]
+		}
+		m.repoSelectPrompt = promptFlow
+		m.pendingHost = host.Lookup(alias)
+		return m.openRepoSelector(promptFlow)
+	}
 	m.hostSelector = overlay.NewHostSelector(aliases)
 	m.repoSelectPrompt = promptFlow
 	m.state = stateHostSelect
@@ -1178,6 +1236,10 @@ func (m *home) handleHostSelectState(msg tea.KeyMsg) (tea.Model, tea.Cmd) {
 		m.hostSelector.Canceled = true
 	} else {
 		shouldClose := m.hostSelector.HandleKeyPress(msg)
+		// Apply silent ctrl+d removals to the persistent host registry. Done
+		// on every non-close keypress (TakeDeletedValues is a no-op when
+		// nothing was deleted); local is protected inside the selector.
+		m.applyHostDeletions()
 		if !shouldClose {
 			return m, nil
 		}
@@ -1200,6 +1262,11 @@ func (m *home) handleHostSelectState(msg tea.KeyMsg) (tea.Model, tea.Cmd) {
 	// local), register it so it reappears next time. Best-effort.
 	if m.hostSelector.IsFreeAlias() && alias != "local" && m.hostRegistry != nil {
 		_ = m.hostRegistry.Add(alias)
+	}
+	// MRU: move the selected alias to the head of the registry so it is
+	// offered at the top next time. Best-effort; local is a no-op.
+	if alias != "local" && m.hostRegistry != nil {
+		_ = m.hostRegistry.Touch(alias)
 	}
 
 	promptFlow := m.repoSelectPrompt
@@ -1250,6 +1317,10 @@ func (m *home) handleRepoSelectState(msg tea.KeyMsg) (tea.Model, tea.Cmd) {
 		m.repoSelector.Canceled = true
 	} else {
 		shouldClose := m.repoSelector.HandleKeyPress(msg)
+		// Apply silent ctrl+d removals to the persistent repo registry. Done
+		// on every non-close keypress (TakeDeletedValues is a no-op when
+		// nothing was deleted).
+		m.applyRepoDeletions()
 		if !shouldClose {
 			return m, nil
 		}
@@ -1283,11 +1354,39 @@ func (m *home) handleRepoSelectState(msg tea.KeyMsg) (tea.Model, tea.Cmd) {
 	if m.repoSelector.IsFreePath() && m.repoRegistry != nil {
 		_ = m.repoRegistry.Add(selected)
 	}
+	// MRU: move the selected repo to the head of the registry so it is
+	// offered at the top next time. Best-effort.
+	if m.repoRegistry != nil {
+		_ = m.repoRegistry.Touch(selected)
+	}
 
 	promptFlow := m.repoSelectPrompt
 	repoPath := selected
 	m.repoSelector = nil
 	return m, m.startNewInstance(repoPath, promptFlow)
+}
+
+// applyHostDeletions persists any hosts removed via ctrl+d in the host
+// selector. Silent and best-effort: a failure to write does not block the
+// selection flow. "local" is never deletable (protected in ListSelector).
+func (m *home) applyHostDeletions() {
+	if m.hostSelector == nil || m.hostRegistry == nil {
+		return
+	}
+	for _, alias := range m.hostSelector.TakeDeletedValues() {
+		_ = m.hostRegistry.Remove(alias)
+	}
+}
+
+// applyRepoDeletions persists any repos removed via ctrl+d in the repo
+// selector. Silent and best-effort.
+func (m *home) applyRepoDeletions() {
+	if m.repoSelector == nil || m.repoRegistry == nil {
+		return
+	}
+	for _, path := range m.repoSelector.TakeDeletedValues() {
+		_ = m.repoRegistry.Remove(path)
+	}
 }
 
 // startNewInstance creates a new instance bound to repoPath, registers it in
