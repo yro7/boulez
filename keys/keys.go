@@ -54,7 +54,7 @@ var GlobalKeyStringsMap = map[string]KeyName{
 	"K":          KeyMoveUp,
 	"a":          KeyToggleAutoYes,
 	"N":          KeyPrompt,
-	"ctrl+r":     KeyQuickSession,
+	"R":          KeyQuickSession,
 	"enter":      KeyEnter,
 	"o":          KeyEnter,
 	"n":          KeyNew,
@@ -114,8 +114,8 @@ var GlobalkeyBindings = map[KeyName]key.Binding{
 		key.WithHelp("N", "new with prompt"),
 	),
 	KeyQuickSession: key.NewBinding(
-		key.WithKeys("ctrl+r"),
-		key.WithHelp("ctrl+r", "quick session"),
+		key.WithKeys("R"),
+		key.WithHelp("R", "quick session"),
 	),
 	KeyCheckout: key.NewBinding(
 		key.WithKeys("c"),
