@@ -8,4 +8,5 @@ func init() {
 	Register(ClaudeAdapter{})
 	Register(AiderAdapter{})
 	Register(GeminiAdapter{})
+	Register(PiAdapter{})
 }
