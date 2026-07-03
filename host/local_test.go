@@ -50,3 +50,26 @@ func TestLocalHost_Deps(t *testing.T) {
 	// PtyFactory is the local pty factory (non-nil).
 	assert.NotNil(t, h.PtyFactory())
 }
+
+// TestLocalHost_ResolveRepoPath_Absolutizes proves the local branch of
+// transport-specific path resolution: LocalHost resolves a relative path
+// against the process cwd (filepath.Abs). A stored relative path thus survives
+// a cwd change. Absolute paths are returned unchanged. This is the contract
+// buildWorktree relies on for LocalHost — and the counterpart to SSHHost's
+// passthrough (TestSSHHost_ResolveRepoPath_Passthrough).
+func TestLocalHost_ResolveRepoPath_Absolutizes(t *testing.T) {
+	wd, err := os.Getwd()
+	require.NoError(t, err)
+
+	// Relative -> resolved against the cwd.
+	got := LocalHost{}.ResolveRepoPath("foo/bar")
+	assert.Equal(t, filepath.Join(wd, "foo/bar"), got)
+
+	// Absolute -> returned unchanged (cleaned).
+	abs := filepath.Join(wd, "repo")
+	assert.Equal(t, abs, LocalHost{}.ResolveRepoPath(abs))
+
+	// ~ is NOT expanded by LocalHost (that is the remote shell's job, not
+	// filepath.Abs's) — pinning so a future "helpful" ~ expansion here fails.
+	assert.Equal(t, filepath.Join(wd, "~/repo"), LocalHost{}.ResolveRepoPath("~/repo"))
+}

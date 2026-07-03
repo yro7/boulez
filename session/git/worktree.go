@@ -3,7 +3,6 @@ package git
 import (
 	"claude-squad/cmd"
 	"claude-squad/config"
-	"claude-squad/log"
 	"claude-squad/session/fs"
 	"fmt"
 	"path/filepath"
@@ -82,13 +81,13 @@ func NewGitWorktreeFromStorageWithDeps(repoPath string, worktreePath string, ses
 // (LocalHost: local ~/.cs2/worktrees; SSHHost: ~-relative literal), so this
 // function is transport-agnostic — it never reads the local config.
 func resolveWorktreePaths(repoPath string, branchName string, cmdExec cmd.Executor, worktreeDir string) (resolvedRepo string, worktreePath string, err error) {
-	absPath, err := filepath.Abs(repoPath)
-	if err != nil {
-		log.ErrorLog.Printf("git worktree path abs error, falling back to repoPath %s: %s", repoPath, err)
-		absPath = repoPath
-	}
-
-	resolvedRepo, err = NewRepoWithDeps(absPath, cmdExec).Root()
+	// repoPath is already transport-resolved by the caller (Host.ResolveRepoPath):
+	// absolute for LocalHost, passthrough for SSHHost. Do NOT call filepath.Abs
+	// here — that resolves against the local cwd, which corrupts a remote
+	// relative path into a local-machine path (the "not a git repository" bug).
+	// git -C accepts the path as-is on both transports; Root() below returns
+	// git's absolute toplevel regardless.
+	resolvedRepo, err = NewRepoWithDeps(repoPath, cmdExec).Root()
 	if err != nil {
 		return "", "", err
 	}

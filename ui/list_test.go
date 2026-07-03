@@ -1,6 +1,7 @@
 package ui
 
 import (
+	"claude-squad/host"
 	"claude-squad/session"
 	"testing"
 
@@ -38,6 +39,20 @@ func TestRepoBadgeRendersName(t *testing.T) {
 	// The badge must embed the repo name so it is readable in the list.
 	out := repoBadge("my-repo", lipgloss.Color("#000000"))
 	require.Contains(t, out, "[my-repo]")
+}
+
+func TestEnvBadgeLocalIsHidden(t *testing.T) {
+	// The local host is implicit (the machine running cs2); it must not render
+	// a badge, so a local-only list stays uncluttered.
+	require.Equal(t, "", envBadge(host.LocalAlias, lipgloss.Color("#000000")))
+	require.Equal(t, "", envBadge("", lipgloss.Color("#000000")))
+}
+
+func TestEnvBadgeRemoteRendersAlias(t *testing.T) {
+	out := envBadge("dev-machine", lipgloss.Color("#000000"))
+	require.Contains(t, out, "[dev-machine]")
+	// A remote host keeps its badge even with no background (non-selected row).
+	require.NotEmpty(t, envBadge("dev-machine", nil))
 }
 
 func TestMoveUp(t *testing.T) {

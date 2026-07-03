@@ -37,6 +37,19 @@ func (LocalHost) WorktreeDir() (string, error) {
 	return filepath.Join(configDir, "worktrees"), nil
 }
 
+// ResolveRepoPath implements Host: a local repo path is resolved against the
+// process working directory (filepath.Abs). Best-effort — on error the
+// original path is returned, matching the prior fallback behaviour; git -C
+// still resolves it. This is the local-only branch of transport-specific path
+// resolution (the remote branch is SSHHost.ResolveRepoPath, a passthrough).
+func (LocalHost) ResolveRepoPath(path string) string {
+	abs, err := filepath.Abs(path)
+	if err != nil {
+		return path
+	}
+	return abs
+}
+
 // AutoYesDefault implements Host: new local instances follow the global
 // config flag (preserves today's behaviour where `--auto-yes` enables
 // auto-yes locally).
