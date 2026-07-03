@@ -107,10 +107,10 @@ func newCtlListCmd() *cobra.Command {
 		RunE: func(cmd *cobra.Command, args []string) error {
 			params := map[string]interface{}{}
 			if kind != "" {
-				params["kind"] = kindInt(kind)
+				params["kind"] = kindWire(kind)
 			}
 			if status != "" {
-				params["status"] = statusInt(status)
+				params["status"] = statusWire(status)
 			}
 			if repo != "" {
 				params["repo"] = repo
@@ -149,7 +149,7 @@ func newCtlSpawnCmd() *cobra.Command {
 				params["title"] = title
 			}
 			if kind != "" {
-				params["kind"] = kindInt(kind)
+				params["kind"] = kindWire(kind)
 			}
 			return rawCtl(kernel.Request{Method: "spawn_worker", Params: mustJSON(params)})
 		},
@@ -279,28 +279,29 @@ func mustJSON(v interface{}) json.RawMessage {
 	return b
 }
 
-// kindInt maps a string to the wire int for session.Kind. The wire carries
-// ints (the iota values); the kernel decodes them. Strings are friendlier
-// for humans at the CLI.
-func kindInt(s string) int {
+// kindWire maps a CLI string to the wire value for session.Kind. The wire
+// accepts both strings ("worker"/"orchestrator") and ints; we pass the string
+// so the request is self-documenting. The kernel's UnmarshalJSON handles it.
+func kindWire(s string) string {
 	switch strings.ToLower(s) {
 	case "orchestrator", "orch":
-		return 1 // session.KindOrchestrator
+		return "orchestrator"
 	default:
-		return 0 // session.KindWorker
+		return "worker"
 	}
 }
 
-// statusInt maps a string to the wire int for session.Status.
-func statusInt(s string) int {
+// statusWire maps a CLI string to the wire value for session.Status. Same
+// rationale as kindWire: pass the string, let the kernel parse.
+func statusWire(s string) string {
 	switch strings.ToLower(s) {
 	case "ready":
-		return 1
+		return "ready"
 	case "loading":
-		return 2
+		return "loading"
 	case "paused":
-		return 3
+		return "paused"
 	default:
-		return 0 // Running
+		return "running"
 	}
 }
