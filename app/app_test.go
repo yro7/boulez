@@ -2,6 +2,7 @@ package app
 
 import (
 	"claude-squad/config"
+	"claude-squad/host"
 	"claude-squad/log"
 	"claude-squad/repo"
 	"claude-squad/session"
@@ -717,4 +718,68 @@ func TestBranchPickerScansSelectedRepoNotCwd(t *testing.T) {
 	debounced, ok := scheduled.(branchSearchDebounceMsg)
 	require.True(t, ok)
 	assert.Equal(t, instance.Path, debounced.repoPath)
+}
+
+// newHostSelectHome builds a home wired with temp-backed host and repo
+// registries, so openHostSelector's skip logic can be exercised.
+func newHostSelectHome(t *testing.T) *home {
+	t.Helper()
+	h := newRepoSelectHome(t)
+	h.hostRegistry = host.NewRegistryAt(filepath.Join(t.TempDir(), "hosts.json"))
+	return h
+}
+
+// TestHostSelectSkippedWhenRegistryEmpty proves the trivial-host shortcut:
+// zero aliases → local is the only option → the selector is skipped and the
+// flow goes straight to repo selection with pendingHost = Local.
+func TestHostSelectSkippedWhenRegistryEmpty(t *testing.T) {
+	h := newHostSelectHome(t)
+	repoPath := t.TempDir()
+	makeTestRepo(t, repoPath)
+	require.NoError(t, h.repoRegistry.Add(repoPath))
+
+	cmd := h.openHostSelector(false)
+	_ = cmd
+
+	// No host selector overlay was opened.
+	assert.Nil(t, h.hostSelector)
+	assert.NotEqual(t, stateHostSelect, h.state)
+	// We jumped straight to the repo selector.
+	assert.Equal(t, stateRepoSelect, h.state)
+	// pendingHost is local (Lookup of "local" → LocalHost).
+	assert.NotNil(t, h.pendingHost)
+	_, isLocal := h.pendingHost.(host.LocalHost)
+	assert.True(t, isLocal, "empty host registry must resolve to LocalHost")
+}
+
+// TestHostSelectSkippedWhenSingleAlias proves the single-alias shortcut: one
+// alias → that alias is taken without opening the selector.
+func TestHostSelectSkippedWhenSingleAlias(t *testing.T) {
+	h := newHostSelectHome(t)
+	repoPath := t.TempDir()
+	makeTestRepo(t, repoPath)
+	require.NoError(t, h.repoRegistry.Add(repoPath))
+	require.NoError(t, h.hostRegistry.Add("dev-box"))
+
+	h.openHostSelector(false)
+
+	assert.Nil(t, h.hostSelector)
+	assert.NotEqual(t, stateHostSelect, h.state)
+	assert.Equal(t, stateRepoSelect, h.state)
+	ssh, ok := h.pendingHost.(host.SSHHost)
+	require.True(t, ok, "single alias must resolve to SSHHost")
+	assert.Equal(t, "dev-box", ssh.Alias())
+}
+
+// TestHostSelectOpensWhenTwoAliases proves the selector opens when there is a
+// real choice (≥2 aliases → local + 2 ≥ 3 options).
+func TestHostSelectOpensWhenTwoAliases(t *testing.T) {
+	h := newHostSelectHome(t)
+	require.NoError(t, h.hostRegistry.Add("dev-box"))
+	require.NoError(t, h.hostRegistry.Add("gpu-box"))
+
+	h.openHostSelector(false)
+
+	assert.NotNil(t, h.hostSelector)
+	assert.Equal(t, stateHostSelect, h.state)
 }

@@ -1159,6 +1159,19 @@ func (m *home) openHostSelector(promptFlow bool) tea.Cmd {
 	if m.hostRegistry != nil {
 		aliases, _ = m.hostRegistry.List()
 	}
+	// Skip the selector when there is no real choice: 0 registered aliases
+	// → local (always implicit), 1 alias → that alias. The selector only opens
+	// when there are ≥2 options (local + ≥1 alias, or ≥2 aliases). Avoids a
+	// gratuitous Enter in the common all-local case.
+	if len(aliases) < 2 {
+		alias := host.LocalAlias
+		if len(aliases) == 1 {
+			alias = aliases[0]
+		}
+		m.repoSelectPrompt = promptFlow
+		m.pendingHost = host.Lookup(alias)
+		return m.openRepoSelector(promptFlow)
+	}
 	m.hostSelector = overlay.NewHostSelector(aliases)
 	m.repoSelectPrompt = promptFlow
 	m.state = stateHostSelect
