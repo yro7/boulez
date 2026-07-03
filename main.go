@@ -52,16 +52,15 @@ var (
 			if autoYesFlag {
 				autoYes = true
 			}
-			if autoYes {
-				defer func() {
-					if err := daemon.LaunchDaemon(); err != nil {
-						log.ErrorLog.Printf("failed to launch daemon: %v", err)
-					}
-				}()
-			}
-			// Kill any daemon that's running.
-			if err := daemon.StopDaemon(); err != nil {
-				log.ErrorLog.Printf("failed to stop daemon: %v", err)
+			// Launch the daemon (detached) so it is up during the TUI session. The
+			// daemon owns the kernel (control API) and guarantees the global
+			// orchestrator (instance 0) exists via orchestrator.Ensure. It is the
+			// single writer; the TUI is a console/observer. The daemon's
+			// single-instance lock makes a duplicate launch a no-op. We no longer
+			// stop a running daemon on TUI start — the daemon is now canonical and
+			// long-lived, not a throwaway auto-yes poller.
+			if err := daemon.LaunchDaemon(); err != nil {
+				log.ErrorLog.Printf("failed to launch daemon: %v", err)
 			}
 
 			return app.Run(ctx, program, autoYes)

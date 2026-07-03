@@ -85,9 +85,24 @@ func (k *Kernel) instancesLocked() []*session.Instance {
 	return k.instStore.all()
 }
 
+// findLocked returns the instance with the given ID. Caller must hold k.mu.
 func (k *Kernel) findLocked(id string) (*session.Instance, bool) {
 	k.instancesLocked() // ensure loaded
 	return k.instStore.find(id)
+}
+
+// InstanceByID returns the *session.Instance for the given ID. It is the only
+// exported accessor for a live instance pointer, used by consumers that need
+// to act on the instance directly (e.g. the orchestrator bootstrap calls
+// SendPrompt on it). Returns ErrUnknownInstance if the ID is not in the fleet.
+func (k *Kernel) InstanceByID(id string) (*session.Instance, error) {
+	k.mu.Lock()
+	defer k.mu.Unlock()
+	inst, ok := k.findLocked(id)
+	if !ok {
+		return nil, ErrUnknownInstance{ID: id}
+	}
+	return inst, nil
 }
 
 func (k *Kernel) registerLocked(inst *session.Instance) {

@@ -58,11 +58,7 @@ var plans = &planStore{}
 
 // orchestratorsDir returns ~/.cs2/orchestrators/.
 func orchestratorsDir() (string, error) {
-	configDir, err := config.GetConfigDir()
-	if err != nil {
-		return "", err
-	}
-	return filepath.Join(configDir, "orchestrators"), nil
+	return config.OrchestratorsDir()
 }
 
 // planPath returns the path to an orchestrator's plan.json.
