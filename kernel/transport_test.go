@@ -24,6 +24,10 @@ func (realGitMerger) Merge(repoPath, targetBranch string, sourceBranches []strin
 	return git.NewMerger(nil).Merge(repoPath, targetBranch, sourceBranches, strategy)
 }
 
+func (realGitMerger) MergeTrunk(repoPath, targetBranch string, sourceBranches []string, strategy git.Strategy) (git.MergeResult, error) {
+	return git.NewMerger(nil).MergeTrunk(repoPath, targetBranch, sourceBranches, strategy)
+}
+
 // startTestKernel builds a kernel with fake deps, serves it on a temp socket,
 // and returns the socket path + a stop func. This tests the full wire
 // round-trip without tmux or a real agent.
@@ -163,6 +167,58 @@ func TestTransport_Merge_ProtectedBranch_ErrCode(t *testing.T) {
 	// The merger refuses on the protected branch BEFORE touching git, so the
 	// error is the typed ErrProtectedBranch → PROTECTED_BRANCH.
 	assert.Equal(t, CodeProtectedBranch, resp.Error.Code)
+}
+
+// TestTransport_Land_TopLevel_Delegates proves the land syscall succeeds for
+// a top-level (unauthenticated) connection and reaches the merger via
+// MergeTrunk. The fake merger records the trunk-path call.
+func TestTransport_Land_TopLevel_Delegates(t *testing.T) {
+	merger := &fakeMerger{result: git.MergeResult{Status: git.MergeMerged}}
+	socketPath, stop := startTestKernel(t, &fakeSpawner{}, merger)
+	defer stop()
+
+	params, _ := json.Marshal(map[string]interface{}{
+		"target_repo":   "/r",
+		"target_branch": "main",
+		"source":       "feat",
+	})
+	resp, err := Call(socketPath, Request{Method: "land", Params: params})
+	require.NoError(t, err)
+	require.Nil(t, resp.Error, "top-level land succeeds: %+v", resp.Error)
+	require.Len(t, merger.calls, 1)
+	assert.True(t, merger.calls[0].trunk, "transport must route to MergeTrunk")
+	assert.Equal(t, "main", merger.calls[0].target)
+	assert.Equal(t, []string{"feat"}, merger.calls[0].sources)
+}
+
+// TestTransport_Land_WorkerRefused_ErrCode proves the topology guard on the
+// wire: a session bound to a worker (via authenticate) cannot land — it gets
+// NON_TOP_LEVEL_LAND. This is the mirror of the spawn recursion guard.
+func TestTransport_Land_WorkerRefused_ErrCode(t *testing.T) {
+	spawner := &fakeSpawner{}
+	socketPath, stop := startTestKernel(t, spawner, &fakeMerger{})
+	defer stop()
+
+	// Spawn a worker (top-level) and authenticate as it.
+	spawnParams, _ := json.Marshal(map[string]string{"repo": "/r", "title": "w", "program": "bash"})
+	resp, _ := Call(socketPath, Request{Method: "spawn_worker", Params: spawnParams})
+	var got struct{ ID string `json:"id"` }
+	require.NoError(t, json.Unmarshal(resp.Result, &got))
+	workerID := got.ID
+
+	authParams, _ := json.Marshal(map[string]interface{}{"instance_id": workerID, "kind": "worker"})
+	landParams, _ := json.Marshal(map[string]interface{}{
+		"target_repo":   "/r",
+		"target_branch": "main",
+		"source":       "feat",
+	})
+	resps, err := CallSession(socketPath, []Request{
+		{Method: "authenticate", Params: authParams},
+		{Method: "land", Params: landParams},
+	})
+	require.NoError(t, err)
+	require.NotNil(t, resps[1].Error, "a worker session cannot land onto a trunk")
+	assert.Equal(t, CodeNonTopLevelLand, resps[1].Error.Code)
 }
 
 // TestTransport_UnknownMethod_ErrCode proves an unknown syscall returns an

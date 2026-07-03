@@ -63,6 +63,7 @@ const (
 	CodeWorkerCannotSpawn  = "WORKER_CANNOT_SPAWN"
 	CodeNestedOrchestrator = "NESTED_ORCHESTRATOR"
 	CodeProtectedBranch    = "PROTECTED_BRANCH"
+	CodeNonTopLevelLand    = "NON_TOP_LEVEL_LAND"
 	CodeBranchNotFound    = "BRANCH_NOT_FOUND"
 	CodeInternal           = "INTERNAL"
 )
@@ -196,6 +197,19 @@ func dispatch(k *Kernel, sess *ctlSession, req Request) Response {
 			return kernelErrResp(err)
 		}
 		return okResp(res)
+	case "land":
+		var p landParams
+		if err := json.Unmarshal(req.Params, &p); err != nil {
+			return errResp(CodeInternal, "bad params: "+err.Error())
+		}
+		// Caller from the session (authoritative). Land refuses non-top-level
+		// sessions (workers/orchestrators) — only `cs2 ctl` / TUI may land
+		// onto a trunk. See Kernel.Land.
+		res, err := k.Land(k.callerFor(sess), p.TargetRepo, p.TargetBranch, p.Source, git.Strategy(p.Strategy))
+		if err != nil {
+			return kernelErrResp(err)
+		}
+		return okResp(res)
 	default:
 		return errResp(CodeInternal, "unknown method: "+req.Method)
 	}
@@ -295,6 +309,16 @@ type mergeParams struct {
 	Strategy       int          `json:"strategy,omitempty"`
 }
 
+// landParams is the wire payload for the "land" syscall. Unlike merge,
+// Land takes a SINGLE source branch (the instance's own branch). The caller
+// identity comes from the session, never from params.
+type landParams struct {
+	TargetRepo   string `json:"target_repo"`
+	TargetBranch string `json:"target_branch"`
+	Source       string `json:"source"`
+	Strategy     int    `json:"strategy,omitempty"`
+}
+
 // --- response helpers ---
 
 func okResp(v interface{}) Response {
@@ -327,6 +351,8 @@ func kernelErrResp(err error) Response {
 		return errResp(CodeWorkerCannotSpawn, err.Error())
 	case ErrNestedOrchestrator:
 		return errResp(CodeNestedOrchestrator, err.Error())
+	case ErrNonTopLevelLand:
+		return errResp(CodeNonTopLevelLand, err.Error())
 	case git.ErrProtectedBranch:
 		return errResp(CodeProtectedBranch, err.Error())
 	default:
