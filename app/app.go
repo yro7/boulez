@@ -156,6 +156,12 @@ type home struct {
 	// prompt (KeyPrompt) flow; if so, after the repo is chosen we continue
 	// straight into the prompt+branch overlay.
 	repoSelectPrompt bool
+
+	// landCaller performs the kernel Land syscall for the L-key action. The
+	// default is the socket-backed adapter (the daemon owns the kernel); tests
+	// inject a fake. Nil defaults to newSocketLandCaller() at first use so a
+	// bare &home{} test construct still works.
+	landCaller session.LandCaller
 }
 
 func newHome(ctx context.Context, program string, autoYes bool) *home {
@@ -835,6 +841,43 @@ func (m *home) handleKeyPress(msg tea.KeyMsg) (mod tea.Model, cmd tea.Cmd) {
 		// Show confirmation modal
 		message := fmt.Sprintf("[!] Push changes from session '%s'?", selected.Title)
 		return m, m.confirmAction(message, pushAction)
+	case keys.KeyLand:
+		selected := m.list.GetSelectedInstance()
+		if selected == nil || selected.Status == session.Loading || selected.Status == session.Running {
+			// Land is only offered for Ready/Paused (the menu hides it otherwise),
+			// but defend in depth: never land an agent that is actively working.
+			return m, nil
+		}
+		inst := selected
+		targetBranch := "main"
+		// Default commit message mirrors the push action's pattern so the two
+		// gestures stay consistent.
+		commitMsg := fmt.Sprintf("[claudesquad] update from '%s' on %s", inst.Title, time.Now().Format(time.RFC822))
+		caller := m.landCaller
+		if caller == nil {
+			caller = newSocketLandCaller()
+		}
+		landAction := func() tea.Msg {
+			res, err := session.LandInstance(inst, caller, targetBranch, commitMsg)
+			if err != nil {
+				if res.Merge.Status == git.MergeConflict {
+					// Conflict is an expected, recoverable outcome: the repo is
+					// left in the merging state for resolution. Surface the
+					// conflicted files clearly rather than as a generic error.
+					files := make([]string, 0, len(res.Merge.Conflicts))
+					for _, c := range res.Merge.Conflicts {
+						files = append(files, c.File)
+					}
+					return fmt.Errorf("merge conflict on %s — repo left in merging state. Resolve and `git commit`: %s",
+							targetBranch, strings.Join(files, ", "))
+				}
+				return err
+			}
+			return nil
+		}
+		message := fmt.Sprintf("[!] Land '%s' into '%s'?\n(commit + push '%s' then merge into %s)",
+			inst.Title, targetBranch, inst.Title, targetBranch)
+		return m, m.confirmAction(message, landAction)
 	case keys.KeyCheckout:
 		selected := m.list.GetSelectedInstance()
 		if selected == nil || selected.Status == session.Loading {
