@@ -208,6 +208,13 @@ func (k *Kernel) Spawn(caller CallerContext, opts SpawnOptions) (string, error) 
 	storage := k.storage
 	k.mu.Unlock()
 
+	// If an orchestrator spawned this worker, record it in the orchestrator's
+	// plan (resumability substrate). Best-effort: a plan-save failure does not
+	// abort a successful spawn.
+	if !caller.IsTopLevel() && caller.Kind == session.KindOrchestrator && opts.Kind == session.KindWorker {
+		_ = recordWorkerInPlan(caller.CallerID, inst.GetID())
+	}
+
 	if autosave && storage != nil {
 		_ = k.persist(storage, inst)
 	}
@@ -284,15 +291,26 @@ func (k *Kernel) Kill(id string) error {
 
 // Merge merges source branches into a target branch of a repo. The guarded
 // syscall: the kernel delegates to the Merger (which itself refuses protected
-// branches), and the kernel additionally records the outcome. v1 does NOT
+// branches), records the outcome, and updates the caller's plan. v1 does NOT
 // auto-resolve conflicts — a conflict returns MergeConflict and the caller
 // (an orchestrator, Shape B) decides to spawn a resolver. Mutating.
-func (k *Kernel) Merge(_ CallerContext, repoPath, targetBranch string, sourceBranches []string, strategy git.Strategy) (git.MergeResult, error) {
+func (k *Kernel) Merge(caller CallerContext, repoPath, targetBranch string, sourceBranches []string, strategy git.Strategy) (git.MergeResult, error) {
 	k.mu.Lock()
 	merger := k.merger
 	k.mu.Unlock()
 	if merger == nil {
 		return git.MergeResult{}, fmt.Errorf("kernel: no merger wired")
 	}
-	return merger.Merge(repoPath, targetBranch, sourceBranches, strategy)
+
+	// Record the merge intent on the caller's plan (if the caller is an
+	// orchestrator). Best-effort.
+	if !caller.IsTopLevel() && caller.Kind == session.KindOrchestrator {
+		_ = RecordMerge(caller.CallerID, MergeTarget{Repo: repoPath, Branch: targetBranch, Sources: sourceBranches})
+	}
+
+	res, err := merger.Merge(repoPath, targetBranch, sourceBranches, strategy)
+	if err == nil && !caller.IsTopLevel() && caller.Kind == session.KindOrchestrator {
+		_ = recordMergeOutcome(caller.CallerID, res)
+	}
+	return res, err
 }
