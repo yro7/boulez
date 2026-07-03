@@ -38,6 +38,13 @@ func (realMerger) Merge(repoPath, targetBranch string, sourceBranches []string, 
 	return git.NewMerger(cmd.MakeExecutor()).Merge(repoPath, targetBranch, sourceBranches, strategy)
 }
 
+// MergeTrunk delegates to the real Merger's trunk-allowed variant. This
+// adapter exists only to satisfy the interface for the kernel; the Land
+// syscall reaches it via the kernel's own guard (top-level only).
+func (realMerger) MergeTrunk(repoPath, targetBranch string, sourceBranches []string, strategy git.Strategy) (git.MergeResult, error) {
+	return git.NewMerger(cmd.MakeExecutor()).MergeTrunk(repoPath, targetBranch, sourceBranches, strategy)
+}
+
 // Compile-time checks that the adapters satisfy the kernel's interfaces.
 var (
 	_ kernel.Spawner = kernelSpawner{}

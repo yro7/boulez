@@ -65,6 +65,19 @@ type Merger interface {
 	// MergeConflict (with the list of conflicted files) on a conflicting merge.
 	// The repo is never left in an aborted state on conflict.
 	Merge(repoPath, targetBranch string, sourceBranches []string, strategy Strategy) (MergeResult, error)
+
+	// MergeTrunk merges sourceBranches into targetBranch, which MAY be a trunk
+	// (main/master). It exists ONLY for the Land syscall (a top-level explicit
+	// request to land onto the trunk). The regular Merge refuses trunks; this
+	// path lifts that single guard for the explicit land case. The host-current-
+	// branch guard is NOT applied here (it lives in the kernel, which knows the
+	// host repo). On conflict, the repo is left in the merging state.
+	//
+	// Callers other than the top-level Land syscall MUST NOT use this method —
+	// workers and orchestrators go through Merge, which defends the trunk in
+	// depth. The kernel enforces who may call Land, so a misbehaving client
+	// cannot reach this path.
+	MergeTrunk(repoPath, targetBranch string, sourceBranches []string, strategy Strategy) (MergeResult, error)
 }
 
 // defaultMerger is the v1 Merger: deterministic git merge.
@@ -82,18 +95,8 @@ func NewMerger(cmdExec cmd.Executor) Merger {
 }
 
 func (m *defaultMerger) Merge(repoPath, targetBranch string, sourceBranches []string, strategy Strategy) (MergeResult, error) {
-	if repoPath == "" {
-		return MergeResult{}, fmt.Errorf("merge: repoPath is required")
-	}
-	if targetBranch == "" {
-		return MergeResult{}, fmt.Errorf("merge: targetBranch is required")
-	}
-	if len(sourceBranches) == 0 {
-		return MergeResult{}, fmt.Errorf("merge: at least one source branch is required")
-	}
-	if strategy != StrategyDefault {
-		// Reserved for future work; v1 only implements the default strategy.
-		return MergeResult{}, fmt.Errorf("merge: strategy %d not implemented in v1 (only StrategyDefault)", strategy)
+	if err := mergeValidate(repoPath, targetBranch, sourceBranches, strategy); err != nil {
+		return MergeResult{}, err
 	}
 
 	// Guard: refuse protected branches. The kernel enforces the same guard at
@@ -103,6 +106,46 @@ func (m *defaultMerger) Merge(repoPath, targetBranch string, sourceBranches []st
 		return MergeResult{Status: MergeConflict, Message: "protected branch"}, ErrProtectedBranch{Branch: targetBranch}
 	}
 
+	return m.mergeInto(repoPath, targetBranch, sourceBranches, strategy)
+}
+
+// MergeTrunk is the trunk-allowed variant of Merge. See the Merger interface
+// doc for the contract: this path is reserved for the top-level Land syscall
+// and lifts ONLY the conventional-trunk guard. The host-current-branch guard
+// is NOT applied here — it lives in the kernel, which knows the host repo.
+func (m *defaultMerger) MergeTrunk(repoPath, targetBranch string, sourceBranches []string, strategy Strategy) (MergeResult, error) {
+	if err := mergeValidate(repoPath, targetBranch, sourceBranches, strategy); err != nil {
+		return MergeResult{}, err
+	}
+	return m.mergeInto(repoPath, targetBranch, sourceBranches, strategy)
+}
+
+// mergeValidate validates the shared preconditions of Merge and MergeTrunk.
+// Kept separate so both paths enforce the same input rules (DRY).
+func mergeValidate(repoPath, targetBranch string, sourceBranches []string, strategy Strategy) error {
+	if repoPath == "" {
+		return fmt.Errorf("merge: repoPath is required")
+	}
+	if targetBranch == "" {
+		return fmt.Errorf("merge: targetBranch is required")
+	}
+	if len(sourceBranches) == 0 {
+		return fmt.Errorf("merge: at least one source branch is required")
+	}
+	if strategy != StrategyDefault {
+		// Reserved for future work; v1 only implements the default strategy.
+		return fmt.Errorf("merge: strategy %d not implemented in v1 (only StrategyDefault)", strategy)
+	}
+	return nil
+}
+
+// mergeInto is the shared body of Merge and MergeTrunk: it checks out the
+// target branch and merges the sources with the given strategy. On a clean
+// merge it returns MergeMerged; on a conflicting merge it returns
+// MergeConflict (with the list of conflicted files) and leaves the repo in
+// the merging state (never auto-aborts). Guards that differ between the two
+// callers (trunk protection) are applied by the respective entrypoints.
+func (m *defaultMerger) mergeInto(repoPath, targetBranch string, sourceBranches []string, strategy Strategy) (MergeResult, error) {
 	// Checkout the target branch. This is the branch the orchestrator merges
 	// INTO; sources merge into it.
 	if out, err := m.runGit(repoPath, "checkout", targetBranch); err != nil {

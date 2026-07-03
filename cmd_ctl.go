@@ -35,6 +35,7 @@ Examples:
   cs2 ctl spawn_worker --repo /path/to/repo --prompt "fix the bug" --program bash
   cs2 ctl get_instance --id <uuid>
   cs2 ctl merge --target-repo /path --target-branch integration --source feat-a,feat-b
+  cs2 ctl land --target-repo /path --target-branch main --source feat-x
 `,
 	}
 	cmd.AddCommand(newCtlListCmd())
@@ -45,6 +46,7 @@ Examples:
 	cmd.AddCommand(newCtlResumeCmd())
 	cmd.AddCommand(newCtlKillCmd())
 	cmd.AddCommand(newCtlMergeCmd())
+	cmd.AddCommand(newCtlLandCmd())
 	cmd.AddCommand(newCtlAsCmd())
 	return cmd
 }
@@ -352,6 +354,46 @@ func newCtlMergeCmd() *cobra.Command {
 	cmd.Flags().StringVar(&targetRepo, "target-repo", "", "repository path (required)")
 	cmd.Flags().StringVar(&targetBranch, "target-branch", "", "branch to merge INTO (required)")
 	cmd.Flags().StringVar(&sources, "source", "", "comma-separated source branches (required)")
+	return cmd
+}
+
+// newCtlLandCmd builds `cs2 ctl land`: the top-level "land to main" syscall.
+// It commits+pushes nothing itself — it merges a SINGLE source branch into a
+// target (which may be main/master). Only a top-level caller may issue it;
+// `cs2 ctl as <id> land` is refused by the kernel (NON_TOP_LEVEL_LAND).
+// The full commit+push+land chain lives in the TUI's LandInstance helper;
+// ctl land is for scripting/recovery on an already-pushed branch.
+func newCtlLandCmd() *cobra.Command {
+	var targetRepo, targetBranch, source string
+	cmd := &cobra.Command{
+		Use:   "land",
+		Short: "Land a source branch into a target branch (top-level; may target main)",
+		Long: `cs2 ctl land merges a single source branch into a target branch of a
+repo, with explicit authority to land onto a trunk (main/master). This is
+the top-level "land to main" syscall; workers and orchestrators cannot
+issue it (they must use merge, which refuses trunks).
+
+Note: land merges only — it does not commit or push the source branch. Use
+this for scripting/recovery once the source is already pushed. The TUI's
+L key is the full commit+push+land gesture.
+
+Example:
+  cs2 ctl land --target-repo /path --target-branch main --source feat-x`,
+		RunE: func(cmd *cobra.Command, args []string) error {
+			if targetRepo == "" || targetBranch == "" || source == "" {
+				return fmt.Errorf("--target-repo, --target-branch and --source are required")
+			}
+			params := map[string]interface{}{
+				"target_repo":   targetRepo,
+				"target_branch": targetBranch,
+				"source":       source,
+			}
+			return rawCtl(kernel.Request{Method: "land", Params: mustJSON(params)})
+		},
+	}
+	cmd.Flags().StringVar(&targetRepo, "target-repo", "", "repository path (required)")
+	cmd.Flags().StringVar(&targetBranch, "target-branch", "main", "branch to land INTO (may be main/master)")
+	cmd.Flags().StringVar(&source, "source", "", "source branch to land (required)")
 	return cmd
 }
 

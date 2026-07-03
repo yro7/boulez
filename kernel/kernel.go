@@ -350,3 +350,41 @@ func (k *Kernel) Merge(caller CallerContext, repoPath, targetBranch string, sour
 	}
 	return res, err
 }
+
+// Land merges a single source branch into a target branch of a repo, with the
+// explicit authority to land onto a trunk (main/master). This is the "land to
+// main" syscall: it bypasses ONLY the conventional-trunk guard, and only for a
+// top-level caller. Workers and orchestrators cannot call it (they must use
+// Merge, which refuses trunks). The host-current-branch guard still applies:
+// you cannot land into the branch you're standing on.
+//
+// v1 lands ONE source branch per call (the instance's own branch). On
+// conflict, MergeConflict is returned and the repo is left for resolution
+// (no silent --abort). There is no plan to update (a top-level caller has no
+// plan) and no RecordMerge (reserved for orchestrators).
+func (k *Kernel) Land(caller CallerContext, repoPath, targetBranch, sourceBranch string, strategy git.Strategy) (git.MergeResult, error) {
+	// Topology guard: only a top-level caller may land onto a trunk. This is
+	// the mirror of the Worker recursion guard — the v1 topology forbids
+	// instances (workers or orchestrators) from touching the trunk.
+	if !caller.IsTopLevel() {
+		return git.MergeResult{Status: git.MergeConflict, Message: "non-top-level land"}, ErrNonTopLevelLand{}
+	}
+
+	// Kernel-level guard (spec decision 7): refuse to land into the host repo's
+	// current branch. The Merger's trunk guard is intentionally lifted for
+	// this path (via MergeTrunk), but the host-current-branch guard is NOT —
+	// it would clobber the user's working tree. The Merger cannot know the
+	// host repo, so this guard lives here, non-contournable by the client.
+	if isKernelProtected(k.protectedBranches, targetBranch) {
+		return git.MergeResult{Status: git.MergeConflict, Message: "protected branch"}, git.ErrProtectedBranch{Branch: targetBranch}
+	}
+
+	k.mu.Lock()
+	merger := k.merger
+	k.mu.Unlock()
+	if merger == nil {
+		return git.MergeResult{}, fmt.Errorf("kernel: no merger wired")
+	}
+
+	return merger.MergeTrunk(repoPath, targetBranch, []string{sourceBranch}, strategy)
+}
