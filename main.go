@@ -30,6 +30,7 @@ var (
 		RunE: func(cmd *cobra.Command, args []string) error {
 			ctx := context.Background()
 			log.Initialize(daemonFlag)
+			log.SetPrintPathOnClose(!daemonFlag) // daemon: silent; interactive: surface log path
 			defer log.Close()
 
 			if daemonFlag {
@@ -72,6 +73,7 @@ var (
 		Short: "Reset all stored instances",
 		RunE: func(cmd *cobra.Command, args []string) error {
 			log.Initialize(false)
+			log.SetPrintPathOnClose(true) // human-facing: surface log path on exit
 			defer log.Close()
 
 			state := config.LoadState()
@@ -109,6 +111,7 @@ var (
 		Short: "Print debug information like config paths",
 		RunE: func(cmd *cobra.Command, args []string) error {
 			log.Initialize(false)
+			log.SetPrintPathOnClose(true) // human-facing: surface log path on exit
 			defer log.Close()
 
 			cfg := config.LoadConfig()
@@ -152,6 +155,7 @@ func init() {
 	rootCmd.AddCommand(debugCmd)
 	rootCmd.AddCommand(versionCmd)
 	rootCmd.AddCommand(resetCmd)
+	rootCmd.AddCommand(newCtlCmd())
 }
 
 func main() {
