@@ -1,6 +1,7 @@
 package ui
 
 import (
+	"claude-squad/host"
 	"claude-squad/log"
 	"claude-squad/program"
 	"claude-squad/session"
@@ -76,6 +77,29 @@ func programBadge(programCmd string) string {
 	return lipgloss.NewStyle().
 		Foreground(lipgloss.Color(color)).
 		Render(fmt.Sprintf("[%s]", name))
+}
+
+// envBadgeColor is the color for the environment (host) badge. A neutral
+// steel-blue so it never clashes with the per-agent program badge colors or
+// the repo palette: it is meta-information (where), semantically distinct from
+// the agent (what) and the repo (which).
+const envBadgeColor = "#6E7B8B"
+
+// envBadge renders a colored [host] pill for the execution environment of an
+// instance, mirroring the program/repo badges. The local host is implicit (it
+// is the machine running cs2) and renders nothing, so a local-only list stays
+// uncluttered — exactly like the repo badge is hidden in single-repo lists.
+// Only a remote (ssh) host gets a badge, because that is the only case where
+// "where" is not implied. The background is taken from the surrounding line
+// style so the badge blends on the selected (highlighted) row.
+func envBadge(hostName string, bg lipgloss.TerminalColor) string {
+	if hostName == "" || hostName == host.LocalAlias {
+		return ""
+	}
+	return lipgloss.NewStyle().
+		Foreground(lipgloss.Color(envBadgeColor)).
+		Background(bg).
+		Render(fmt.Sprintf("[%s]", hostName))
 }
 
 // repoBadgePalette is a set of distinct colors assigned to repo names. A
@@ -269,6 +293,21 @@ func (r *InstanceRenderer) Render(i *session.Instance, idx int, selected bool, h
 				badge = " " + repoBadge(repoName, descS.GetBackground())
 				remainingWidth -= badgeWidth
 			}
+		}
+	}
+
+	// Environment (host) badge: a [host] pill for remote (ssh) instances only.
+	// Local is implicit (the machine running cs2) and renders nothing, so a
+	// local-only list stays uncluttered. Unlike the repo badge this is shown in
+	// both single- and multi-repo lists: "where" is never implied by the repo,
+	// and the env badge is most useful precisely when one repo runs on several
+	// hosts. Sits after the repo badge, before the diff stats.
+	hostName := i.Host().Name()
+	if eb := envBadge(hostName, descS.GetBackground()); eb != "" {
+		envWidth := runewidth.StringWidth(eb) + 1 // +1 for the leading separator space
+		if remainingWidth >= envWidth {
+			badge += " " + eb
+			remainingWidth -= envWidth
 		}
 	}
 
