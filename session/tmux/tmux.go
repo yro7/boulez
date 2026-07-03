@@ -3,6 +3,7 @@ package tmux
 import (
 	"bytes"
 	"claude-squad/cmd"
+	"claude-squad/host"
 	"claude-squad/log"
 	"claude-squad/program"
 	"context"
@@ -32,7 +33,7 @@ type TmuxSession struct {
 	// agent-specific strings. Adding a new agent never touches this file.
 	adapter program.Adapter
 	// ptyFactory is used to create a PTY for the tmux session.
-	ptyFactory PtyFactory
+	ptyFactory host.PtyFactory
 	// cmdExec is used to execute commands in the tmux session.
 	cmdExec cmd.Executor
 
@@ -74,15 +75,15 @@ func toClaudeSquadTmuxName(str string) string {
 
 // NewTmuxSession creates a new TmuxSession with the given name and program.
 func NewTmuxSession(name string, program string) *TmuxSession {
-	return newTmuxSession(name, program, MakePtyFactory(), cmd.MakeExecutor())
+	return newTmuxSession(name, program, host.LocalPtyFactory(), cmd.MakeExecutor())
 }
 
 // NewTmuxSessionWithDeps creates a new TmuxSession with provided dependencies for testing.
-func NewTmuxSessionWithDeps(name string, program string, ptyFactory PtyFactory, cmdExec cmd.Executor) *TmuxSession {
+func NewTmuxSessionWithDeps(name string, program string, ptyFactory host.PtyFactory, cmdExec cmd.Executor) *TmuxSession {
 	return newTmuxSession(name, program, ptyFactory, cmdExec)
 }
 
-func newTmuxSession(name string, programCmd string, ptyFactory PtyFactory, cmdExec cmd.Executor) *TmuxSession {
+func newTmuxSession(name string, programCmd string, ptyFactory host.PtyFactory, cmdExec cmd.Executor) *TmuxSession {
 	return &TmuxSession{
 		sanitizedName: toClaudeSquadTmuxName(name),
 		program:       programCmd,
