@@ -1,58 +1,50 @@
 # Roadmap & Ideas — cs2
 
-> Idées repoussées (pas au scope actuel) et décisions produits en attente.
-> Ce fichier est un parking, pas un plan d'action. Rien ici n'est engagé.
+> Idées repoussées (pas au scope actuel), décisions produits en attente,
+> et choses implémentées. Ce fichier est un parking, pas un plan d'action.
+> Rien ici n'est engagé.
+
+---
+
+## Implémenté
+
+### Import one-shot des repos depuis les IDE (VS Code et forks)
+
+**Commande.** `cs2 repo-import` (avec `--dry-run` et `--ide <name>`).
+Code isolé dans le package `ideimport/`.
+
+**Contexte / idée reçue.** VS Code ne maintient PAS une liste de repos git.
+Il a une liste de *dossiers* récemment ouverts (« Open Recent »), stockée
+dans `~/Library/Application Support/<IDE>/User/globalStorage/storage.json`
+(macOS), format interne non stable. Donc « récupérer les repos de VS Code » =
+en pratique parser ce `storage.json`, puis filtrer pour ne garder que les
+repos git (`git.IsGitRepo`).
+
+**Décision produit.** Import *one-shot, manuel* — jamais de couplage permanent
+(lecture à chaque démarrage interdite). Raisons : format non documenté et
+instable, dépendance à ce que l'utilisateur utilise un IDE VS Code-fork —
+tout cela contredirait le principe « standalone, agent-agnostic » du fork.
+Si le format IDE casse, l'import échoue ou se vide, mais cs2 tourne toujours.
+
+**Implémentation.**
+
+- Scan tous les IDEs VS Code-forks installés par défaut, ou un seul via
+  `--ide` : `vscode`, `cursor`, `windsurf`, `antigravity`, `vscodium`,
+  `pearai`, `void`, `trae`.
+- Parse robuste : **walk récursif du JSON**, ne dépend d'aucun nom de clé —
+  survit aux variations de format entre IDEs et versions.
+- Ne collecte que les URLs `file://` (les paths absolus nus sont ignorés pour
+  éviter de récolter machine IDs / tokens — AGENTS.md : pas de fuite sensible).
+- `--dry-run` lit le registre en lecture seule pour distinguer nouveau vs déjà
+  connu, sans rien écrire.
+- Écriture idempotente via `Registry.Add` (dédup + résolution absolue).
 
 ---
 
 ## Idées repoussées
 
-### Import one-shot des repos depuis VS Code
-
-**Contexte.** Lors de la discussion sur la source des repos connus pour le
-multi-repo, l'idée est venue de réutiliser la liste de dossiers récemment
-ouverts que VS Code maintient, pour amorcer le registre cs2 sans saisie
-manuelle.
-
-**Ce que VS Code maintient réellement (important — idée reçue).** VS Code
-ne maintient PAS une liste de repos git. Il a :
-
-- "Open Recent" = liste de *dossiers* récemment ouverts, pas spécifiquement
-  git. Stockée dans `~/Library/Application Support/Code/User/globalStorage/storage.json`
-  (macOS), format interne non stable, susceptible de casser à chaque update.
-- Panneau Source Control : détecte le git du workspace *ouvert*, point.
-  Pas de registre global.
-- GitLens / extensions tierces : peuvent lister des repos, mais par extension.
-
-Donc "récupérer les repos de VS Code" = en pratique parser le `storage.json`
-des dossiers récents, puis filtrer pour ne garder que ceux qui sont des repos
-git.
-
-**Décision.** Ne PAS coupler cs2 à VS Code en continu (lecture à chaque
-démarrage). Raisons : format non documenté et instable, support macOS vs
-Linux paths divergents, dépendance à ce que l'utilisateur utilise VS Code —
-tout cela contredit le principe "standalone, agent-agnostic" du fork
-(voir `AGENTS.md`).
-
-**Idée repoussée (à réévaluer si besoin).** À la place, un import *one-shot*,
-lancé manuellement :
-
-```
-cs2 repo import-vscode
-```
-
-- Parse `storage.json` une seule fois, à la demande de l'utilisateur.
-- Filtre les chemins pour ne garder que les repos git (`git.IsGitRepo`).
-- Peuple le registre cs2 avec les résultats.
-- C'est un import ponctuel, pas un couplage permanent : si le format VS Code
-  change, l'import casse (ou se vide) mais cs2 tourne toujours.
-- À isoler dans un fichier dédié (`config/vscode_import.go` ou similaire)
-  pour garder la fragilité contenue.
-
-**Pourquoi ce n'est pas implémenté maintenant.** Le registre cs2 auto-rempli
-à l'usage suffit pour démarrer le multi-repo. L'import VS Code n'est qu'un
-confort d'amorçage ; il sera pertinent uniquement si l'utilisateur part de
-zéro avec beaucoup de repos déjà connus de VS Code. À réévaluer à ce moment.
+*(Aucune idée repoussée pour l'instant — l'import IDE, anciennement ici, a
+été implémenté, voir ci-dessus.)*
 
 ---
 

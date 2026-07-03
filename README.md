@@ -12,6 +12,33 @@
 >
 > Upstream documentation below is preserved as-is for feature reference.
 
+## cs2: repo registry & one-shot IDE import
+
+cs2 keeps a registry of known repositories (`~/.cs2/repos.json`) used to
+pre-populate the repo selector when creating an instance. Repos are added to
+the registry automatically as you use them; you can also **import them in a
+one-shot, manual pass** from the IDEs you already use.
+
+```bash
+# Preview (read-only) what would be imported, without writing:
+cs2 repo-import --dry-run
+
+# Import: scan all installed VS Code-family IDEs, keep only git repos,
+# add the new ones to the registry:
+cs2 repo-import
+
+# Restrict the scan to a single IDE:
+cs2 repo-import --ide cursor
+```
+
+Supported IDEs (all VS Code-family forks sharing the same `storage.json`
+layout): `vscode`, `cursor`, `windsurf`, `antigravity`, `vscodium`, `pearai`,
+`void`, `trae`.
+
+This is a **one-shot, manual** import — cs2 never reads IDE state
+automatically, so a format change in an IDE's `storage.json` never affects
+normal operation. The IDE parsing is isolated in the `ideimport/` package.
+
 ---
 
 # Claude Squad (upstream reference) [![CI](https://github.com/smtg-ai/claude-squad/actions/workflows/build.yml/badge.svg)](https://github.com/smtg-ai/claude-squad/actions/workflows/build.yml) [![GitHub Release](https://img.shields.io/github/v/release/smtg-ai/claude-squad)](https://github.com/smtg-ai/claude-squad/releases/latest)
