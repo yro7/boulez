@@ -105,6 +105,7 @@ func TestDefaultConfig(t *testing.T) {
 		assert.NotNil(t, config)
 		assert.NotEmpty(t, config.DefaultProgram)
 		assert.False(t, config.AutoYes)
+		assert.False(t, config.NotifyOnReady)
 		assert.Equal(t, 1000, config.DaemonPollInterval)
 		assert.NotEmpty(t, config.BranchPrefix)
 		assert.True(t, strings.HasSuffix(config.BranchPrefix, "/"))
