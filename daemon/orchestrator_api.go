@@ -112,5 +112,29 @@ func (a *orchestratorAPI) SendPrompt(id, prompt string) error {
 	return a.k.SendPrompt(id, prompt)
 }
 
+// IsAlive reports whether the orchestrator's tmux session is currently alive.
+// Ensure uses this to distinguish a live instance 0 from a dead record left
+// behind when the user killed the agent (Ctrl+D) — the symptom that motivated
+// this check. Delegated to the kernel, which holds the live *session.Instance;
+// TmuxAlive is a read-only tmux probe (no mutation).
+func (a *orchestratorAPI) IsAlive(id string) bool {
+	inst, err := a.k.InstanceByID(id)
+	if err != nil {
+		// Unknown ID — treat as not alive so Ensure evicts the stale record
+		// (rather than pinning on a record that points at nothing).
+		return false
+	}
+	return inst.TmuxAlive()
+}
+
+// Kill removes an instance from the fleet entirely. Ensure uses it to evict a
+// dead orchestrator record before respawning a fresh one, so the fleet never
+// carries two orchestrator slots (one dead, one live) competing for instance 0.
+// This goes through the kernel (the single writer) so the eviction is
+// persisted like any other mutation.
+func (a *orchestratorAPI) Kill(id string) error {
+	return a.k.Kill(id)
+}
+
 // Compile-time check that orchestratorAPI satisfies the bootstrap interface.
 var _ orchestrator.API = (*orchestratorAPI)(nil)
