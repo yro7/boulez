@@ -65,6 +65,18 @@ func (pp *ProfilePicker) GetSelectedProfile() config.Profile {
 	return pp.profiles[pp.cursor]
 }
 
+// SetSelectedByName moves the cursor to the profile with the given name. No-op
+// (keeps the current selection) if no profile matches, so a stale preference
+// never breaks the picker — the user just sees the default.
+func (pp *ProfilePicker) SetSelectedByName(name string) {
+	for i, p := range pp.profiles {
+		if p.Name == name {
+			pp.cursor = i
+			return
+		}
+	}
+}
+
 // HasMultiple returns true if there is more than one profile to choose from.
 func (pp *ProfilePicker) HasMultiple() bool {
 	return len(pp.profiles) > 1
@@ -89,7 +101,7 @@ func (pp *ProfilePicker) Render() string {
 	s.WriteString(ppLabelStyle.Render("Profile"))
 
 	if pp.HasMultiple() && pp.focused {
-		s.WriteString(ppDimStyle.Render("  ←/→ to change"))
+		s.WriteString(ppDimStyle.Render("  ←/→ to change · ctrl+s to save as repo default"))
 	}
 	s.WriteString("\n\n")
 
