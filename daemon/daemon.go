@@ -49,7 +49,12 @@ func RunDaemon(cfg *config.Config) error {
 				// We only store started instances, but check anyway.
 				if instance.Started() && !instance.Paused() {
 					if _, hasPrompt := instance.HasUpdated(); hasPrompt {
-						instance.TapEnter()
+						// Only resolve prompts the agent's adapter knows how to dismiss
+						// (permissions/trust). A bare "ready" prompt (agent waiting for free
+						// user input) is NOT auto-dismissed: tapping Enter there would
+						// send an empty input to the agent. Agent-specific knowledge of
+						// what is resolvable lives in program.Adapter.
+						instance.CheckAndHandleTrustPrompt()
 						if err := instance.UpdateDiffStats(); err != nil {
 							if everyN.ShouldLog() {
 								log.WarningLog.Printf("could not update diff stats for %s: %v", instance.Title, err)
