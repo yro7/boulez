@@ -84,8 +84,10 @@ func (r *Registry) save(aliases []string) error {
 	return os.WriteFile(r.path, data, 0644)
 }
 
-// List returns the known ssh aliases in stable insertion order. LocalAlias is
-// never present (it is always available implicitly).
+// List returns the known ssh aliases. Order is MRU (most-recently-used first):
+// selecting an alias via Touch moves it to the head. Entries never touched
+// remain in insertion order after the touched ones. LocalAlias is never
+// present (it is always available implicitly).
 func (r *Registry) List() ([]string, error) {
 	return r.load()
 }
@@ -121,6 +123,39 @@ func (r *Registry) Add(alias string) error {
 		}
 	}
 	return r.save(append(aliases, alias))
+}
+
+// Touch moves the given alias to the head of the registry (most-recently-used
+// first), so it is offered at the top of the selector next time. An alias not
+// in the registry is a no-op — use Add to register a new alias first.
+// LocalAlias is never stored, so touching it is a no-op. Insertion order of
+// the other entries is preserved. Only persists when something actually
+// changed.
+func (r *Registry) Touch(alias string) error {
+	if alias == "" || alias == LocalAlias {
+		return nil
+	}
+	aliases, err := r.load()
+	if err != nil {
+		return err
+	}
+	idx := -1
+	for i, a := range aliases {
+		if a == alias {
+			idx = i
+			break
+		}
+	}
+	if idx < 0 {
+		return nil
+	}
+	kept := make([]string, 0, len(aliases)-1)
+	for i, a := range aliases {
+		if i != idx {
+			kept = append(kept, a)
+		}
+	}
+	return r.save(append([]string{alias}, kept...))
 }
 
 // Remove unregisters an ssh alias. Removing an unknown alias is a no-op
