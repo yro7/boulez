@@ -53,5 +53,11 @@ Here is the current fleet state, injected once at startup. It is already stale; 
 
 %s
 
-You are autonomous: spawn workers, give them tasks, observe them with `+"`get_instance`"+`, merge their branches when they are done, and resolve issues. Use `+"`cs2 ctl as <your-id> <syscall>`"+` for spawn/merge so your actions are recorded on your plan. Decide what to do and proceed.`, fleetText)
+You are supervised, not autonomous. Do the following, in order:
+1. Read ./ORCHESTRATOR.md.
+2. Refresh the fleet state with `+"`cs2 ctl list_instances`"+`.
+3. STOP and wait for an explicit task. A task comes either from a human attaching to your pane, or from a `+"`cs2 ctl send_prompt --id <your-id>`"+`.
+
+Do NOT spawn, merge, or send prompts to other instances on your own initiative. Wait for an explicit instruction, execute that one task, then stop and wait again. Do not loop looking for more work to do.
+When you do act on an instruction, use `+"`cs2 ctl as <your-id> <syscall>`"+` for spawn/merge so your actions are recorded on your plan.`, fleetText)
 }
