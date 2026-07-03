@@ -217,6 +217,14 @@ func (i *Instance) SetSelectedBranch(branch string) {
 	i.selectedBranch = branch
 }
 
+// SetAutoYes toggles the per-instance AutoYes flag. Persisted on InstanceData
+// and respected by the daemon (which no longer forces it globally). Used by
+// the TUI toggle: flipping on a remote host is allowed but the user should
+// be aware it auto-approves agent actions on a distant machine.
+func (i *Instance) SetAutoYes(on bool) {
+	i.AutoYes = on
+}
+
 // firstTimeSetup is true if this is a new instance. Otherwise, it's one loaded from storage.
 func (i *Instance) Start(firstTimeSetup bool) error {
 	if i.Title == "" {

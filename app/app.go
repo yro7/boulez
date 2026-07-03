@@ -183,9 +183,9 @@ func newHome(ctx context.Context, program string, autoYes bool) *home {
 	for _, instance := range instances {
 		// Call the finalizer immediately.
 		h.list.AddInstance(instance)()
-		if autoYes {
-			instance.AutoYes = true
-		}
+		// AutoYes is per-instance, restored from storage. Do not force the
+		// global --auto-yes flag onto loaded instances: a remote instance that
+		// was created with AutoYes off stays off.
 	}
 
 	return h
@@ -386,9 +386,10 @@ func (m *home) Update(msg tea.Msg) (tea.Model, tea.Cmd) {
 		if err := m.storage.SaveInstances(m.list.GetInstances()); err != nil {
 			return m, m.handleError(err)
 		}
-		if m.autoYes {
-			msg.instance.AutoYes = true
-		}
+		// New instances inherit AutoYes from their host's policy: local follows
+		// the global --auto-yes flag (today's behaviour); remote defaults to off.
+		// The user can toggle it per-instance afterwards.
+		msg.instance.AutoYes = msg.instance.Host().AutoYesDefault()
 
 		if msg.promptAfterName {
 			m.state = statePrompt
@@ -808,6 +809,19 @@ func (m *home) handleKeyPress(msg tea.KeyMsg) (mod tea.Model, cmd tea.Cmd) {
 			return m, m.instanceChanged()
 		}
 		return m, nil
+	case keys.KeyToggleAutoYes:
+		selected := m.list.GetSelectedInstance()
+		if selected == nil {
+			return m, nil
+		}
+		// Toggle per-instance. The user can flip AutoYes on a remote host,
+		// but should be aware it auto-approves agent actions on a distant
+		// machine. The new value is persisted.
+		selected.SetAutoYes(!selected.AutoYes)
+		if err := m.storage.SaveInstances(m.list.GetInstances()); err != nil {
+			return m, m.handleError(err)
+		}
+		return m, m.instanceChanged()
 	case keys.KeyResume:
 		selected := m.list.GetSelectedInstance()
 		if selected == nil || selected.Status == session.Loading {
