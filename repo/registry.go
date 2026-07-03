@@ -82,7 +82,9 @@ func (r *Registry) save(paths []string) error {
 	return os.WriteFile(r.path, data, 0644)
 }
 
-// List returns the known repository paths in stable insertion order.
+// List returns the known repository paths. Order is MRU (most-recently-used
+// first): selecting a repo via Touch moves it to the head. Entries never
+// touched remain in insertion order after the touched ones.
 func (r *Registry) List() ([]string, error) {
 	return r.load()
 }
@@ -150,6 +152,39 @@ func (r *Registry) Remove(path string) error {
 		return nil
 	}
 	return r.save(kept)
+}
+
+// Touch moves the given path to the head of the registry (most-recently-used
+// first), so it is offered at the top of the selector next time. The path is
+// resolved to absolute first. A path not in the registry is a no-op — use Add
+// to register a new path first. Insertion order of the other entries is
+// preserved. Only persists when something actually changed.
+func (r *Registry) Touch(path string) error {
+	abs, err := resolveAbsolute(path)
+	if err != nil {
+		return err
+	}
+	paths, err := r.load()
+	if err != nil {
+		return err
+	}
+	idx := -1
+	for i, p := range paths {
+		if p == abs {
+			idx = i
+			break
+		}
+	}
+	if idx < 0 {
+		return nil
+	}
+	kept := make([]string, 0, len(paths)-1)
+	for i, p := range paths {
+		if i != idx {
+			kept = append(kept, p)
+		}
+	}
+	return r.save(append([]string{abs}, kept...))
 }
 
 // resolveAbsolute returns the absolute, cleaned form of path. Relative paths

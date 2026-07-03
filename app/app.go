@@ -1205,6 +1205,11 @@ func (m *home) handleHostSelectState(msg tea.KeyMsg) (tea.Model, tea.Cmd) {
 	if m.hostSelector.IsFreeAlias() && alias != "local" && m.hostRegistry != nil {
 		_ = m.hostRegistry.Add(alias)
 	}
+	// MRU: move the selected alias to the head of the registry so it is
+	// offered at the top next time. Best-effort; local is a no-op.
+	if alias != "local" && m.hostRegistry != nil {
+		_ = m.hostRegistry.Touch(alias)
+	}
 
 	promptFlow := m.repoSelectPrompt
 	m.pendingHost = host.Lookup(alias)
@@ -1290,6 +1295,11 @@ func (m *home) handleRepoSelectState(msg tea.KeyMsg) (tea.Model, tea.Cmd) {
 	// instance creation.
 	if m.repoSelector.IsFreePath() && m.repoRegistry != nil {
 		_ = m.repoRegistry.Add(selected)
+	}
+	// MRU: move the selected repo to the head of the registry so it is
+	// offered at the top next time. Best-effort.
+	if m.repoRegistry != nil {
+		_ = m.repoRegistry.Touch(selected)
 	}
 
 	promptFlow := m.repoSelectPrompt
