@@ -333,3 +333,83 @@ func TestKernel_LiveInstances_IsSingleSourceOfTruth(t *testing.T) {
 	live[0] = nil
 	assert.NotNil(t, k.LiveInstances()[0], "returned slice must be a copy")
 }
+
+// --- Land syscall ---
+
+// TestKernel_Land_TopLevel_AcceptsMain proves the Land syscall accepts a
+// trunk target (main) for a top-level caller and delegates to MergeTrunk.
+func TestKernel_Land_TopLevel_AcceptsMain(t *testing.T) {
+	merger := &fakeMerger{result: git.MergeResult{Status: git.MergeMerged}}
+	k := New(nil, WithMerger(merger), WithoutAutosave())
+
+	res, err := k.Land(CallerContext{}, "/repo", "main", "feat", git.StrategyDefault)
+	require.NoError(t, err)
+	assert.Equal(t, git.MergeMerged, res.Status)
+	require.Len(t, merger.calls, 1)
+	c := merger.calls[0]
+	assert.True(t, c.trunk, "kernel must route via MergeTrunk, not Merge")
+	assert.Equal(t, "main", c.target)
+	assert.Equal(t, []string{"feat"}, c.sources)
+}
+
+// TestKernel_Land_WorkerRefused proves the topology guard: a Worker caller
+// is rejected with ErrNonTopLevelLand, before the merger runs.
+func TestKernel_Land_WorkerRefused(t *testing.T) {
+	merger := &fakeMerger{}
+	k := New(nil, WithMerger(merger), WithoutAutosave())
+
+	_, err := k.Land(CallerContext{CallerID: "w-1", Kind: session.KindWorker}, "/repo", "main", "feat", git.StrategyDefault)
+	require.Error(t, err)
+	var e ErrNonTopLevelLand
+	require.ErrorAs(t, err, &e)
+	assert.Empty(t, merger.calls, "guard fires before the merger")
+}
+
+// TestKernel_Land_OrchestratorRefused proves orchestrators are also barred
+// from the trunk — they must use Merge, which refuses protected branches.
+func TestKernel_Land_OrchestratorRefused(t *testing.T) {
+	merger := &fakeMerger{}
+	k := New(nil, WithMerger(merger), WithoutAutosave())
+
+	_, err := k.Land(CallerContext{CallerID: "o-1", Kind: session.KindOrchestrator}, "/repo", "main", "feat", git.StrategyDefault)
+	require.Error(t, err)
+	var e ErrNonTopLevelLand
+	require.ErrorAs(t, err, &e)
+	assert.Empty(t, merger.calls)
+}
+
+// TestKernel_Land_HostCurrentBranchStillRefused proves the host-current-branch
+// guard is NOT lifted for Land: you cannot land into the branch you're
+// standing on, even as a top-level caller. Only the conventional-trunk guard
+// is lifted.
+func TestKernel_Land_HostCurrentBranchStillRefused(t *testing.T) {
+	merger := &fakeMerger{result: git.MergeResult{Status: git.MergeMerged}}
+	k := New(nil, WithMerger(merger), WithoutAutosave(), WithProtectedBranches([]string{"integration"}))
+
+	_, err := k.Land(CallerContext{}, "/repo", "integration", "feat", git.StrategyDefault)
+	require.Error(t, err)
+	var pbe git.ErrProtectedBranch
+	require.ErrorAs(t, err, &pbe)
+	assert.Equal(t, "integration", pbe.Branch)
+	assert.Empty(t, merger.calls, "host-current-branch guard fires before the merger")
+}
+
+// TestKernel_Land_DelegatesToMergeTrunk pins the seam: Land routes through
+// MergeTrunk (the trunk-allowed Merger path), never Merge. The fake records
+// which entrypoint was hit.
+func TestKernel_Land_DelegatesToMergeTrunk(t *testing.T) {
+	merger := &fakeMerger{result: git.MergeResult{Status: git.MergeMerged}}
+	k := New(nil, WithMerger(merger), WithoutAutosave())
+
+	_, err := k.Land(CallerContext{}, "/repo", "main", "feat", git.StrategyDefault)
+	require.NoError(t, err)
+	require.Len(t, merger.calls, 1)
+	assert.True(t, merger.calls[0].trunk, "Land must delegate to MergeTrunk, not Merge")
+}
+
+// TestKernel_Land_NoMergerWired proves a misconfigured kernel fails loudly.
+func TestKernel_Land_NoMergerWired(t *testing.T) {
+	k := New(nil, WithoutAutosave()) // real merger default → git on /nonexistent
+	_, err := k.Land(CallerContext{}, "/nonexistent", "main", "feat", git.StrategyDefault)
+	assert.Error(t, err)
+}

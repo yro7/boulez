@@ -32,6 +32,17 @@ func (ErrNestedOrchestrator) Error() string {
 	return "kernel: an orchestrator cannot spawn another orchestrator (super-orchestrator hierarchy not yet supported)"
 }
 
+// ErrNonTopLevelLand is the topology guard for the Land syscall: only a
+// top-level caller (`cs2 ctl` / TUI) may land onto a trunk. Workers and
+// orchestrators must use Merge, which refuses trunks in depth. This mirrors
+// the recursion guard's intent: the v1 topology forbids instances from
+// touching the trunk.
+type ErrNonTopLevelLand struct{}
+
+func (ErrNonTopLevelLand) Error() string {
+	return "kernel: only a top-level caller may land onto a trunk (workers and orchestrators must use Merge)"
+}
+
 // isKernelProtected reports whether branch is in the kernel-level protected
 // set (the host repo's current branch + any extra the daemon injected). The
 // comparison is case-insensitive to match git's branch name normalisation
