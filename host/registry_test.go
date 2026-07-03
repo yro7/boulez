@@ -75,7 +75,68 @@ func TestRegistry_CorruptFileSelfHeals(t *testing.T) {
 	assert.Empty(t, got)
 }
 
-// TestLookup mirrors the persistence model: "local" → LocalHost, anything
+// TestRegistry_RemoveIsIdempotent covers Remove semantics.
+func TestRegistry_RemoveIsIdempotent(t *testing.T) {
+	path := filepath.Join(t.TempDir(), "hosts.json")
+	r := NewRegistryAt(path)
+
+	require.NoError(t, r.Add("dev"))
+	require.NoError(t, r.Add("gpu"))
+	require.NoError(t, r.Remove("dev"))
+	got, err := r.List()
+	require.NoError(t, err)
+	assert.Equal(t, []string{"gpu"}, got)
+
+	// Remove unknown is a no-op.
+	require.NoError(t, r.Remove("ghost"))
+	got, err = r.List()
+	require.NoError(t, err)
+	assert.Equal(t, []string{"gpu"}, got)
+}
+
+// TestRegistry_TouchMovesAliasToHead covers the MRU ordering contract.
+func TestRegistry_TouchMovesAliasToHead(t *testing.T) {
+	path := filepath.Join(t.TempDir(), "hosts.json")
+	r := NewRegistryAt(path)
+
+	require.NoError(t, r.Add("dev"))
+	require.NoError(t, r.Add("gpu"))
+	require.NoError(t, r.Add("prod"))
+
+	require.NoError(t, r.Touch("dev"))
+	got, err := r.List()
+	require.NoError(t, err)
+	assert.Equal(t, []string{"dev", "gpu", "prod"}, got)
+
+	// Touch a middle entry.
+	require.NoError(t, r.Touch("gpu"))
+	got, err = r.List()
+	require.NoError(t, err)
+	assert.Equal(t, []string{"gpu", "dev", "prod"}, got)
+}
+
+func TestRegistry_TouchUnknownIsNoOp(t *testing.T) {
+	path := filepath.Join(t.TempDir(), "hosts.json")
+	r := NewRegistryAt(path)
+	require.NoError(t, r.Add("dev"))
+
+	require.NoError(t, r.Touch("ghost"))
+	got, err := r.List()
+	require.NoError(t, err)
+	assert.Equal(t, []string{"dev"}, got)
+}
+
+func TestRegistry_TouchLocalAliasIsNoOp(t *testing.T) {
+	path := filepath.Join(t.TempDir(), "hosts.json")
+	r := NewRegistryAt(path)
+	require.NoError(t, r.Add("dev"))
+
+	require.NoError(t, r.Touch(LocalAlias))
+	got, err := r.List()
+	require.NoError(t, err)
+	assert.Equal(t, []string{"dev"}, got)
+	assert.NotContains(t, got, LocalAlias)
+}
 // else → SSHHost bound to the alias. FromInstanceData relies on this.
 func TestLookup(t *testing.T) {
 	_, ok := Lookup(LocalAlias).(LocalHost)
