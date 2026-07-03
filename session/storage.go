@@ -9,6 +9,10 @@ import (
 
 // InstanceData represents the serializable data of an Instance
 type InstanceData struct {
+	// ID is the stable, immutable instance handle. May be empty for
+	// instances persisted before this field existed; FromInstanceData
+	// backfills one in that case.
+	ID        string    `json:"id"`
 	Title     string    `json:"title"`
 	Path      string    `json:"path"`
 	Branch    string    `json:"branch"`
@@ -18,6 +22,11 @@ type InstanceData struct {
 	CreatedAt time.Time `json:"created_at"`
 	UpdatedAt time.Time `json:"updated_at"`
 	AutoYes   bool      `json:"auto_yes"`
+
+	// Kind is the instance role (worker vs orchestrator). Persisted so the
+	// role survives a restart. Defaults to KindWorker for legacy data (zero
+	// value), which is the only role that existed before this field.
+	Kind      Kind      `json:"kind"`
 
 	Program   string          `json:"program"`
 	Host      string          `json:"host"`
