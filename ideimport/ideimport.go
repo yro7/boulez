@@ -170,13 +170,16 @@ func (i *Importer) Scan() ([]FoundRepo, []Warning, error) {
 	return found, warnings, nil
 }
 
-// specsToScan returns the IDE specs this importer will scan.
-//
-// NOTE (commit 3a): always the single Antigravity spec — the only IDE
-// verified on a dev machine — to prove the mechanism end-to-end. Commit 3b
-// generalises to the full knownIDEs list (or the one named by --ide).
+// specsToScan returns the IDE specs this importer will scan: all known IDEs,
+// or just the one named by --ide when ideName is set (validated in the
+// constructor, so lookupIDE here is defensive).
 func (i *Importer) specsToScan() []ideSpec {
-	return []ideSpec{{name: "Antigravity", dirName: "Antigravity IDE", canon: "antigravity"}}
+	if i.ideName != "" {
+		if spec, ok := lookupIDE(i.ideName); ok {
+			return []ideSpec{spec}
+		}
+	}
+	return knownIDEs
 }
 
 // scanOne scans a single IDE's storage.json. Returns the discovered git repos
