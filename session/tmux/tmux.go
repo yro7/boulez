@@ -4,6 +4,7 @@ import (
 	"bytes"
 	"claude-squad/cmd"
 	"claude-squad/log"
+	"claude-squad/program"
 	"context"
 	"crypto/sha256"
 	"errors"
@@ -19,11 +20,6 @@ import (
 	"github.com/creack/pty"
 )
 
-const ProgramClaude = "claude"
-
-const ProgramAider = "aider"
-const ProgramGemini = "gemini"
-
 // TmuxSession represents a managed tmux session
 type TmuxSession struct {
 	// Initialized by NewTmuxSession
@@ -31,6 +27,10 @@ type TmuxSession struct {
 	// The name of the tmux session and the sanitized name used for tmux commands.
 	sanitizedName string
 	program       string
+	// adapter carries the agent-specific detection logic for t.program.
+	// Resolved once at construction via program.Lookup; tmux.go itself holds no
+	// agent-specific strings. Adding a new agent never touches this file.
+	adapter program.Adapter
 	// ptyFactory is used to create a PTY for the tmux session.
 	ptyFactory PtyFactory
 	// cmdExec is used to execute commands in the tmux session.
@@ -59,6 +59,11 @@ type TmuxSession struct {
 
 const TmuxPrefix = "claudesquad_"
 
+// Compile-time guarantee that *TmuxSession satisfies program.Responder, so the
+// adapter's Resolve callbacks (TapEnter/TapDAndEnter/SendKeys) can act on a
+// session. If this ever breaks, the program.Adapter seam is broken.
+var _ program.Responder = (*TmuxSession)(nil)
+
 var whiteSpaceRegex = regexp.MustCompile(`\s+`)
 
 func toClaudeSquadTmuxName(str string) string {
@@ -77,10 +82,11 @@ func NewTmuxSessionWithDeps(name string, program string, ptyFactory PtyFactory, 
 	return newTmuxSession(name, program, ptyFactory, cmdExec)
 }
 
-func newTmuxSession(name string, program string, ptyFactory PtyFactory, cmdExec cmd.Executor) *TmuxSession {
+func newTmuxSession(name string, programCmd string, ptyFactory PtyFactory, cmdExec cmd.Executor) *TmuxSession {
 	return &TmuxSession{
 		sanitizedName: toClaudeSquadTmuxName(name),
-		program:       program,
+		program:       programCmd,
+		adapter:       program.Lookup(programCmd),
 		ptyFactory:    ptyFactory,
 		cmdExec:       cmdExec,
 	}
@@ -152,31 +158,28 @@ func (t *TmuxSession) Start(workDir string) error {
 	return nil
 }
 
-// CheckAndHandleTrustPrompt checks the pane content once for a trust prompt and dismisses it if found.
-// Returns true if the prompt was found and handled.
+// CheckAndHandleTrustPrompt checks the pane content once for a prompt that the
+// agent's adapter knows how to resolve (e.g. a trust or MCP approval prompt)
+// and dismisses it if found. Returns true if a prompt was found and handled.
+//
+// The agent-specific knowledge of *which* strings to look for and *how* to
+// dismiss them lives in the program.Adapter; this function is now a generic
+// detect-and-resolve loop for any adapter.
 func (t *TmuxSession) CheckAndHandleTrustPrompt() bool {
 	content, err := t.CapturePaneContent()
 	if err != nil {
 		return false
 	}
 
-	if strings.HasSuffix(t.program, ProgramClaude) {
-		if strings.Contains(content, "Do you trust the files in this folder?") ||
-			strings.Contains(content, "new MCP server") {
-			if err := t.TapEnter(); err != nil {
-				log.ErrorLog.Printf("could not tap enter on trust/MCP screen: %v", err)
-			}
-			return true
-		}
-	} else {
-		if strings.Contains(content, "Open documentation url for more info") {
-			if err := t.TapDAndEnter(); err != nil {
-				log.ErrorLog.Printf("could not tap enter on trust screen: %v", err)
-			}
-			return true
-		}
+	_, prompt := t.adapter.Detect(content)
+	if prompt == nil || prompt.Resolve == nil {
+		return false
 	}
-	return false
+	if err := prompt.Resolve(t); err != nil {
+		log.ErrorLog.Printf("could not resolve %s prompt: %v", t.adapter.Name(), err)
+		return false
+	}
+	return true
 }
 
 // Restore attaches to an existing session and restores the window size
@@ -230,8 +233,10 @@ func (t *TmuxSession) SendKeys(keys string) error {
 	return err
 }
 
-// HasUpdated checks if the tmux pane content has changed since the last tick. It also returns true if
-// the tmux pane has a prompt for aider or claude code.
+// HasUpdated checks if the tmux pane content has changed since the last tick,
+// and whether the agent currently has a prompt (waiting for user input or a
+// permission decision). Agent-specific prompt detection is delegated to the
+// program.Adapter; this function no longer holds any agent-specific strings.
 func (t *TmuxSession) HasUpdated() (updated bool, hasPrompt bool) {
 	content, err := t.CapturePaneContent()
 	if err != nil {
@@ -239,14 +244,8 @@ func (t *TmuxSession) HasUpdated() (updated bool, hasPrompt bool) {
 		return false, false
 	}
 
-	// Only set hasPrompt for claude and aider. Use these strings to check for a prompt.
-	if t.program == ProgramClaude {
-		hasPrompt = strings.Contains(content, "No, and tell Claude what to do differently")
-	} else if strings.HasPrefix(t.program, ProgramAider) {
-		hasPrompt = strings.Contains(content, "(Y)es/(N)o/(D)on't ask again")
-	} else if strings.HasPrefix(t.program, ProgramGemini) {
-		hasPrompt = strings.Contains(content, "Yes, allow once")
-	}
+	status, _ := t.adapter.Detect(content)
+	hasPrompt = status == program.StatusReady || status == program.StatusPermission
 
 	if !bytes.Equal(t.monitor.hash(content), t.monitor.prevOutputHash) {
 		t.monitor.prevOutputHash = t.monitor.hash(content)
