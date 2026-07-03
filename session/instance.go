@@ -7,6 +7,7 @@ import (
 	"claude-squad/session/git"
 	"claude-squad/session/tmux"
 	"crypto/rand"
+	"encoding/json"
 	"fmt"
 	"path/filepath"
 	"strings"
@@ -27,6 +28,64 @@ const (
 	// Paused is if the instance is paused (worktree removed but branch preserved).
 	Paused
 )
+
+// String renders the Status for logging and for the wire (JSON consumers
+// see "running"/"ready"/"loading"/"paused" instead of opaque ints 0-3).
+func (s Status) String() string {
+	switch s {
+	case Running:
+		return "running"
+	case Ready:
+		return "ready"
+	case Loading:
+		return "loading"
+	case Paused:
+		return "paused"
+	default:
+		return "unknown"
+	}
+}
+
+// MarshalJSON renders Status as a string on the wire, so 'list_instances'
+// shows "status": "paused" rather than 3. Resolves finding #2 (enums as
+// raw ints) and keeps the wire self-documenting for an LLM consumer.
+func (s Status) MarshalJSON() ([]byte, error) {
+	return json.Marshal(s.String())
+}
+
+// UnmarshalJSON accepts EITHER a string ("running"/.../"paused") or an int
+// (0-3) on the wire. The CLI status filter passes strings; raw JSON-RPC may
+// pass either. Resolves finding #8 (string 'kind'/'status' rejected).
+func (s *Status) UnmarshalJSON(data []byte) error {
+	var str string
+	if err := json.Unmarshal(data, &str); err == nil {
+		switch strings.ToLower(str) {
+		case "", "running":
+			*s = Running
+		case "ready":
+			*s = Ready
+		case "loading":
+			*s = Loading
+		case "paused":
+			*s = Paused
+		default:
+			return fmt.Errorf("invalid Status %q (want running|ready|loading|paused)", str)
+		}
+		return nil
+	}
+	var n int
+	if err := json.Unmarshal(data, &n); err != nil {
+		return fmt.Errorf("Status must be a string or int: %w", err)
+	}
+	st := Status(n)
+	switch st {
+	case Running, Ready, Loading, Paused:
+		*s = st
+		return nil
+	default:
+		return fmt.Errorf("invalid Status int %d", n)
+	}
+}
 
 // Kind classifies an instance's role. It is the point of extension for the
 // orchestration hierarchy: today the topology is strictly two levels — a
@@ -56,6 +115,46 @@ func (k Kind) String() string {
 		return "orchestrator"
 	default:
 		return "unknown"
+	}
+}
+
+// MarshalJSON renders Kind as a human-readable string on the wire
+// ("worker"/"orchestrator"), so a consumer parsing 'cs2 ctl list_instances'
+// sees self-documenting values instead of opaque ints (0/1). This resolves
+// finding #2 from dogfooding (enums exposed as raw ints).
+func (k Kind) MarshalJSON() ([]byte, error) {
+	return json.Marshal(k.String())
+}
+
+// UnmarshalJSON accepts EITHER a string ("worker"/"orchestrator") or an int
+// (0/1) on the wire. The CLI passes strings; a raw JSON-RPC caller may pass
+// either. This resolves finding #8: 'kind' as a string no longer errors with
+// 'cannot unmarshal string into Go struct field ... of type session.Kind'.
+func (k *Kind) UnmarshalJSON(data []byte) error {
+	// Try string first.
+	var s string
+	if err := json.Unmarshal(data, &s); err == nil {
+		switch strings.ToLower(s) {
+		case "", "worker":
+			*k = KindWorker
+		case "orchestrator", "orch":
+			*k = KindOrchestrator
+		default:
+			return fmt.Errorf("invalid Kind %q (want worker|orchestrator)", s)
+		}
+		return nil
+	}
+	// Fall back to the raw int (the iota value).
+	var n int
+	if err := json.Unmarshal(data, &n); err != nil {
+		return fmt.Errorf("Kind must be a string (worker|orchestrator) or int: %w", err)
+	}
+	switch Kind(n) {
+	case KindWorker, KindOrchestrator:
+		*k = Kind(n)
+		return nil
+	default:
+		return fmt.Errorf("invalid Kind int %d", n)
 	}
 }
 
