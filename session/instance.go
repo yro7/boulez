@@ -293,6 +293,11 @@ func (i *Instance) RepoName() (string, error) {
 	if !i.started {
 		return "", fmt.Errorf("cannot get repo name for instance that has not been started")
 	}
+	if i.gitWorktree == nil {
+		// An orchestrator (headless worktree) or a mid-construction instance
+		// has no repo name. Guard the deref so callers can summarize safely.
+		return "", nil
+	}
 	return i.gitWorktree.GetRepoName(), nil
 }
 
@@ -812,6 +817,10 @@ func (i *Instance) PreviewFullHistory() (string, error) {
 	if !i.started || i.Status == Paused {
 		return "", nil
 	}
+	if i.tmuxSession == nil {
+		// No tmux session bound (e.g. an orchestrator, or a test instance).
+		return "", nil
+	}
 	return i.tmuxSession.CapturePaneContentWithOptions("-", "-")
 }
 
@@ -845,4 +854,11 @@ func (i *Instance) SendKeys(keys string) error {
 		return fmt.Errorf("cannot send keys to instance that has not been started or is paused")
 	}
 	return i.tmuxSession.SendKeys(keys)
+}
+
+// MarkStartedForTest sets the started flag without running tmux. It is a test
+// seam for packages (e.g. kernel) that need an instance to look started for
+// in-memory unit tests without a real PTY. Not for production use.
+func (i *Instance) MarkStartedForTest() {
+	i.started = true
 }
