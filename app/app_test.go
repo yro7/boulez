@@ -9,6 +9,8 @@ import (
 	"context"
 	"fmt"
 	"os"
+	"os/exec"
+	"path/filepath"
 	"testing"
 
 	"github.com/charmbracelet/bubbles/spinner"
@@ -463,4 +465,80 @@ func TestConfirmationModalVisualAppearance(t *testing.T) {
 
 	// Test that the danger indicator is preserved
 	assert.Contains(t, rendered, "[!")
+}
+
+// makeTestRepo creates a git repository at dir with a couple of branches so the
+// branch picker has something to list.
+func makeTestRepo(t *testing.T, dir string) {
+	t.Helper()
+	run := func(args ...string) {
+		cmd := exec.Command("git", args...)
+		cmd.Dir = dir
+		out, err := cmd.CombinedOutput()
+		require.NoError(t, err, "git %s: %s", args, out)
+	}
+	run("init")
+	run("config", "user.email", "test@example.com")
+	run("config", "user.name", "test")
+	require.NoError(t, os.WriteFile(filepath.Join(dir, "README.md"), []byte("hi"), 0644))
+	run("add", ".")
+	run("commit", "-m", "initial")
+	run("branch", "feature-one")
+	run("branch", "feature-two")
+}
+
+// TestRunBranchSearchUsesRepoPathNotCwd verifies that runBranchSearch lists the
+// branches of the explicitly-passed repoPath, not the process cwd. This is the
+// regression guard for the multi-repo refactor: the picker must scan the
+// instance's repo, never os.Getwd().
+func TestRunBranchSearchUsesRepoPathNotCwd(t *testing.T) {
+	repoA := t.TempDir()
+	makeTestRepo(t, repoA)
+
+	// Run from a directory that is NOT a git repo, to prove cwd is irrelevant.
+	nonRepo := t.TempDir()
+	originalDir, err := os.Getwd()
+	require.NoError(t, err)
+	require.NoError(t, os.Chdir(nonRepo))
+	defer os.Chdir(originalDir)
+
+	m := &home{}
+
+	cmd := m.runBranchSearch(repoA, "", 7)
+	msg := cmd()
+
+	result, ok := msg.(branchSearchResultMsg)
+	require.True(t, ok, "expected branchSearchResultMsg, got %T", msg)
+	assert.Equal(t, uint64(7), result.version)
+
+	// The default branch + the two feature branches must all come from repoA.
+	assert.Contains(t, result.branches, "feature-one")
+	assert.Contains(t, result.branches, "feature-two")
+}
+
+// TestRunBranchSearchEmptyFilterReturnsAllBranches ensures an empty filter
+// returns all branches (no cwd dependency).
+func TestRunBranchSearchEmptyFilterReturnsAllBranches(t *testing.T) {
+	repo := t.TempDir()
+	makeTestRepo(t, repo)
+
+	m := &home{}
+	msg := m.runBranchSearch(repo, "", 0)()
+	result, ok := msg.(branchSearchResultMsg)
+	require.True(t, ok)
+	assert.GreaterOrEqual(t, len(result.branches), 3) // default + 2 features
+}
+
+// TestRunBranchSearchFilterMatchesOnlyRelevantBranches ensures the filter is
+// applied against the chosen repo's branches.
+func TestRunBranchSearchFilterMatchesOnlyRelevantBranches(t *testing.T) {
+	repo := t.TempDir()
+	makeTestRepo(t, repo)
+
+	m := &home{}
+	msg := m.runBranchSearch(repo, "feature-one", 0)()
+	result, ok := msg.(branchSearchResultMsg)
+	require.True(t, ok)
+	assert.Contains(t, result.branches, "feature-one")
+	assert.NotContains(t, result.branches, "feature-two")
 }
