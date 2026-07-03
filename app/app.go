@@ -282,7 +282,7 @@ func (m *home) Update(msg tea.Msg) (tea.Model, tea.Cmd) {
 		if msg.version != m.textInputOverlay.BranchFilterVersion() {
 			return m, nil // stale, a newer debounce is pending
 		}
-		return m, m.runBranchSearch(msg.filter, msg.version)
+		return m, m.runBranchSearch(msg.repoPath, msg.filter, msg.version)
 	case branchSearchResultMsg:
 		if m.textInputOverlay != nil {
 			m.textInputOverlay.SetBranchResults(msg.branches, msg.version)
@@ -421,8 +421,10 @@ func (m *home) handleKeyPress(msg tea.KeyMsg) (mod tea.Model, cmd tea.Cmd) {
 				m.state = statePrompt
 				m.menu.SetState(ui.StatePrompt)
 				m.textInputOverlay = m.newPromptOverlay()
-				// Trigger initial branch search (no debounce, version 0)
-				initialSearch := m.runBranchSearch("", m.textInputOverlay.BranchFilterVersion())
+				// Trigger initial branch search (no debounce, version 0) on the
+				// instance's repo, not the process cwd.
+				repoPath := instance.Path
+				initialSearch := m.runBranchSearch(repoPath, "", m.textInputOverlay.BranchFilterVersion())
 				return m, tea.Batch(tea.WindowSize(), initialSearch)
 			}
 
@@ -556,7 +558,11 @@ func (m *home) handleKeyPress(msg tea.KeyMsg) (mod tea.Model, cmd tea.Cmd) {
 		if branchFilterChanged {
 			filter := m.textInputOverlay.BranchFilter()
 			version := m.textInputOverlay.BranchFilterVersion()
-			return m, m.scheduleBranchSearch(filter, version)
+			repoPath := ""
+			if selected := m.list.GetSelectedInstance(); selected != nil {
+				repoPath = selected.Path
+			}
+			return m, m.scheduleBranchSearch(repoPath, filter, version)
 		}
 
 		return m, nil
@@ -608,13 +614,6 @@ func (m *home) handleKeyPress(msg tea.KeyMsg) (mod tea.Model, cmd tea.Cmd) {
 	case keys.KeyHelp:
 		return m.showHelpScreen(helpTypeGeneral{}, nil)
 	case keys.KeyPrompt:
-		// Start a background fetch so branches are up to date by the time the picker opens
-		fetchCmd := func() tea.Msg {
-			currentDir, _ := os.Getwd()
-			git.FetchBranches(currentDir)
-			return nil
-		}
-
 		instance, err := session.NewInstance(session.InstanceOptions{
 			Title:   "",
 			Path:    ".",
@@ -622,6 +621,14 @@ func (m *home) handleKeyPress(msg tea.KeyMsg) (mod tea.Model, cmd tea.Cmd) {
 		})
 		if err != nil {
 			return m, m.handleError(err)
+		}
+
+		// Start a background fetch so branches are up to date by the time the picker opens.
+		// The repo scanned is the instance's repo, not the process cwd.
+		repoPath := instance.Path
+		fetchCmd := func() tea.Msg {
+			git.FetchBranches(repoPath)
+			return nil
 		}
 
 		m.newInstanceFinalizer = m.list.AddInstance(instance)
@@ -856,8 +863,9 @@ type instanceStartedMsg struct {
 
 // branchSearchDebounceMsg fires after the debounce interval to trigger a search.
 type branchSearchDebounceMsg struct {
-	filter  string
-	version uint64
+	repoPath string
+	filter   string
+	version  uint64
 }
 
 // branchSearchResultMsg carries search results back to Update.
@@ -869,18 +877,19 @@ type branchSearchResultMsg struct {
 const branchSearchDebounce = 150 * time.Millisecond
 
 // scheduleBranchSearch returns a debounced tea.Cmd: sleeps, then triggers a search message.
-func (m *home) scheduleBranchSearch(filter string, version uint64) tea.Cmd {
+func (m *home) scheduleBranchSearch(repoPath, filter string, version uint64) tea.Cmd {
 	return func() tea.Msg {
 		time.Sleep(branchSearchDebounce)
-		return branchSearchDebounceMsg{filter: filter, version: version}
+		return branchSearchDebounceMsg{repoPath: repoPath, filter: filter, version: version}
 	}
 }
 
 // runBranchSearch returns a tea.Cmd that performs the git search in the background.
-func (m *home) runBranchSearch(filter string, version uint64) tea.Cmd {
+// repoPath is the repository whose branches are listed (the instance's repo,
+// never the process cwd).
+func (m *home) runBranchSearch(repoPath, filter string, version uint64) tea.Cmd {
 	return func() tea.Msg {
-		currentDir, _ := os.Getwd()
-		branches, err := git.SearchBranches(currentDir, filter)
+		branches, err := git.SearchBranches(repoPath, filter)
 		if err != nil {
 			log.WarningLog.Printf("branch search failed: %v", err)
 			return nil
