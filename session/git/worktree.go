@@ -4,6 +4,7 @@ import (
 	"claude-squad/cmd"
 	"claude-squad/config"
 	"claude-squad/log"
+	"claude-squad/session/fs"
 	"fmt"
 	"path/filepath"
 	"time"
@@ -36,11 +37,14 @@ type GitWorktree struct {
 	// cmdExec runs git/gh commands. Injected so v2 can swap in an SSH
 	// transport; defaults to the local executor in the public constructors.
 	cmdExec cmd.Executor
+	// fs manipulates worktree paths on the filesystem. Injected so v2 can
+	// swap in a remote FS; defaults to the local FS in the public constructors.
+	fs fs.FS
 }
 
 // newGitWorktree is the internal constructor that takes every dependency
-// explicitly. The public constructors delegate here, defaulting cmdExec.
-func newGitWorktree(repoPath, worktreePath, sessionName, branchName, baseCommitSHA string, isExistingBranch bool, cmdExec cmd.Executor) *GitWorktree {
+// explicitly. The public constructors delegate here, defaulting cmdExec/fs.
+func newGitWorktree(repoPath, worktreePath, sessionName, branchName, baseCommitSHA string, isExistingBranch bool, cmdExec cmd.Executor, fsys fs.FS) *GitWorktree {
 	return &GitWorktree{
 		repoPath:         repoPath,
 		worktreePath:     worktreePath,
@@ -49,16 +53,17 @@ func newGitWorktree(repoPath, worktreePath, sessionName, branchName, baseCommitS
 		baseCommitSHA:    baseCommitSHA,
 		isExistingBranch: isExistingBranch,
 		cmdExec:          cmdExec,
+		fs:               fsys,
 	}
 }
 
 func NewGitWorktreeFromStorage(repoPath string, worktreePath string, sessionName string, branchName string, baseCommitSHA string, isExistingBranch bool) *GitWorktree {
-	return newGitWorktree(repoPath, worktreePath, sessionName, branchName, baseCommitSHA, isExistingBranch, cmd.MakeExecutor())
+	return newGitWorktree(repoPath, worktreePath, sessionName, branchName, baseCommitSHA, isExistingBranch, cmd.MakeExecutor(), fs.LocalFS{})
 }
 
 // NewGitWorktreeFromStorageWithDeps is the WithDeps variant for tests/v2.
-func NewGitWorktreeFromStorageWithDeps(repoPath string, worktreePath string, sessionName string, branchName string, baseCommitSHA string, isExistingBranch bool, cmdExec cmd.Executor) *GitWorktree {
-	return newGitWorktree(repoPath, worktreePath, sessionName, branchName, baseCommitSHA, isExistingBranch, cmdExec)
+func NewGitWorktreeFromStorageWithDeps(repoPath string, worktreePath string, sessionName string, branchName string, baseCommitSHA string, isExistingBranch bool, cmdExec cmd.Executor, fsys fs.FS) *GitWorktree {
+	return newGitWorktree(repoPath, worktreePath, sessionName, branchName, baseCommitSHA, isExistingBranch, cmdExec, fsys)
 }
 
 // resolveWorktreePaths resolves the repo root and generates a unique worktree path for the given branch name.
@@ -87,11 +92,11 @@ func resolveWorktreePaths(repoPath string, branchName string, cmdExec cmd.Execut
 
 // NewGitWorktree creates a new GitWorktree instance
 func NewGitWorktree(repoPath string, sessionName string) (tree *GitWorktree, branchname string, err error) {
-	return NewGitWorktreeWithDeps(repoPath, sessionName, cmd.MakeExecutor())
+	return NewGitWorktreeWithDeps(repoPath, sessionName, cmd.MakeExecutor(), fs.LocalFS{})
 }
 
 // NewGitWorktreeWithDeps is the WithDeps variant for tests/v2.
-func NewGitWorktreeWithDeps(repoPath string, sessionName string, cmdExec cmd.Executor) (tree *GitWorktree, branchname string, err error) {
+func NewGitWorktreeWithDeps(repoPath string, sessionName string, cmdExec cmd.Executor, fsys fs.FS) (tree *GitWorktree, branchname string, err error) {
 	cfg := config.LoadConfig()
 	branchName := fmt.Sprintf("%s%s", cfg.BranchPrefix, sessionName)
 	// Sanitize the final branch name to handle invalid characters from any source
@@ -103,23 +108,23 @@ func NewGitWorktreeWithDeps(repoPath string, sessionName string, cmdExec cmd.Exe
 		return nil, "", err
 	}
 
-	return newGitWorktree(repoPath, worktreePath, sessionName, branchName, "", false, cmdExec), branchName, nil
+	return newGitWorktree(repoPath, worktreePath, sessionName, branchName, "", false, cmdExec, fsys), branchName, nil
 }
 
 // NewGitWorktreeFromBranch creates a new GitWorktree that uses an existing branch.
 // The branch will not be deleted on cleanup.
 func NewGitWorktreeFromBranch(repoPath string, branchName string, sessionName string) (*GitWorktree, error) {
-	return NewGitWorktreeFromBranchWithDeps(repoPath, branchName, sessionName, cmd.MakeExecutor())
+	return NewGitWorktreeFromBranchWithDeps(repoPath, branchName, sessionName, cmd.MakeExecutor(), fs.LocalFS{})
 }
 
 // NewGitWorktreeFromBranchWithDeps is the WithDeps variant for tests/v2.
-func NewGitWorktreeFromBranchWithDeps(repoPath string, branchName string, sessionName string, cmdExec cmd.Executor) (*GitWorktree, error) {
+func NewGitWorktreeFromBranchWithDeps(repoPath string, branchName string, sessionName string, cmdExec cmd.Executor, fsys fs.FS) (*GitWorktree, error) {
 	repoPath, worktreePath, err := resolveWorktreePaths(repoPath, branchName, cmdExec)
 	if err != nil {
 		return nil, err
 	}
 
-	return newGitWorktree(repoPath, worktreePath, sessionName, branchName, "", true, cmdExec), nil
+	return newGitWorktree(repoPath, worktreePath, sessionName, branchName, "", true, cmdExec, fsys), nil
 }
 
 // IsExistingBranch returns whether this worktree uses a pre-existing branch
