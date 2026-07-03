@@ -11,13 +11,10 @@ import (
 
 // Setup creates a new worktree for the session
 func (g *GitWorktree) Setup() error {
-	// Ensure worktrees directory exists early (can be done in parallel with branch check)
-	worktreesDir, err := getWorktreeDirectory()
-	if err != nil {
-		return fmt.Errorf("failed to get worktree directory: %w", err)
-	}
-
-	if err := g.fs.MkdirAll(worktreesDir, 0755); err != nil {
+	// Ensure worktrees directory exists early (can be done in parallel with branch check).
+	// g.worktreeDir is the Host's dir (local or ~-relative for ssh), so a remote
+	// worktree's mkdir targets the right host via g.fs.MkdirAll.
+	if err := g.fs.MkdirAll(g.worktreeDir, 0755); err != nil {
 		return err
 	}
 
@@ -28,7 +25,7 @@ func (g *GitWorktree) Setup() error {
 	}
 
 	// Check if branch exists using git CLI (much faster than go-git PlainOpen)
-	_, err = g.runGitCommand(g.repoPath, "show-ref", "--verify", fmt.Sprintf("refs/heads/%s", g.branchName))
+	_, err := g.runGitCommand(g.repoPath, "show-ref", "--verify", fmt.Sprintf("refs/heads/%s", g.branchName))
 	if err == nil {
 		return g.setupFromExistingBranch()
 	}
