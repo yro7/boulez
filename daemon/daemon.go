@@ -2,6 +2,7 @@ package daemon
 
 import (
 	"claude-squad/config"
+	"claude-squad/kernel"
 	"claude-squad/log"
 	"claude-squad/program"
 	"claude-squad/session"
@@ -33,14 +34,29 @@ func RunDaemon(cfg *config.Config) error {
 	// the stored value rather than forcing it globally — this lets remote
 	// instances stay off by default while local ones follow the user's choice.
 
-	pollInterval := time.Duration(cfg.DaemonPollInterval) * time.Millisecond
-
-	// If we get an error for a session, it's likely that we'll keep getting the error. Log every 30 seconds.
-	everyN := log.NewEvery(60 * time.Second)
-
+	// The kernel is the single-writer control authority. The daemon owns it
+	// and serves the control socket so `cs2 ctl` (and future LLM tools) can
+	// drive the fleet. The auto-yes loop below runs alongside.
+	k := kernel.New(storage, kernel.WithSpawner(kernelSpawner{}), kernel.WithMerger(realMerger{}))
+	socketPath, err := kernel.SocketPath()
+	if err != nil {
+		return fmt.Errorf("failed to resolve kernel socket path: %w", err)
+	}
 	wg := &sync.WaitGroup{}
 	wg.Add(1)
 	stopCh := make(chan struct{})
+	go func() {
+		defer wg.Done()
+		if err := kernel.Serve(k, socketPath); err != nil {
+			log.ErrorLog.Printf("kernel serve failed: %v", err)
+		}
+	}()
+
+	pollInterval := time.Duration(cfg.DaemonPollInterval) * time.Millisecond
+	// If we get an error for a session, it's likely that we'll keep getting the error. Log every 30 seconds.
+	everyN := log.NewEvery(60 * time.Second)
+
+	wg.Add(1)
 	go func() {
 		defer wg.Done()
 		ticker := time.NewTimer(pollInterval)
