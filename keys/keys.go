@@ -25,6 +25,11 @@ const (
 	KeyPrompt // New key for entering a prompt
 	KeyHelp   // Key for showing help screen
 
+	// KeyQuickSession opens the named-preset picker (Ctrl+R). A preset is a
+	// complete recipe (host+repo+profile+prompt+branch) that skips the
+	// host/repo/prompt selectors, leaving only the instance name to type.
+	KeyQuickSession
+
 	// Diff keybindings
 	KeyShiftUp
 	KeyShiftDown
@@ -49,6 +54,7 @@ var GlobalKeyStringsMap = map[string]KeyName{
 	"K":          KeyMoveUp,
 	"a":          KeyToggleAutoYes,
 	"N":          KeyPrompt,
+	"ctrl+r":     KeyQuickSession,
 	"enter":      KeyEnter,
 	"o":          KeyEnter,
 	"n":          KeyNew,
@@ -106,6 +112,10 @@ var GlobalkeyBindings = map[KeyName]key.Binding{
 	KeyPrompt: key.NewBinding(
 		key.WithKeys("N"),
 		key.WithHelp("N", "new with prompt"),
+	),
+	KeyQuickSession: key.NewBinding(
+		key.WithKeys("ctrl+r"),
+		key.WithHelp("ctrl+r", "quick session"),
 	),
 	KeyCheckout: key.NewBinding(
 		key.WithKeys("c"),
