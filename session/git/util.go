@@ -47,18 +47,3 @@ func checkGHCLI() error {
 
 	return nil
 }
-
-// IsGitRepo checks if the given path is within a git repository
-func IsGitRepo(path string) bool {
-	cmd := exec.Command("git", "-C", path, "rev-parse", "--show-toplevel")
-	return cmd.Run() == nil
-}
-
-func findGitRepoRoot(path string) (string, error) {
-	cmd := exec.Command("git", "-C", path, "rev-parse", "--show-toplevel")
-	out, err := cmd.Output()
-	if err != nil {
-		return "", fmt.Errorf("failed to find Git repository root from path: %s", path)
-	}
-	return strings.TrimSpace(string(out)), nil
-}

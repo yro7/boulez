@@ -82,3 +82,28 @@ confirmé par l'usage. Les ajouter préventivement imposerait une UI de
 configuration (comment set l'alias ? comment marquer un défaut ?) qu'on ne
 veut pas coder tant que « design TUI en dernier » tient. Le format minimal
 se migrera trivialement le moment venu.
+
+---
+
+## Dette technique (observée pendant le refactor SSH v1)
+
+*(Choses vues mais non corrigées pendant le refactor v1, pour rester
+atomique. v2 part de cette liste explicite — rien ne reste implicite.
+Voir `PLAN-ssh-support.md`, décision 8.)*
+
+1. **`CleanupWorktrees` (`session/git/worktree_ops.go:165`)** — lance
+   `git worktree list` **sans `-C`** (opère sur cwd) et `git branch -D`
+   sans contexte repo. Bug latent multi-repo, pré-existant. Pas corrigé en
+   v1 : on attend v2 pour voir émerger les vrais besoins (cleanup distant,
+   multi-repo, multi-host — la forme correcte dépend du package `Host` qui
+   n'existe pas encore).
+
+2. **Couplage `gh` (GitHub CLI) dans `PushChanges` / `OpenBranchURL` /
+   `checkGHCLI` (`session/git/worktree_git.go`).** Rend cs2 inopérant sur
+   GitLab / local-host. Vrai problème, mais c'est un **autre feature**
+   ("support non-GitHub"), pas du SSH. L'ouvrir maintenant = scope creep.
+   Un plan séparé le traitera.
+
+3. **`worktree_branch.go` = 1 fonction (`combineErrors`).** Module trop
+   peu profound. À fusionner dans `worktree_ops.go` ou `worktree_git.go`
+   si on touche ces fichiers, sinon reporter.
