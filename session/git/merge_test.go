@@ -135,6 +135,54 @@ func TestMerger_ConflictDetected(t *testing.T) {
 	assert.Contains(t, string(status), "UU", "repo left in merging state, not auto-aborted")
 }
 
+// TestMerger_MergeTrunk_AcceptsMain proves the trunk-allowed path: a clean
+// merge INTO main succeeds via MergeTrunk, whereas the equivalent Merge call
+// is still refused (the guard remains hard for the regular path). This is the
+// contract Land relies on: only MergeTrunk can land onto a trunk.
+func TestMerger_MergeTrunk_AcceptsMain(t *testing.T) {
+	repo := makeMergeRepo(t) // trunk = main
+	mrun(t, repo, "branch", "feat")
+	mrun(t, repo, "checkout", "feat")
+	writeCommit(t, repo, "new.txt", "N\n", "new")
+	mrun(t, repo, "checkout", "main")
+
+	m := NewMerger(cmd2.MakeExecutor())
+	res, err := m.MergeTrunk(repo, "main", []string{"feat"}, StrategyDefault)
+	require.NoError(t, err, "MergeTrunk accepts main")
+	assert.Equal(t, MergeMerged, res.Status)
+
+	// The regular path still refuses the same target (guard unchanged).
+	mrun(t, repo, "checkout", "main")
+	_, err = m.Merge(repo, "main", []string{"feat"}, StrategyDefault)
+	require.Error(t, err, "Merge still refuses main")
+}
+
+// TestMerger_MergeTrunk_ConflictNotAborted proves MergeTrunk leaves the repo
+// in the merging state on conflict (no silent --abort), carrying the
+// conflicted file — same contract as the regular Merge conflict path.
+func TestMerger_MergeTrunk_ConflictNotAborted(t *testing.T) {
+	repo := makeMergeRepo(t)
+	writeCommit(t, repo, "file.txt", "base\n", "base")
+
+	mrun(t, repo, "branch", "feat")
+	mrun(t, repo, "checkout", "feat")
+	writeCommit(t, repo, "file.txt", "theirs\n", "theirs")
+
+	mrun(t, repo, "checkout", "main")
+	writeCommit(t, repo, "file.txt", "ours\n", "ours")
+
+	m := NewMerger(cmd2.MakeExecutor())
+	res, err := m.MergeTrunk(repo, "main", []string{"feat"}, StrategyDefault)
+	_ = err
+	assert.Equal(t, MergeConflict, res.Status)
+	require.NotEmpty(t, res.Conflicts, "conflicted file must be reported")
+	assert.Equal(t, "file.txt", res.Conflicts[0].File)
+
+	status, err := exec.Command("git", "-C", repo, "status", "--porcelain").Output()
+	require.NoError(t, err)
+	assert.Contains(t, string(status), "UU", "repo left in merging state, not auto-aborted")
+}
+
 // TestMerger_ProtectedBranchRefused proves the guard: merging INTO main is
 // refused with ErrProtectedBranch, even though the Merger could otherwise do
 // it. The kernel enforces this too, but the Merger defends in depth.
