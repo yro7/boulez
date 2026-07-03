@@ -4,6 +4,7 @@ import (
 	"claude-squad/config"
 	"claude-squad/keys"
 	"claude-squad/log"
+	"claude-squad/program"
 	"claude-squad/repo"
 	"claude-squad/session"
 	"claude-squad/session/git"
@@ -12,6 +13,8 @@ import (
 	"context"
 	"fmt"
 	"os"
+	"os/exec"
+	"runtime"
 	"strings"
 	"sync"
 	"time"
@@ -263,12 +266,38 @@ func (m *home) Update(msg tea.Msg) (tea.Model, tea.Cmd) {
 			if r.instance.Status == session.Paused {
 				continue
 			}
-			if r.updated {
-				r.instance.SetStatus(session.Running)
-			} else if r.hasPrompt {
-				r.instance.TapEnter()
-			} else {
+			// The adapter's detected status is the source of truth and takes
+			// priority over the content-change heuristic. Previously, a ready
+			// sentinel landing in the pane was classified as "working" merely
+			// because the pane content changed, leaving finished agents stuck on
+			// the running spinner forever.
+			prevStatus := r.instance.Status
+			switch {
+			case r.status == program.StatusReady:
 				r.instance.SetStatus(session.Ready)
+			case r.status == program.StatusPermission:
+				// A resolvable permission/trust prompt. Only auto-resolve when
+				// AutoYes is on, mirroring the original TapEnter() gating:
+				// the user explicitly turned off auto-yes, so do not dismiss
+				// prompts for them. The instance status is left unchanged
+				// (Running) since the agent is waiting for a permission
+				// decision, not free input.
+				if r.instance.AutoYes {
+					r.instance.CheckAndHandleTrustPrompt()
+				}
+			default:
+				// StatusWorking (or StatusUnknown for agents we don't detect):
+				// fall back to the content-change heuristic so unknown agents
+				// keep cycling Running/Loading like before.
+				if r.updated {
+					r.instance.SetStatus(session.Running)
+				}
+			}
+			// Notify on the Ready transition when configured.
+			if prevStatus != session.Ready && r.instance.Status == session.Ready {
+				if m.appConfig.NotifyOnReady {
+					m.notifyReady(r.instance)
+				}
 			}
 			if r.diffStats != nil && r.diffStats.Error != nil {
 				if !strings.Contains(r.diffStats.Error.Error(), "base commit SHA not set") {
@@ -894,7 +923,7 @@ func (m *home) runBranchSearch(repoPath, filter string, version uint64) tea.Cmd 
 type instanceMetaResult struct {
 	instance  *session.Instance
 	updated   bool
-	hasPrompt bool
+	status    program.Status
 	diffStats *git.DiffStats
 }
 
@@ -956,7 +985,7 @@ func tickUpdateMetadataCmd(active []*session.Instance, selected *session.Instanc
 				defer wg.Done()
 				r := &results[i]
 				r.instance = instance
-				r.updated, r.hasPrompt = instance.HasUpdated()
+				r.updated, r.status = instance.HasUpdated()
 				if instance == selected {
 					r.diffStats = instance.ComputeDiff()
 				} else {
@@ -983,6 +1012,30 @@ func (m *home) handleError(err error) tea.Cmd {
 
 		return hideErrMsg{}
 	}
+}
+
+// notifyReady fires a desktop notification when an instance transitions to
+// Ready. Best-effort: failures are logged, never surfaced to the user, since a
+// missing notification must never break the TUI loop. Runs in a background
+// goroutine so the shell-out never blocks rendering.
+func (m *home) notifyReady(instance *session.Instance) {
+	title := fmt.Sprintf("cs2: %s ready", instance.Title)
+	body := fmt.Sprintf("Instance '%s' finished and is waiting for input.", instance.Title)
+	go func() {
+		var c *exec.Cmd
+		switch runtime.GOOS {
+		case "darwin":
+			c = exec.Command("osascript", "-e",
+				fmt.Sprintf("display notification %q with title %q", body, title))
+		case "linux":
+			c = exec.Command("notify-send", title, body)
+		default:
+			return // unsupported, silently skip
+		}
+		if err := c.Run(); err != nil {
+			log.WarningLog.Printf("notify ready failed for %s: %v", instance.Title, err)
+		}
+	}()
 }
 
 func (m *home) newPromptOverlay() *overlay.TextInputOverlay {
