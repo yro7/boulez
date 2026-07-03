@@ -42,8 +42,13 @@ func fileURL(p string) string {
 // writeStorage writes the given storage.json body into the Antigravity IDE
 // globalStorage dir under homeDir, creating parents as needed.
 func writeStorage(t *testing.T, homeDir, body string) {
+	writeStorageFor(t, homeDir, antigravitySpec, body)
+}
+
+// writeStorageFor writes a storage.json body for an arbitrary IDE spec.
+func writeStorageFor(t *testing.T, homeDir string, spec ideSpec, body string) {
 	t.Helper()
-	p, err := storagePath("darwin", homeDir, antigravitySpec)
+	p, err := storagePath("darwin", homeDir, spec)
 	require.NoError(t, err)
 	require.NoError(t, os.MkdirAll(filepath.Dir(p), 0755))
 	require.NoError(t, os.WriteFile(p, []byte(body), 0644))
@@ -183,4 +188,62 @@ func TestNewImporterAt_InvalidIDE(t *testing.T) {
 	require.Error(t, err)
 	assert.Contains(t, err.Error(), "vscode")
 	assert.Contains(t, err.Error(), "cursor")
+}
+
+func TestScan_SpecificIDE(t *testing.T) {
+	// Both Antigravity and Cursor storage present, but --ide cursor restricts
+	// the scan to Cursor only.
+	home := t.TempDir()
+	cursorSpec := ideSpec{name: "Cursor", dirName: "Cursor", canon: "cursor"}
+	cursorRepo := filepath.Join(home, "cursor-proj")
+	makeGitRepo(t, cursorRepo)
+	antigravRepo := filepath.Join(home, "antigrav-proj")
+	makeGitRepo(t, antigravRepo)
+
+	writeStorageFor(t, home, cursorSpec, storageBody(fileURL(cursorRepo)))
+	writeStorageFor(t, home, antigravitySpec, storageBody(fileURL(antigravRepo)))
+
+	imp, err := NewImporterAt(home, "cursor")
+	require.NoError(t, err)
+
+	found, _, err := imp.Scan()
+	require.NoError(t, err)
+	require.Len(t, found, 1)
+	assert.Equal(t, filepath.Clean(cursorRepo), found[0].Path)
+	assert.Equal(t, "Cursor", found[0].IDE)
+}
+
+func TestScan_MultiIDE(t *testing.T) {
+	// Multiple IDE folders all scanned; a repo known to two IDEs is deduped
+	// cross-IDE and attributed to the first IDE in knownIDEs order (Cursor
+	// precedes Antigravity, so the shared repo is attributed to Cursor — D9).
+	home := t.TempDir()
+	cursorSpec := ideSpec{name: "Cursor", dirName: "Cursor", canon: "cursor"}
+	sharedRepo := filepath.Join(home, "shared")
+	makeGitRepo(t, sharedRepo)
+	cursorRepo := filepath.Join(home, "cursor-only")
+	makeGitRepo(t, cursorRepo)
+	antigravRepo := filepath.Join(home, "antigrav-only")
+	makeGitRepo(t, antigravRepo)
+
+	writeStorageFor(t, home, cursorSpec,
+		storageBody(fileURL(sharedRepo), fileURL(cursorRepo)))
+	writeStorageFor(t, home, antigravitySpec,
+		storageBody(fileURL(sharedRepo), fileURL(antigravRepo)))
+
+	imp, err := NewImporterAt(home, "")
+	require.NoError(t, err)
+
+	found, _, err := imp.Scan()
+	require.NoError(t, err)
+	require.Len(t, found, 3, "shared + cursor-only + antigrav-only, deduped")
+
+	byPath := make(map[string]string, len(found))
+	for _, f := range found {
+		byPath[f.Path] = f.IDE
+	}
+	assert.Equal(t, "Cursor", byPath[filepath.Clean(sharedRepo)],
+		"shared repo attributed to first scanning IDE (Cursor)")
+	assert.Equal(t, "Cursor", byPath[filepath.Clean(cursorRepo)])
+	assert.Equal(t, "Antigravity", byPath[filepath.Clean(antigravRepo)])
 }
