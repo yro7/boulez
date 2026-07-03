@@ -78,7 +78,7 @@ func TestGitWorktree_Setup_RoutesMkdirAllThroughFS(t *testing.T) {
 		CombinedOutputFunc:  func(c *exec.Cmd) ([]byte, error) { return c.CombinedOutput() },
 	}
 
-	g, _, err := NewGitWorktreeWithDeps(repoPath, "sess", executor, fsys)
+	g, _, err := NewGitWorktreeWithDeps(repoPath, "sess", executor, fsys, filepath.Join(t.TempDir(), "worktrees"))
 	require.NoError(t, err)
 
 	require.NoError(t, g.Setup())
@@ -111,7 +111,7 @@ func TestGitWorktree_IsValidWorktree_RoutesStatThroughFS(t *testing.T) {
 	}
 	fsys := &fakeFS{}
 
-	g, _, err := NewGitWorktreeWithDeps(repoPath, "sess", executor, fsys)
+	g, _, err := NewGitWorktreeWithDeps(repoPath, "sess", executor, fsys, filepath.Join(t.TempDir(), "worktrees"))
 	require.NoError(t, err)
 	require.NoError(t, g.Setup())
 
@@ -148,7 +148,7 @@ func TestGitWorktree_WorktreeDirExists_AndRemoveWorktreeDir_RouteThroughFS(t *te
 	}
 	fsys := &fakeFS{}
 
-	g, _, err := NewGitWorktreeWithDeps(repoPath, "sess", executor, fsys)
+	g, _, err := NewGitWorktreeWithDeps(repoPath, "sess", executor, fsys, filepath.Join(t.TempDir(), "worktrees"))
 	require.NoError(t, err)
 	require.NoError(t, g.Setup())
 

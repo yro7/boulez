@@ -1,6 +1,7 @@
 package session
 
 import (
+	"os"
 	"os/exec"
 	"path/filepath"
 	"testing"
@@ -87,4 +88,43 @@ func runGit(t *testing.T, dir string, args ...string) {
 	cmdArgs = append([]string{"git"}, cmdArgs...)
 	out, err := exec.Command(cmdArgs[0], cmdArgs[1:]...).CombinedOutput()
 	require.NoErrorf(t, err, "git %v: %s", args, out)
+}
+
+// TestInstance_UsesHostWorktreeDir proves the path-generation seam: an
+// Instance built from storage uses its Host's WorktreeDir, not the local
+// config dir baked into the git package. With LocalHost this is the local
+// ~/.cs2/worktrees (non-regression); the point is that the dir comes from the
+// host, so an SSHHost's ~-relative dir would flow through to Setup.
+func TestInstance_UsesHostWorktreeDir(t *testing.T) {
+	repoPath := makeTempGitRepo(t)
+
+	// Isolate HOME so LocalHost.WorktreeDir is deterministic.
+	tempHome := t.TempDir()
+	orig := os.Getenv("HOME")
+	require.NoError(t, os.Setenv("HOME", tempHome))
+	defer func() { _ = os.Setenv("HOME", orig) }()
+
+	data := InstanceData{
+		Title:   "stored",
+		Path:    repoPath,
+		Branch:  "cs2/stored",
+		Status:  Paused,
+		Program: "claude",
+		Worktree: GitWorktreeData{
+			RepoPath:      repoPath,
+			WorktreePath:  filepath.Join(t.TempDir(), "wt"),
+			SessionName:   "stored",
+			BranchName:    "cs2/stored",
+			BaseCommitSHA: "HEAD",
+		},
+	}
+
+	inst, err := FromInstanceData(data)
+	require.NoError(t, err)
+
+	// The host's WorktreeDir is the local ~/.cs2/worktrees. The instance was
+	// built from the host's dir (not a stale local-derived one).
+	wantDir, err := inst.Host().WorktreeDir()
+	require.NoError(t, err)
+	assert.Equal(t, filepath.Join(tempHome, ".cs2", "worktrees"), wantDir)
 }

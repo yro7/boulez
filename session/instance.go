@@ -115,6 +115,11 @@ func (i *Instance) ToInstanceData() InstanceData {
 
 // FromInstanceData creates a new Instance from serialized data
 func FromInstanceData(data InstanceData) (*Instance, error) {
+	h := host.Local
+	worktreeDir, err := h.WorktreeDir()
+	if err != nil {
+		return nil, fmt.Errorf("failed to resolve worktree directory: %w", err)
+	}
 	instance := &Instance{
 		Title:     data.Title,
 		Path:      data.Path,
@@ -125,7 +130,7 @@ func FromInstanceData(data InstanceData) (*Instance, error) {
 		CreatedAt: data.CreatedAt,
 		UpdatedAt: data.UpdatedAt,
 		Program:   data.Program,
-		host:      host.Local,
+		host:      h,
 	}
 	instance.gitWorktree = git.NewGitWorktreeFromStorageWithDeps(
 		data.Worktree.RepoPath,
@@ -136,6 +141,7 @@ func FromInstanceData(data InstanceData) (*Instance, error) {
 		data.Worktree.IsExistingBranch,
 		instance.host.Executor(),
 		instance.host.FS(),
+		worktreeDir,
 	)
 	instance.diffStats = &git.DiffStats{
 		Added:   data.DiffStats.Added,
@@ -227,15 +233,19 @@ func (i *Instance) Start(firstTimeSetup bool) error {
 	i.tmuxSession = tmuxSession
 
 	if firstTimeSetup {
+		worktreeDir, err := i.host.WorktreeDir()
+		if err != nil {
+			return fmt.Errorf("failed to resolve worktree directory: %w", err)
+		}
 		if i.selectedBranch != "" {
-			gitWorktree, err := git.NewGitWorktreeFromBranchWithDeps(i.Path, i.selectedBranch, i.Title, i.host.Executor(), i.host.FS())
+			gitWorktree, err := git.NewGitWorktreeFromBranchWithDeps(i.Path, i.selectedBranch, i.Title, i.host.Executor(), i.host.FS(), worktreeDir)
 			if err != nil {
 				return fmt.Errorf("failed to create git worktree from branch: %w", err)
 			}
 			i.gitWorktree = gitWorktree
 			i.Branch = i.selectedBranch
 		} else {
-			gitWorktree, branchName, err := git.NewGitWorktreeWithDeps(i.Path, i.Title, i.host.Executor(), i.host.FS())
+			gitWorktree, branchName, err := git.NewGitWorktreeWithDeps(i.Path, i.Title, i.host.Executor(), i.host.FS(), worktreeDir)
 			if err != nil {
 				return fmt.Errorf("failed to create git worktree: %w", err)
 			}

@@ -3,6 +3,7 @@ package git
 import (
 	"claude-squad/session/fs"
 	"os/exec"
+	"path/filepath"
 	"testing"
 
 	cmdtest "claude-squad/cmd/cmd_test"
@@ -70,7 +71,7 @@ func TestGitWorktree_NewGitWorktreeWithDeps_WiresExecutor(t *testing.T) {
 		RunFunc: func(c *exec.Cmd) error { return nil },
 	}
 
-	g, _, err := NewGitWorktreeWithDeps(repoPath, "sess", executor, fs.LocalFS{})
+	g, _, err := NewGitWorktreeWithDeps(repoPath, "sess", executor, fs.LocalFS{}, filepath.Join(t.TempDir(), "worktrees"))
 	require.NoError(t, err)
 	require.NotNil(t, g)
 
