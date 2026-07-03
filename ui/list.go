@@ -2,6 +2,7 @@ package ui
 
 import (
 	"claude-squad/log"
+	"claude-squad/program"
 	"claude-squad/session"
 	"errors"
 	"fmt"
@@ -52,6 +53,30 @@ var mainTitle = lipgloss.NewStyle().
 var autoYesStyle = lipgloss.NewStyle().
 	Background(lipgloss.Color("#dde4f0")).
 	Foreground(lipgloss.Color("#1a1a1a"))
+
+// programBadgeColors maps an adapter name to a badge foreground color. Keeps
+// the list visually scannable: at a glance you see which agent runs where.
+var programBadgeColors = map[string]string{
+	"pi":     "#7D56F4", // purple
+	"claude": "#FF6B35", // orange
+	"aider":  "#36CFC9", // teal
+	"gemini": "#4285F4", // blue
+	"noop":   "#888888", // grey (unknown agent)
+}
+
+// programBadge renders a small colored [name] pill for the agent running in
+// the given program command. Uses program.Lookup so the label is the same one
+// the detection seam uses (program.Adapter.Name()).
+func programBadge(programCmd string) string {
+	name := program.Lookup(programCmd).Name()
+	color := programBadgeColors[name]
+	if color == "" {
+		color = programBadgeColors["noop"]
+	}
+	return lipgloss.NewStyle().
+		Foreground(lipgloss.Color(color)).
+		Render(fmt.Sprintf("[%s]", name))
+}
 
 type List struct {
 	items         []*session.Instance
@@ -149,6 +174,8 @@ func (r *InstanceRenderer) Render(i *session.Instance, idx int, selected bool, h
 		lipgloss.Place(r.width-3, 1, lipgloss.Left, lipgloss.Center, fmt.Sprintf("%s %s", prefix, titleText)),
 		" ",
 		join,
+		" ",
+		programBadge(i.Program),
 	))
 
 	stat := i.GetDiffStats()
