@@ -31,3 +31,39 @@ type ErrNestedOrchestrator struct{}
 func (ErrNestedOrchestrator) Error() string {
 	return "kernel: an orchestrator cannot spawn another orchestrator (super-orchestrator hierarchy not yet supported)"
 }
+
+// isKernelProtected reports whether branch is in the kernel-level protected
+// set (the host repo's current branch + any extra the daemon injected). The
+// comparison is case-insensitive to match git's branch name normalisation
+// across platforms. The Merger defends main/master in depth separately.
+func isKernelProtected(protected []string, branch string) bool {
+	for _, p := range protected {
+		if equalFoldBranch(p, branch) {
+			return true
+		}
+	}
+	return false
+}
+
+// equalFoldBranch compares branch names case-insensitively. git branch names
+// are case-sensitive on disk but the protected-branch check is defensive —
+// a caller shouldn't bypass it by capitalising "Main".
+func equalFoldBranch(a, b string) bool {
+	la, lb := []byte(a), []byte(b)
+	if len(la) != len(lb) {
+		return false
+	}
+	for i := range la {
+		ca, cb := la[i], lb[i]
+		if 'A' <= ca && ca <= 'Z' {
+			ca += 'a' - 'A'
+		}
+		if 'A' <= cb && cb <= 'Z' {
+			cb += 'a' - 'A'
+		}
+		if ca != cb {
+			return false
+		}
+	}
+	return true
+}
