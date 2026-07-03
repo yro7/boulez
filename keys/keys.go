@@ -17,6 +17,12 @@ const (
 	KeyPush
 	KeySubmit
 
+	// KeyLand lands the instance's branch into the trunk (main by default):
+	// commit+push then merge into main. Top-level explicit action, behind a
+	// confirmation modal. Uppercase to match the destructive-action style
+	// (D=kill) and avoid colliding with lowercase bindings.
+	KeyLand
+
 	KeyTab        // Tab is a special keybinding for switching between panes.
 	KeySubmitName // SubmitName is a special keybinding for submitting the name of a new instance.
 
@@ -64,6 +70,7 @@ var GlobalKeyStringsMap = map[string]KeyName{
 	"c":          KeyCheckout,
 	"r":          KeyResume,
 	"p":          KeySubmit,
+	"L":          KeyLand,
 	"?":          KeyHelp,
 }
 
@@ -108,6 +115,10 @@ var GlobalkeyBindings = map[KeyName]key.Binding{
 	KeySubmit: key.NewBinding(
 		key.WithKeys("p"),
 		key.WithHelp("p", "push branch"),
+	),
+	KeyLand: key.NewBinding(
+		key.WithKeys("L"),
+		key.WithHelp("L", "land → main"),
 	),
 	KeyPrompt: key.NewBinding(
 		key.WithKeys("N"),

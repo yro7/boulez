@@ -138,6 +138,13 @@ func (m *Menu) addInstanceOptions() {
 		actionGroup = append(actionGroup, keys.KeyCheckout)
 	}
 
+	// Land is only offered when the instance is not actively working — landing
+	// an agent mid-run would commit/push incomplete state. Ready or Paused is
+	// the safe window. Never shown for Running (the agent may still be writing).
+	if m.instance.Status == session.Ready || m.instance.Status == session.Paused {
+		actionGroup = append(actionGroup, keys.KeyLand)
+	}
+
 	// Navigation group (when in diff tab)
 	if m.activeTab == DiffTab || m.activeTab == TerminalTab {
 		actionGroup = append(actionGroup, keys.KeyShiftUp)
