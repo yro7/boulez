@@ -54,12 +54,22 @@ type mergeCall struct {
 	target     string
 	sources    []string
 	strategy   git.Strategy
+	trunk      bool // true if called via MergeTrunk (Land path)
 }
 
 func (f *fakeMerger) Merge(repoPath, targetBranch string, sourceBranches []string, strategy git.Strategy) (git.MergeResult, error) {
 	f.mu.Lock()
 	defer f.mu.Unlock()
-	f.calls = append(f.calls, mergeCall{repoPath, targetBranch, sourceBranches, strategy})
+	f.calls = append(f.calls, mergeCall{repoPath, targetBranch, sourceBranches, strategy, false})
+	return f.result, f.err
+}
+
+// MergeTrunk records a trunk-path call so Land tests can assert the kernel
+// routed through MergeTrunk (not Merge). It shares the scripted result.
+func (f *fakeMerger) MergeTrunk(repoPath, targetBranch string, sourceBranches []string, strategy git.Strategy) (git.MergeResult, error) {
+	f.mu.Lock()
+	defer f.mu.Unlock()
+	f.calls = append(f.calls, mergeCall{repoPath, targetBranch, sourceBranches, strategy, true})
 	return f.result, f.err
 }
 
