@@ -6,7 +6,6 @@ import (
 	"fmt"
 	"os"
 	"os/exec"
-	"os/user"
 	"path/filepath"
 	"regexp"
 	"strings"
@@ -104,14 +103,10 @@ func DefaultConfig() *Config {
 		DefaultProgram:     program,
 		AutoYes:            false,
 		DaemonPollInterval: 1000,
-		BranchPrefix: func() string {
-			user, err := user.Current()
-			if err != nil || user == nil || user.Username == "" {
-				log.ErrorLog.Printf("failed to get current user: %v", err)
-				return "session/"
-			}
-			return fmt.Sprintf("%s/", strings.ToLower(user.Username))
-		}(),
+		// BranchPrefix is a neutral, non-personal prefix for cs2-created branches.
+		// It must NOT derive from the OS username: branches get pushed to remotes
+		// (e.g. a public fork) where the name would leak the user's identity.
+		BranchPrefix: "cs2/",
 	}
 }
 
