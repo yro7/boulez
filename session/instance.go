@@ -2,6 +2,7 @@ package session
 
 import (
 	"claude-squad/log"
+	"claude-squad/program"
 	"claude-squad/session/git"
 	"claude-squad/session/tmux"
 	"path/filepath"
@@ -323,9 +324,9 @@ func (i *Instance) Preview() (string, error) {
 	return i.tmuxSession.CapturePaneContent()
 }
 
-func (i *Instance) HasUpdated() (updated bool, hasPrompt bool) {
+func (i *Instance) HasUpdated() (updated bool, status program.Status) {
 	if !i.started {
-		return false, false
+		return false, program.StatusUnknown
 	}
 	return i.tmuxSession.HasUpdated()
 }

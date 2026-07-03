@@ -49,6 +49,9 @@ type Config struct {
 	DefaultProgram string `json:"default_program"`
 	// AutoYes is a flag to automatically accept all prompts.
 	AutoYes bool `json:"auto_yes"`
+	// NotifyOnReady fires a desktop notification when an instance finishes a
+	// turn and becomes idle (Ready). Off by default to stay unobtrusive.
+	NotifyOnReady bool `json:"notify_on_ready"`
 	// DaemonPollInterval is the interval (ms) at which the daemon polls sessions for autoyes mode.
 	DaemonPollInterval int `json:"daemon_poll_interval"`
 	// BranchPrefix is the prefix used for git branches created by the application.
