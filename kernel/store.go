@@ -105,6 +105,22 @@ func (k *Kernel) InstanceByID(id string) (*session.Instance, error) {
 	return inst, nil
 }
 
+// LiveInstances returns a defensive copy of the in-memory fleet, loading from
+// storage on first access. It is the source of truth the daemon's poll loop
+// consumes: the daemon must NOT keep its own separate slice of instances —
+// the kernel is the single writer (invariant 1), and a second in-memory copy
+// drifts (e.g. it never sees the orchestrator the kernel spawns, then the
+// daemon's shutdown-save clobbers the kernel's persisted state).
+//
+// The returned pointers are the live instances the kernel owns; callers may
+// observe them (poll status, update diff stats) but must not mutate fleet
+// membership through them — that goes through the kernel syscalls.
+func (k *Kernel) LiveInstances() []*session.Instance {
+	k.mu.Lock()
+	defer k.mu.Unlock()
+	return k.instancesLocked()
+}
+
 func (k *Kernel) registerLocked(inst *session.Instance) {
 	if k.instStore == nil {
 		k.instStore = &instances{loaded: true}

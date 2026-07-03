@@ -1,11 +1,22 @@
 package daemon
 
 import (
+	"claude-squad/cmd"
 	"claude-squad/host"
 	"claude-squad/kernel"
+	"claude-squad/log"
 	"claude-squad/orchestrator"
 	"claude-squad/session"
+	"claude-squad/session/tmux"
 )
+
+// orchestratorSessionTitle is the stable title used for the global
+// orchestrator instance. Because the tmux session name is derived from the
+// title, a stable title yields a stable session name
+// (claudesquad_orchestrator). This is what makes the orphan-reclaim check in
+// SpawnOrchestrator reliable: the session name is predictable, not a
+// timestamp-derived collision-avoidance suffix.
+const orchestratorSessionTitle = "orchestrator"
 
 // orchestratorAPI adapts *kernel.Kernel to the orchestrator.API interface.
 // It is the bridge between the bootstrap layer (agent-agnostic, testable) and
@@ -60,15 +71,41 @@ func (a *orchestratorAPI) ListOrchestrators() []orchestrator.Instance {
 // It spawns top-level (no caller): instance 0 is a policy the daemon owns,
 // not attributed to another orchestrator. The orchestrator runs the daemon's
 // configured default program (Pi by user choice, but any terminal agent).
+//
+// Before spawning it reclaims any orphaned tmux session left by a previous
+// run that crashed before the kernel could persist the orchestrator (the
+// "tmux session already exists: claudesquad_orchestrator" loop seen in
+// dogfooding). Ensure has already determined NO orchestrator instance is in
+// the fleet, so a surviving session with this name is by definition an orphan
+// — kill it so the fresh spawn does not collide. Conversation is lost only in
+// this broken state; the normal restart path preserves conversation (Ensure
+// takes the restart branch and the kernel reattaches to the live session).
 func (a *orchestratorAPI) SpawnOrchestrator(program string) (string, error) {
+	reclaimOrphanedOrchestratorSession()
 	return a.k.Spawn(kernel.CallerContext{}, kernel.SpawnOptions{
 		// An orchestrator has no repo (headless worktree). Repo is left empty;
 		// app.Spawn relaxes the repo requirement for KindOrchestrator.
 		Kind:    session.KindOrchestrator,
 		Program: program,
-		Title:   "orchestrator",
+		Title:   orchestratorSessionTitle,
 		Host:    host.Local,
 	})
+}
+
+// reclaimOrphanedOrchestratorSession kills a leftover claudesquad_orchestrator
+// tmux session if one exists. See SpawnOrchestrator for the rationale.
+func reclaimOrphanedOrchestratorSession() {
+	name := tmux.SessionName(orchestratorSessionTitle)
+	exec := cmd.MakeExecutor()
+	if !tmux.SessionExists(exec, name) {
+		return
+	}
+	log.WarningLog.Printf("orchestrator: reclaiming orphaned tmux session %s", name)
+	if err := tmux.KillSession(exec, name); err != nil {
+		// Non-fatal: the spawn may still collide, but we tried. Surface it so
+		// the failure is diagnosable rather than a silent skip.
+		log.WarningLog.Printf("orchestrator: could not kill orphaned session %s: %v", name, err)
+	}
 }
 
 func (a *orchestratorAPI) SendPrompt(id, prompt string) error {

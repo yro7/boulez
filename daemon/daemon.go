@@ -28,13 +28,17 @@ func RunDaemon(cfg *config.Config) error {
 		return fmt.Errorf("failed to initialize storage: %w", err)
 	}
 
-	instances, err := storage.LoadInstances()
-	if err != nil {
-		return fmt.Errorf("failed to load instacnes: %w", err)
-	}
 	// AutoYes is per-instance (persisted on InstanceData). The daemon respects
 	// the stored value rather than forcing it globally — this lets remote
 	// instances stay off by default while local ones follow the user's choice.
+
+	// The kernel is the single writer that owns the fleet's mutable state. The
+	// daemon does NOT keep its own instances slice: doing so creates a second
+	// writer that drifts from the kernel (it never sees the orchestrator the
+	// kernel spawns via Ensure), and the daemon's shutdown-save would then
+	// clobber the kernel's persisted state — losing the orchestrator. Instead
+	// the poll loop below reads k.LiveInstances() (the kernel's source of
+	// truth) every tick. The kernel persists every mutation itself (autosave).
 
 	// The kernel is the single-writer control authority. The daemon owns it
 	// and serves the control socket so `cs2 ctl` (and future LLM tools) can
@@ -83,7 +87,7 @@ func RunDaemon(cfg *config.Config) error {
 		defer wg.Done()
 		ticker := time.NewTimer(pollInterval)
 		for {
-			for _, instance := range instances {
+			for _, instance := range k.LiveInstances() {
 				// We only store started instances, but check anyway.
 				if instance.Started() && !instance.Paused() {
 					if _, status := instance.HasUpdated(); status == program.StatusReady || status == program.StatusPermission {
@@ -124,9 +128,11 @@ func RunDaemon(cfg *config.Config) error {
 	close(stopCh)
 	wg.Wait()
 
-	if err := storage.SaveInstances(instances); err != nil {
-		log.ErrorLog.Printf("failed to save instances when terminating daemon: %v", err)
-	}
+	// Note: the daemon no longer saves instances on shutdown. The kernel is
+	// the single writer and persists every mutation as it happens (autosave).
+	// A shutdown save here would race the kernel and risk clobbering state it
+	// does not know about (the original double-writer bug that orphaned the
+	// orchestrator on every restart).
 	return nil
 }
 
