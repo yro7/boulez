@@ -128,3 +128,39 @@ func TestInstance_UsesHostWorktreeDir(t *testing.T) {
 	require.NoError(t, err)
 	assert.Equal(t, filepath.Join(tempHome, ".cs2", "worktrees"), wantDir)
 }
+
+// TestInstance_HostRoundTrip proves persistence: serializing an instance with
+// an SSHHost and restoring it yields an instance whose host is an SSHHost
+// bound to the same alias. This is the contract the creation flow + storage
+// rely on: the host survives a cs2 restart.
+func TestInstance_HostRoundTrip(t *testing.T) {
+	repoPath := makeTempGitRepo(t)
+
+	inst, err := NewInstance(InstanceOptions{
+		Title:   "remote",
+		Path:    repoPath,
+		Program: "claude",
+	})
+	require.NoError(t, err)
+	require.NoError(t, inst.SetHost(host.NewSSHHost("dev-machine")))
+
+	data := inst.ToInstanceData()
+	assert.Equal(t, "dev-machine", data.Host, "ToInstanceData must serialize the host name")
+
+	restored, err := FromInstanceData(data)
+	require.NoError(t, err)
+
+	ssh, ok := restored.Host().(host.SSHHost)
+	require.True(t, ok, "restored instance must be an SSHHost")
+	assert.Equal(t, "dev-machine", ssh.Alias())
+	assert.False(t, restored.Host().AutoYesDefault(), "remote AutoYes default must survive round-trip")
+}
+
+// TestInstance_SetHost_RefusedAfterStart proves the guard: changing the host
+// after Start would leave stale tmux/git sessions bound to the wrong host, so
+// it must error.
+func TestInstance_SetHost_RefusedAfterStart(t *testing.T) {
+	inst := &Instance{host: host.Local, started: true}
+	err := inst.SetHost(host.NewSSHHost("dev-machine"))
+	assert.Error(t, err, "SetHost after Start must error")
+}

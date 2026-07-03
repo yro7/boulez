@@ -20,6 +20,7 @@ type InstanceData struct {
 	AutoYes   bool      `json:"auto_yes"`
 
 	Program   string          `json:"program"`
+	Host      string          `json:"host"`
 	Worktree  GitWorktreeData `json:"worktree"`
 	DiffStats DiffStatsData   `json:"diff_stats"`
 }

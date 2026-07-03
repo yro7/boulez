@@ -86,6 +86,7 @@ func (i *Instance) ToInstanceData() InstanceData {
 		CreatedAt: i.CreatedAt,
 		UpdatedAt: time.Now(),
 		Program:   i.Program,
+		Host:      i.host.Name(),
 		AutoYes:   i.AutoYes,
 	}
 
@@ -115,7 +116,7 @@ func (i *Instance) ToInstanceData() InstanceData {
 
 // FromInstanceData creates a new Instance from serialized data
 func FromInstanceData(data InstanceData) (*Instance, error) {
-	h := host.Local
+	h := host.Lookup(data.Host)
 	worktreeDir, err := h.WorktreeDir()
 	if err != nil {
 		return nil, fmt.Errorf("failed to resolve worktree directory: %w", err)
@@ -130,6 +131,7 @@ func FromInstanceData(data InstanceData) (*Instance, error) {
 		CreatedAt: data.CreatedAt,
 		UpdatedAt: data.UpdatedAt,
 		Program:   data.Program,
+		AutoYes:   data.AutoYes,
 		host:      h,
 	}
 	instance.gitWorktree = git.NewGitWorktreeFromStorageWithDeps(
@@ -662,6 +664,18 @@ func (i *Instance) PreviewFullHistory() (string, error) {
 // host's name or AutoYes policy.
 func (i *Instance) Host() host.Host {
 	return i.host
+}
+
+// SetHost sets the execution environment. Used by the creation flow after the
+// user picks a host (before Start). Must not be called after Start: the
+// tmux/git deps are bound at Start time from the host, so changing it later
+// would leave stale sessions pointing at the wrong host.
+func (i *Instance) SetHost(h host.Host) error {
+	if i.started {
+		return fmt.Errorf("cannot change host of a started instance")
+	}
+	i.host = h
+	return nil
 }
 
 // SetTmuxSession sets the tmux session for testing purposes
