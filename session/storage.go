@@ -9,6 +9,10 @@ import (
 
 // InstanceData represents the serializable data of an Instance
 type InstanceData struct {
+	// ID is the stable, immutable instance handle. May be empty for
+	// instances persisted before this field existed; FromInstanceData
+	// backfills one in that case.
+	ID        string    `json:"id"`
 	Title     string    `json:"title"`
 	Path      string    `json:"path"`
 	Branch    string    `json:"branch"`
