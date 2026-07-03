@@ -28,6 +28,37 @@ const (
 	Paused
 )
 
+// Kind classifies an instance's role. It is the point of extension for the
+// orchestration hierarchy: today the topology is strictly two levels — a
+// Worker cannot spawn, an Orchestrator can — but lifting that restriction
+// later (super-orchestrator → n orchestrators → m workers) is a change to
+// the spawn guard, not to the architecture. Persisted in InstanceData so it
+// survives a restart.
+type Kind int
+
+const (
+	// KindWorker is the default: an instance bound to a real git worktree,
+	// editing code in isolation. This is the only Kind that existed before
+	// the orchestrator work — back-compat default for legacy persisted data.
+	KindWorker Kind = iota
+	// KindOrchestrator is a supervising instance. It has no git worktree
+	// (it does not edit code in a supervised repo); its worktree is the
+	// headless no-op. It supervises the fleet via the control API.
+	KindOrchestrator
+)
+
+// String renders the Kind for logging/debug.
+func (k Kind) String() string {
+	switch k {
+	case KindWorker:
+		return "worker"
+	case KindOrchestrator:
+		return "orchestrator"
+	default:
+		return "unknown"
+	}
+}
+
 // Instance is a running instance of claude code.
 type Instance struct {
 	// ID is the stable, immutable handle of the instance. Allocated at
@@ -57,6 +88,10 @@ type Instance struct {
 	AutoYes bool
 	// Prompt is the initial prompt to pass to the instance on startup
 	Prompt string
+	// Kind classifies the instance's role (Worker vs Orchestrator). Defaults
+	// to KindWorker for back-compat. Decides which Worktree implementation is
+	// bound at Start time; never branched on elsewhere.
+	kind Kind
 
 	// host is the execution environment for this instance: how commands run,
 	// how the filesystem is touched, how PTYs are allocated, and where the
@@ -90,6 +125,7 @@ func (i *Instance) ToInstanceData() InstanceData {
 		Path:      i.Path,
 		Branch:    i.Branch,
 		Status:    i.Status,
+		Kind:      i.kind,
 		Height:    i.Height,
 		Width:     i.Width,
 		CreatedAt: i.CreatedAt,
@@ -136,16 +172,13 @@ func FromInstanceData(data InstanceData) (*Instance, error) {
 		data.ID = id
 	}
 	h := host.Lookup(data.Host)
-	worktreeDir, err := h.WorktreeDir()
-	if err != nil {
-		return nil, fmt.Errorf("failed to resolve worktree directory: %w", err)
-	}
 	instance := &Instance{
 		ID:        data.ID,
 		Title:     data.Title,
 		Path:      data.Path,
 		Branch:    data.Branch,
 		Status:    data.Status,
+		kind:      data.Kind,
 		Height:    data.Height,
 		Width:     data.Width,
 		CreatedAt: data.CreatedAt,
@@ -154,17 +187,11 @@ func FromInstanceData(data InstanceData) (*Instance, error) {
 		AutoYes:   data.AutoYes,
 		host:      h,
 	}
-	instance.gitWorktree = git.NewGitWorktreeFromStorageWithDeps(
-		data.Worktree.RepoPath,
-		data.Worktree.WorktreePath,
-		data.Worktree.SessionName,
-		data.Worktree.BranchName,
-		data.Worktree.BaseCommitSHA,
-		data.Worktree.IsExistingBranch,
-		instance.host.Executor(),
-		instance.host.FS(),
-		worktreeDir,
-	)
+	wt, err := restoreWorktree(data.Kind, data.ID, data.Worktree, h)
+	if err != nil {
+		return nil, err
+	}
+	instance.gitWorktree = wt
 	instance.diffStats = &git.DiffStats{
 		Added:   data.DiffStats.Added,
 		Removed: data.DiffStats.Removed,
@@ -199,6 +226,9 @@ type InstanceOptions struct {
 	// allocated. Used by tests and backfill paths; production callers leave
 	// it empty.
 	ID string
+	// Kind classifies the instance. Defaults to KindWorker when zero.
+	// KindOrchestrator gets a headless worktree at Start time.
+	Kind Kind
 }
 
 func NewInstance(opts InstanceOptions) (*Instance, error) {
@@ -229,6 +259,7 @@ func NewInstance(opts InstanceOptions) (*Instance, error) {
 		CreatedAt:      t,
 		UpdatedAt:      t,
 		AutoYes:        false,
+		kind:           opts.Kind,
 		host:          host.Local,
 		selectedBranch: opts.Branch,
 	}, nil
@@ -252,6 +283,10 @@ func newInstanceID() (string, error) {
 // the control API.
 func (i *Instance) GetID() string {
 	return i.ID
+}
+
+func (i *Instance) Kind() Kind {
+	return i.kind
 }
 
 func (i *Instance) RepoName() (string, error) {
@@ -287,6 +322,62 @@ func pausedCommitMessage(title string, t time.Time) string {
 	return fmt.Sprintf("[claudesquad] update from '%s' on %s (paused)", title, t.Format(time.RFC822))
 }
 
+// buildWorktree is the SINGLE factory point that branches on Kind to pick
+// the Worktree implementation for a newly-created instance. A Worker gets a
+// real *git.GitWorktree; an Orchestrator gets a headlessWorktree. No other
+// code in the package branches on Kind — the difference is bound here and
+// hidden behind the Worktree interface everywhere else.
+func (i *Instance) buildWorktree() (Worktree, string, error) {
+	if i.kind == KindOrchestrator {
+		wt, err := newHeadlessWorktree(i.ID)
+		if err != nil {
+			return nil, "", fmt.Errorf("failed to build headless worktree: %w", err)
+		}
+		// No branch for an orchestrator.
+		return wt, "", nil
+	}
+
+	// Worker: real git worktree in the host's worktree dir.
+	worktreeDir, err := i.host.WorktreeDir()
+	if err != nil {
+		return nil, "", fmt.Errorf("failed to resolve worktree directory: %w", err)
+	}
+	if i.selectedBranch != "" {
+		gitWorktree, err := git.NewGitWorktreeFromBranchWithDeps(i.Path, i.selectedBranch, i.Title, i.host.Executor(), i.host.FS(), worktreeDir)
+		if err != nil {
+			return nil, "", fmt.Errorf("failed to create git worktree from branch: %w", err)
+		}
+		return gitWorktree, i.selectedBranch, nil
+	}
+	gitWorktree, branchName, err := git.NewGitWorktreeWithDeps(i.Path, i.Title, i.host.Executor(), i.host.FS(), worktreeDir)
+	if err != nil {
+		return nil, "", fmt.Errorf("failed to create git worktree: %w", err)
+	}
+	return gitWorktree, branchName, nil
+}
+
+// restoreWorktree is the factory point for an instance rebuilt from storage:
+// it picks the Worktree implementation from the persisted Kind + worktree
+// data. Paired with buildWorktree — together they are the only Kind branches.
+func restoreWorktree(kind Kind, id string, data GitWorktreeData, h host.Host) (Worktree, error) {
+	if kind == KindOrchestrator {
+		wt, err := newHeadlessWorktree(id)
+		if err != nil {
+			return nil, fmt.Errorf("failed to build headless worktree: %w", err)
+		}
+		return wt, nil
+	}
+	worktreeDir, err := h.WorktreeDir()
+	if err != nil {
+		return nil, fmt.Errorf("failed to resolve worktree directory: %w", err)
+	}
+	return git.NewGitWorktreeFromStorageWithDeps(
+		data.RepoPath, data.WorktreePath, data.SessionName, data.BranchName,
+		data.BaseCommitSHA, data.IsExistingBranch,
+		h.Executor(), h.FS(), worktreeDir,
+	), nil
+}
+
 // firstTimeSetup is true if this is a new instance. Otherwise, it's one loaded from storage.
 func (i *Instance) Start(firstTimeSetup bool) error {
 	if i.Title == "" {
@@ -307,25 +398,12 @@ func (i *Instance) Start(firstTimeSetup bool) error {
 	i.tmuxSession = tmuxSession
 
 	if firstTimeSetup {
-		worktreeDir, err := i.host.WorktreeDir()
+		wt, branch, err := i.buildWorktree()
 		if err != nil {
-			return fmt.Errorf("failed to resolve worktree directory: %w", err)
+			return err
 		}
-		if i.selectedBranch != "" {
-			gitWorktree, err := git.NewGitWorktreeFromBranchWithDeps(i.Path, i.selectedBranch, i.Title, i.host.Executor(), i.host.FS(), worktreeDir)
-			if err != nil {
-				return fmt.Errorf("failed to create git worktree from branch: %w", err)
-			}
-			i.gitWorktree = gitWorktree
-			i.Branch = i.selectedBranch
-		} else {
-			gitWorktree, branchName, err := git.NewGitWorktreeWithDeps(i.Path, i.Title, i.host.Executor(), i.host.FS(), worktreeDir)
-			if err != nil {
-				return fmt.Errorf("failed to create git worktree: %w", err)
-			}
-			i.gitWorktree = gitWorktree
-			i.Branch = branchName
-		}
+		i.gitWorktree = wt
+		i.Branch = branch
 	}
 
 	// Setup error handler to cleanup resources on any error
