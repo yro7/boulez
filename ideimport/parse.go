@@ -15,6 +15,8 @@
 package ideimport
 
 import (
+	"net/url"
+	"path/filepath"
 	"sort"
 	"strings"
 )
@@ -52,4 +54,22 @@ func collectPaths(node any) []string {
 	}
 	sort.Strings(out)
 	return out
+}
+
+// decodeFileURL parses a file:// URL and returns its absolute filesystem path,
+// cleaned. Returns ok=false if the URL is malformed, lacks the file scheme, or
+// has an empty path (e.g. a bare "file://localhost"). Both percent-encoded
+// ("file:///a%20b") and literal ("file:///a b") forms decode to "/a b".
+func decodeFileURL(raw string) (string, bool) {
+	parsed, err := url.Parse(raw)
+	if err != nil {
+		return "", false
+	}
+	if parsed.Scheme != "file" {
+		return "", false
+	}
+	if parsed.Path == "" {
+		return "", false
+	}
+	return filepath.Clean(parsed.Path), true
 }

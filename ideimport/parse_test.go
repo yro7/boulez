@@ -62,3 +62,29 @@ func TestCollectPaths_NonTreeValues(t *testing.T) {
 	assert.Empty(t, collectPaths(map[string]any{}))
 	assert.Empty(t, collectPaths([]any{}))
 }
+
+func TestDecodeFileURL(t *testing.T) {
+	cases := []struct {
+		name string
+		in   string
+		path string
+		ok   bool
+	}{
+		{"plain", "file:///Users/u/projets/repo", "/Users/u/projets/repo", true},
+		{"encoded_space", "file:///a%20b/repo", "/a b/repo", true},
+		{"literal_space", "file:///a b/repo", "/a b/repo", true},
+		{"localhost_host", "file://localhost/Users/u/repo", "/Users/u/repo", true},
+		{"empty_path", "file://localhost", "", false},
+		{"wrong_scheme", "http://example.com/repo", "", false},
+		{"garbage", ":::not-a-url:::", "", false},
+	}
+	for _, tc := range cases {
+		t.Run(tc.name, func(t *testing.T) {
+			p, ok := decodeFileURL(tc.in)
+			assert.Equal(t, tc.ok, ok)
+			if ok {
+				assert.Equal(t, tc.path, p)
+			}
+		})
+	}
+}

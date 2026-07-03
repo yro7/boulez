@@ -1,9 +1,12 @@
 package ideimport
 
 import (
+	"claude-squad/session/git"
+	"encoding/json"
 	"fmt"
 	"os"
 	"path/filepath"
+	"runtime"
 	"strings"
 )
 
@@ -90,4 +93,123 @@ func storagePath(goos, homeDir string, spec ideSpec) (string, error) {
 		return "", err
 	}
 	return filepath.Join(root, spec.dirName, "User", "globalStorage", "storage.json"), nil
+}
+
+// FoundRepo is a repository path discovered in an IDE's state, plus the
+// display name of the source IDE (for the import summary).
+type FoundRepo struct {
+	Path string // absolute filesystem path, decoded from a file:// URL
+	IDE  string // display name, e.g. "Antigravity", "Cursor"
+}
+
+// Warning reports a non-fatal problem encountered while scanning a single
+// IDE (e.g. a corrupt storage.json). Scan continues with the remaining IDEs;
+// the caller surfaces these to the user (D16).
+type Warning struct {
+	IDE   string // display name
+	Cause string // human-readable reason
+}
+
+// Importer scans VS Code-family IDE state files and reports the git
+// repositories found among their recently-opened folders. It does NOT touch
+// the cs2 registry — Scan returns discoveries; the caller does Registry.Add.
+// This keeps the package testable without a registry and reusable for
+// --dry-run (D19).
+type Importer struct {
+	homeDir string // injected so tests use a temp HOME, never the real one
+	ideName string // "" = all known IDEs; canonical name = restrict to one
+}
+
+// NewImporter returns an Importer over the real user home directory. name is
+// "" (scan all IDEs) or a canonical IDE name to restrict to one. An invalid
+// name yields an error before any scan (fail-fast, D12).
+func NewImporter(name string) (*Importer, error) {
+	home, err := os.UserHomeDir()
+	if err != nil {
+		return nil, err
+	}
+	return NewImporterAt(home, name)
+}
+
+// NewImporterAt returns an Importer bound to an explicit homeDir (for tests).
+// A non-empty name must be a valid canonical IDE name (validated here, D12).
+func NewImporterAt(homeDir, name string) (*Importer, error) {
+	if name != "" {
+		if _, ok := lookupIDE(name); !ok {
+			return nil, fmt.Errorf("ideimport: unknown IDE %q; valid: %s", name, validIDENames())
+		}
+	}
+	return &Importer{homeDir: homeDir, ideName: name}, nil
+}
+
+// Scan reads each applicable IDE's storage.json, collects file:// URLs,
+// decodes them to absolute paths, keeps those that are git repositories, and
+// returns them deduplicated by absolute path (D9). IDEs whose storage.json is
+// missing are silently skipped (D15); a present-but-unreadable or corrupt
+// file yields a Warning for that IDE (D16) but does not abort the scan.
+// Returns an error only for hard failures (e.g. unsupported OS), never for
+// "no IDE found" (D17).
+func (i *Importer) Scan() ([]FoundRepo, []Warning, error) {
+	specs := i.specsToScan()
+	var found []FoundRepo
+	var warnings []Warning
+	seen := make(map[string]struct{})
+	for _, spec := range specs {
+		repos, warns, err := i.scanOne(spec)
+		warnings = append(warnings, warns...)
+		if err != nil {
+			return nil, warnings, err // hard failure aborts
+		}
+		for _, r := range repos {
+			if _, ok := seen[r.Path]; !ok {
+				seen[r.Path] = struct{}{}
+				found = append(found, r)
+			}
+		}
+	}
+	return found, warnings, nil
+}
+
+// specsToScan returns the IDE specs this importer will scan.
+//
+// NOTE (commit 3a): always the single Antigravity spec — the only IDE
+// verified on a dev machine — to prove the mechanism end-to-end. Commit 3b
+// generalises to the full knownIDEs list (or the one named by --ide).
+func (i *Importer) specsToScan() []ideSpec {
+	return []ideSpec{{name: "Antigravity", dirName: "Antigravity IDE", canon: "antigravity"}}
+}
+
+// scanOne scans a single IDE's storage.json. Returns the discovered git repos
+// (not yet cross-IDE deduped). A missing storage.json is a silent skip (no
+// repos, no warning, no error — D15). A present-but-unreadable or
+// JSON-corrupt file yields a warning (D16) but no error.
+func (i *Importer) scanOne(spec ideSpec) ([]FoundRepo, []Warning, error) {
+	path, err := storagePath(runtime.GOOS, i.homeDir, spec)
+	if err != nil {
+		return nil, nil, err // unsupported OS = hard failure
+	}
+	data, err := os.ReadFile(path)
+	if err != nil {
+		if os.IsNotExist(err) {
+			return nil, nil, nil // D15: silent skip
+		}
+		// Present but unreadable (permissions, etc.) → warning, not fatal.
+		return nil, []Warning{{IDE: spec.name, Cause: err.Error()}}, nil
+	}
+	var node any
+	if err := json.Unmarshal(data, &node); err != nil {
+		// Corrupt JSON → warning (D16).
+		return nil, []Warning{{IDE: spec.name, Cause: err.Error()}}, nil
+	}
+	var found []FoundRepo
+	for _, u := range collectPaths(node) {
+		p, ok := decodeFileURL(u)
+		if !ok {
+			continue
+		}
+		if git.IsGitRepo(p) {
+			found = append(found, FoundRepo{Path: p, IDE: spec.name})
+		}
+	}
+	return found, nil, nil
 }
