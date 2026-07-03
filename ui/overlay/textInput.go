@@ -253,6 +253,25 @@ func (t *TextInputOverlay) GetSelectedProgram() string {
 	return t.profilePicker.GetSelectedProfile().Program
 }
 
+// GetSelectedProfileName returns the name of the currently selected profile.
+// Returns empty string if no profile picker is present.
+func (t *TextInputOverlay) GetSelectedProfileName() string {
+	if t.profilePicker == nil {
+		return ""
+	}
+	return t.profilePicker.GetSelectedProfile().Name
+}
+
+// PreselectProfile moves the profile picker's cursor to the profile with the
+// given name. No-op when there is no profile picker or the name does not match
+// any profile, so a stale preference never breaks the overlay.
+func (t *TextInputOverlay) PreselectProfile(name string) {
+	if t.profilePicker == nil {
+		return
+	}
+	t.profilePicker.SetSelectedByName(name)
+}
+
 // BranchFilterVersion returns the current filter version from the branch picker.
 // Returns 0 if no branch picker is present.
 func (t *TextInputOverlay) BranchFilterVersion() uint64 {
