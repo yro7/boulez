@@ -113,15 +113,43 @@ func TestDefaultConfig(t *testing.T) {
 }
 
 func TestGetConfigDir(t *testing.T) {
-	t.Run("returns valid config directory", func(t *testing.T) {
+	t.Run("returns valid config directory under home", func(t *testing.T) {
+		originalHome := os.Getenv("HOME")
+		tempHome := t.TempDir()
+		os.Setenv("HOME", tempHome)
+		defer os.Setenv("HOME", originalHome)
+
 		configDir, err := GetConfigDir()
 
 		assert.NoError(t, err)
 		assert.NotEmpty(t, configDir)
-		assert.True(t, strings.HasSuffix(configDir, ".claude-squad"))
+		assert.True(t, strings.HasSuffix(configDir, ".cs2"))
+
+		// Must live under the home directory.
+		assert.True(t, strings.HasPrefix(configDir, tempHome))
 
 		// Verify it's an absolute path
 		assert.True(t, filepath.IsAbs(configDir))
+	})
+
+	t.Run("creates directory if absent (cold start)", func(t *testing.T) {
+		originalHome := os.Getenv("HOME")
+		tempHome := t.TempDir()
+		os.Setenv("HOME", tempHome)
+		defer os.Setenv("HOME", originalHome)
+
+		expectedDir := filepath.Join(tempHome, ".cs2")
+		// Sanity: not present yet.
+		_, statErr := os.Stat(expectedDir)
+		assert.True(t, os.IsNotExist(statErr))
+
+		configDir, err := GetConfigDir()
+
+		assert.NoError(t, err)
+		assert.Equal(t, expectedDir, configDir)
+		info, err := os.Stat(expectedDir)
+		require.NoError(t, err)
+		assert.True(t, info.IsDir())
 	})
 }
 
@@ -145,7 +173,7 @@ func TestLoadConfig(t *testing.T) {
 	t.Run("loads valid config file", func(t *testing.T) {
 		// Create a temporary config directory
 		tempHome := t.TempDir()
-		configDir := filepath.Join(tempHome, ".claude-squad")
+		configDir := filepath.Join(tempHome, ".cs2")
 		err := os.MkdirAll(configDir, 0755)
 		require.NoError(t, err)
 
@@ -177,7 +205,7 @@ func TestLoadConfig(t *testing.T) {
 	t.Run("returns default config on invalid JSON", func(t *testing.T) {
 		// Create a temporary config directory
 		tempHome := t.TempDir()
-		configDir := filepath.Join(tempHome, ".claude-squad")
+		configDir := filepath.Join(tempHome, ".cs2")
 		err := os.MkdirAll(configDir, 0755)
 		require.NoError(t, err)
 
@@ -290,7 +318,7 @@ func TestSaveConfig(t *testing.T) {
 		assert.NoError(t, err)
 
 		// Verify the file was created
-		configDir := filepath.Join(tempHome, ".claude-squad")
+		configDir := filepath.Join(tempHome, ".cs2")
 		configPath := filepath.Join(configDir, ConfigFileName)
 
 		assert.FileExists(t, configPath)
