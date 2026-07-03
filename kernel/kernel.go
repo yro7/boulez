@@ -100,6 +100,13 @@ type Kernel struct {
 	// directly. The Merger cannot know the host repo, so this guard lives in
 	// the kernel — the authority that applies guards no client can bypass.
 	protectedBranches []string
+
+	// sessions tracks authenticated control connections by session id. Each
+	// session binds a connection to an instance identity (via `authenticate`),
+	// so syscalls are attributed to the right caller for the recursion guards.
+	// Unauthenticated (top-level) sessions aren't tracked here — they're
+	// stateless. Guarded by k.mu.
+	sessions map[string]*ctlSession
 }
 
 // Option configures a Kernel.

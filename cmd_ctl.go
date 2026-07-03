@@ -45,13 +45,94 @@ Examples:
 	cmd.AddCommand(newCtlResumeCmd())
 	cmd.AddCommand(newCtlKillCmd())
 	cmd.AddCommand(newCtlMergeCmd())
+	cmd.AddCommand(newCtlAsCmd())
 	return cmd
+}
+
+// newCtlAsCmd builds `cs2 ctl as <instance-id> <syscall> [...]`: it
+// authenticates the connection as the given instance, then issues the
+// syscall on the SAME connection so the caller identity is bound. This is
+// how a plan is recorded for an orchestrator via the CLI (finding #4): the
+// orchestrator's `spawn_worker` calls are attributed to it, so its plan.json
+// is written. Without `as`, every `cs2 ctl` call is top-level (no plan).
+//
+// Only syscalls whose effect depends on the caller identity need `as`:
+// spawn_worker (records the worker in the caller's plan) and merge (records
+// the merge target). The other syscalls are caller-agnostic.
+func newCtlAsCmd() *cobra.Command {
+	cmd := &cobra.Command{
+		Use:   "as <instance-id> <syscall> [--param value ...]",
+		Short: "Issue a syscall authenticated as an instance (records the caller's plan)",
+		Long: `cs2 ctl as authenticates the connection as the given instance, then
+issues the named syscall on the same connection. This binds the caller
+identity so the recursion guards apply and the orchestrator's plan is
+recorded (resumability substrate).
+
+Only spawn_worker and merge are caller-aware; others ignore the binding.
+
+Example:
+  cs2 ctl as <orch-id> spawn_worker --repo /r --program bash --prompt "task"
+  cs2 ctl as <orch-id> merge --target-repo /r --target-branch integ --source feat-a`,
+		Args: cobra.MinimumNArgs(2),
+		// DisableFlagParsing: the 'as' command must NOT parse flags itself —
+		// they belong to the wrapped syscall (e.g. --repo). Without this,
+		// cobra eats --repo on the 'as' command and the subcommand never sees it.
+		DisableFlagParsing: true,
+		RunE: runCtlAs,
+	}
+	return cmd
+}
+
+// runCtlAs dispatches to the named subcommand after authenticating. It builds
+// the syscall's params by re-using the subcommand's flag set, then sends
+// `authenticate` + the syscall on one connection via rawCtlSession.
+func runCtlAs(cmd *cobra.Command, args []string) error {
+	instanceID := args[0]
+	syscallName := args[1]
+	syscallArgs := args[2:]
+
+	// Build the matching subcommand and parse the syscall's flags.
+	sub := buildCtlSub(syscallName)
+	if sub == nil {
+		return fmt.Errorf("unknown or unsupported syscall for 'as': %s (only spawn_worker and merge are caller-aware)", syscallName)
+	}
+	sub.SetArgs(syscallArgs)
+	if err := sub.ParseFlags(syscallArgs); err != nil {
+		return fmt.Errorf("parse flags for %s: %w", syscallName, err)
+	}
+
+	// Build the syscall Request via the subcommand's captured params.
+	req, err := buildCtlRequest(sub, syscallName)
+	if err != nil {
+		return err
+	}
+
+	// Authenticate + syscall on one connection (same session).
+	authParams := mustJSON(map[string]string{"instance_id": instanceID})
+	return rawCtlSession([]kernel.Request{
+		{Method: "authenticate", Params: authParams},
+		req,
+	})
 }
 
 // rawCtl sends a Request and prints the Response. Shared by all subcommands.
 // asJSON controls whether a success result is pretty-printed as JSON (true)
 // or rendered as a compact one-liner (false). Errors are always JSON.
 func rawCtl(req kernel.Request) error {
+	return rawCtlSession([]kernel.Request{req})
+}
+
+// rawCtlSession sends a sequence of requests on a SINGLE connection (so they
+// share a session — e.g. authenticate + spawn_worker) and prints the LAST
+// response. The earlier responses are expected to be {ok:true}; only the
+// final syscall's result is shown to the user. Used by `cs2 ctl as`.
+func rawCtlSession(reqs []kernel.Request) error {
+	// Capture hook: `cs2 ctl as` uses this to grab the request without sending
+	// it, so it can prepend an `authenticate` on the same session.
+	if captureHook != nil {
+		return captureHook(reqs)
+	}
+
 	// The ctl path doesn't go through the root command's log.Initialize, so
 	// ensure the logger is up before LaunchDaemon uses it.
 	log.Initialize(false)
@@ -62,7 +143,7 @@ func rawCtl(req kernel.Request) error {
 		return fmt.Errorf("resolve socket path: %w", err)
 	}
 
-	resp, err := kernel.Call(socketPath, req)
+	resps, err := kernel.CallSession(socketPath, reqs)
 	if err != nil {
 		// Daemon down? Auto-launch and retry once.
 		if launchErr := daemon.LaunchDaemon(); launchErr != nil {
@@ -73,14 +154,16 @@ func rawCtl(req kernel.Request) error {
 		if waitErr := daemon.WaitForSocket(socketPath, 3*time.Second); waitErr != nil {
 			return fmt.Errorf("kernel unreachable after auto-launch: %w", waitErr)
 		}
-		resp, err = kernel.Call(socketPath, req)
+		resps, err = kernel.CallSession(socketPath, reqs)
 		if err != nil {
 			return fmt.Errorf("kernel call after auto-launch: %w", err)
 		}
 	}
 
+	// The last response is the syscall's result; earlier ones (e.g.
+	// authenticate) are {ok:true} and not shown.
+	resp := resps[len(resps)-1]
 	if resp.Error != nil {
-		// Print structured error to stderr; non-zero exit.
 		b, _ := json.MarshalIndent(resp.Error, "", "  ")
 		fmt.Fprintln(os.Stderr, string(b))
 		os.Exit(1)
@@ -304,4 +387,52 @@ func statusWire(s string) string {
 	default:
 		return "running"
 	}
+}
+
+// buildCtlSub returns a cobra subcommand for the named syscall, configured
+// with its flags but NOT yet executed. Used by `cs2 ctl as` to parse a
+// syscall's flags and build its request without sending it (the send happens
+// via rawCtlSession after authenticate). Returns nil for unsupported
+// syscalls (only the caller-aware ones make sense under `as`).
+func buildCtlSub(name string) *cobra.Command {
+	switch name {
+	case "spawn_worker":
+		return newCtlSpawnCmd()
+	case "merge":
+		return newCtlMergeCmd()
+	default:
+		return nil
+	}
+}
+
+// buildCtlRequest extracts the syscall Request a subcommand WOULD send, by
+// running its RunE logic against a capture buffer instead of the socket. We
+// achieve the capture by temporarily swapping rawCtlSession for a recorder
+// via a package-level hook. This avoids duplicating each subcommand's param
+// construction.
+var captureHook func([]kernel.Request) error
+
+func buildCtlRequest(sub *cobra.Command, name string) (kernel.Request, error) {
+	var captured []kernel.Request
+	prev := captureHook
+	captureHook = func(reqs []kernel.Request) error {
+		captured = reqs
+		return nil
+	}
+	defer func() { captureHook = prev }()
+
+	// Execute the subcommand's RunE: it calls rawCtlSession (which checks
+	// captureHook first) and we grab the request without sending it.
+	if err := sub.RunE(sub, []string{}); err != nil {
+		// An arg-validation error after capture is fine: the subcommand built
+		// and captured the request before erroring (e.g. a missing optional
+		// flag it checked post-capture). If nothing was captured, surface the err.
+		if len(captured) == 0 {
+			return kernel.Request{}, err
+		}
+	}
+	if len(captured) == 0 {
+		return kernel.Request{}, fmt.Errorf("could not capture %s request", name)
+	}
+	return captured[0], nil
 }
