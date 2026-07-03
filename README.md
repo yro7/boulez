@@ -41,6 +41,79 @@ normal operation. The IDE parsing is isolated in the `ideimport/` package.
 
 ---
 
+## Remote instances (SSH)
+
+cs2 can run an instance's whole environment (git worktree, tmux session,
+agent) on a **remote machine** over SSH while you supervise it from the local
+TUI. A single dashboard can then span several machines — e.g.
+`(A, local)`, `(A, gpu-box)`, `(B, gpu-box)`.
+
+### How it works
+
+Every command, filesystem operation, and PTY the instance needs is routed
+through the system `ssh` binary, reusing your existing SSH config
+(`~/.ssh/config`, agent, keys). cs2 never stores credentials. An instance on
+host `dev-machine` runs `ssh dev-machine git ...`, `ssh dev-machine tmux ...`,
+and attaches via `ssh -t dev-machine tmux attach-session -t <name>`.
+
+### Picking a host
+
+When creating an instance (`n` / `N`), the first screen is the **host
+selector**. `local` (this machine) is always listed first; any SSH aliases
+you have used before follow; you can also type a new alias as free text — it
+is remembered for next time (stored in `~/.cs2/hosts.json`).
+
+The alias must resolve through your SSH config / known hosts. cs2 treats it as
+opaque — user, port, and key resolution are ssh's job.
+
+### Preconditions on the remote host
+
+The remote machine must have installed:
+
+- **tmux** (cs2 drives a remote tmux session), and
+- **the agent binary** you launch (e.g. `claude`, `codex`, `aider`, …),
+  reachable on the remote `PATH`.
+
+cs2 creates the worktree under `~/.cs2/worktrees` on the remote host; the `~`
+is expanded by the remote shell, so it lands in the remote user's home.
+
+### Performance: SSH multiplexing
+
+By default each operation opens a new SSH connection. For a smoother
+experience — especially with several remote instances — enable SSH
+multiplexing in `~/.ssh/config` so the first connection is reused:
+
+```
+Host *
+    ControlMaster auto
+    ControlPath ~/.ssh/cm-%r@%h:%p
+    ControlPersist 10m
+```
+
+Managing the control master from within cs2 is a roadmap item (not in v2).
+
+### Auto-yes on remote
+
+Auto-yes is **off by default** on remote hosts — auto-approving agent
+actions on a shared/production box is riskier than locally. Toggle it
+per-instance with `a`; the TUI warns when auto-yes is on for a remote
+instance.
+
+### Attaching
+
+`↵` / `o` attaches to the selected instance's tmux session. For a remote
+instance this opens an interactive `ssh -t <host> tmux attach-session` under
+a local PTY, so you interact with the remote agent directly. Detach with
+`ctrl-q` as usual.
+
+### Port-forwarding
+
+If the remote agent starts a dev server, forward the port yourself
+(e.g. `ssh -L 3000:localhost:3000 dev-machine`). cs2 does not auto-forward
+ports in v2.
+
+---
+
 # Claude Squad (upstream reference) [![CI](https://github.com/smtg-ai/claude-squad/actions/workflows/build.yml/badge.svg)](https://github.com/smtg-ai/claude-squad/actions/workflows/build.yml) [![GitHub Release](https://img.shields.io/github/v/release/smtg-ai/claude-squad)](https://github.com/smtg-ai/claude-squad/releases/latest)
 
 [Claude Squad](https://smtg-ai.github.io/claude-squad/) is a terminal app that manages multiple [Claude Code](https://github.com/anthropics/claude-code), [Codex](https://github.com/openai/codex), [Gemini](https://github.com/google-gemini/gemini-cli) (and other local agents including [Aider](https://github.com/Aider-AI/aider)) in separate workspaces, allowing you to work on multiple tasks simultaneously.
