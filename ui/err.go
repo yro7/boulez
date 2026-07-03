@@ -29,6 +29,11 @@ func (e *ErrBox) Clear() {
 	e.err = nil
 }
 
+// HasError reports whether an error is currently displayed.
+func (e *ErrBox) HasError() bool {
+	return e.err != nil
+}
+
 func (e *ErrBox) SetSize(width, height int) {
 	e.width = width
 	e.height = height

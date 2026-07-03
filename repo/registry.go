@@ -37,7 +37,18 @@ func NewRegistry() (*Registry, error) {
 	if err != nil {
 		return nil, err
 	}
-	return &Registry{path: filepath.Join(configDir, registryFileName)}, nil
+	return NewRegistryAt(filepath.Join(configDir, registryFileName)), nil
+}
+
+// NewRegistryAt returns a Registry backed by an explicit file path. Useful for
+// tests and for directing the registry at a non-default location.
+func NewRegistryAt(path string) *Registry {
+	return &Registry{path: path}
+}
+
+// Path returns the filesystem location of the registry file.
+func (r *Registry) Path() string {
+	return r.path
 }
 
 // load reads the persisted paths. A missing or corrupt file is treated as an
