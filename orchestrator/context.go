@@ -8,7 +8,7 @@
 // it only (a) writes a context file (ORCHESTRATOR.md) into the orchestrator's
 // control dir documenting the `cs2 ctl` tool surface + the orchestrator's
 // own ID, and (b) injects a one-time fleet snapshot into the agent's pane via
-// SendPrompt. After that the agent is autonomous: it calls `cs2 ctl` shell
+// SendPrompt. After that the agent is supervised: it calls `cs2 ctl` shell
 // tools to drive the fleet at its own pace.
 //
 // The package is deliberately decoupled from the kernel: it defines a minimal
@@ -118,8 +118,11 @@ func ContextContent(id string) string {
 	fmt.Fprintf(&b, "A snapshot of the fleet was injected into your conversation **once**, at\n")
 	fmt.Fprintf(&b, "startup. It is now stale. To see the current state, call:\n\n")
 	fmt.Fprintf(&b, "```\ncs2 ctl list_instances\n```\n\n")
-	fmt.Fprintf(&b, "Take several turns, call several tools, react to results — you are\n")
-	fmt.Fprintf(&b, "autonomous. Decide what to spawn, when to merge, how to resolve issues.\n")
+	fmt.Fprintf(&b, "You are supervised, not autonomous. After refreshing the fleet state above,\n")
+	fmt.Fprintf(&b, "STOP and wait for an explicit task (a human attaching to your pane, or a\n")
+	fmt.Fprintf(&b, "`cs2 ctl send_prompt --id <your-id>`). Do NOT spawn, merge, or send prompts\n")
+	fmt.Fprintf(&b, "to other instances on your own initiative. Execute the one task you are\n")
+	fmt.Fprintf(&b, "given, then stop and wait again. Do not loop looking for more work to do.\n")
 
 	return b.String()
 }
