@@ -3,6 +3,7 @@ package daemon
 import (
 	"claude-squad/config"
 	"claude-squad/log"
+	"claude-squad/program"
 	"claude-squad/session"
 	"fmt"
 	"os"
@@ -48,7 +49,7 @@ func RunDaemon(cfg *config.Config) error {
 			for _, instance := range instances {
 				// We only store started instances, but check anyway.
 				if instance.Started() && !instance.Paused() {
-					if _, hasPrompt := instance.HasUpdated(); hasPrompt {
+					if _, status := instance.HasUpdated(); status == program.StatusReady || status == program.StatusPermission {
 						// Only resolve prompts the agent's adapter knows how to dismiss
 						// (permissions/trust). A bare "ready" prompt (agent waiting for free
 						// user input) is NOT auto-dismissed: tapping Enter there would

@@ -233,25 +233,31 @@ func (t *TmuxSession) SendKeys(keys string) error {
 	return err
 }
 
-// HasUpdated checks if the tmux pane content has changed since the last tick,
-// and whether the agent currently has a prompt (waiting for user input or a
-// permission decision). Agent-specific prompt detection is delegated to the
-// program.Adapter; this function no longer holds any agent-specific strings.
-func (t *TmuxSession) HasUpdated() (updated bool, hasPrompt bool) {
+// HasUpdated checks if the tmux pane content has changed since the last
+// tick, and returns the agent's perceived status from the program.Adapter.
+//
+// Callers branch on the precise Status rather than a lossy "has prompt" bool:
+// a definitive StatusReady/StatusPermission from the adapter MUST take
+// priority over the content-change heuristic. When an agent finishes a turn
+// it emits its ready marker (e.g. Pi's cs2:ready sentinel), which changes the
+// pane content; classifying that as "working" just because the pane changed
+// would leave a finished agent stuck showing the running spinner forever.
+// Agent-specific detection is delegated to program.Adapter; this function
+// holds no agent-specific strings.
+func (t *TmuxSession) HasUpdated() (updated bool, status program.Status) {
 	content, err := t.CapturePaneContent()
 	if err != nil {
 		log.ErrorLog.Printf("error capturing pane content in status monitor: %v", err)
-		return false, false
+		return false, program.StatusUnknown
 	}
 
-	status, _ := t.adapter.Detect(content)
-	hasPrompt = status == program.StatusReady || status == program.StatusPermission
+	status, _ = t.adapter.Detect(content)
 
 	if !bytes.Equal(t.monitor.hash(content), t.monitor.prevOutputHash) {
 		t.monitor.prevOutputHash = t.monitor.hash(content)
-		return true, hasPrompt
+		return true, status
 	}
-	return false, hasPrompt
+	return false, status
 }
 
 func (t *TmuxSession) Attach() (chan struct{}, error) {
