@@ -5,6 +5,7 @@ import (
 	"fmt"
 	"os"
 	"strings"
+	"time"
 
 	"claude-squad/daemon"
 	"claude-squad/kernel"
@@ -66,6 +67,11 @@ func rawCtl(req kernel.Request) error {
 		// Daemon down? Auto-launch and retry once.
 		if launchErr := daemon.LaunchDaemon(); launchErr != nil {
 			return fmt.Errorf("kernel unreachable and auto-launch failed: %w (launch: %v)", err, launchErr)
+		}
+		// Wait for the daemon to bind the socket (rather than a blind sleep).
+		// Concurrent ctl callers that lost the launch lock will also wait here.
+		if waitErr := daemon.WaitForSocket(socketPath, 3*time.Second); waitErr != nil {
+			return fmt.Errorf("kernel unreachable after auto-launch: %w", waitErr)
 		}
 		resp, err = kernel.Call(socketPath, req)
 		if err != nil {
