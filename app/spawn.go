@@ -70,7 +70,9 @@ const DefaultProgram = "claude"
 // syscall calls. It is deliberately TUI-free and tmux-coupled only through
 // Instance.Start (which the kernel will own the lifecycle of).
 func Spawn(opts SpawnOptions) (*session.Instance, error) {
-	if opts.Repo == "" {
+	// An orchestrator supervises the fleet — it has no repo/worktree, so it
+	// does not require a Repo. Workers must have one.
+	if opts.Repo == "" && opts.Kind != session.KindOrchestrator {
 		return nil, fmt.Errorf("spawn: repo is required")
 	}
 	program := opts.Program

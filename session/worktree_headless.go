@@ -33,11 +33,11 @@ type headlessWorktree struct {
 // The control dir is derived from the cs2 config dir + id, so it is stable
 // across restarts (the same ID always maps to the same control dir).
 func newHeadlessWorktree(id string) (Worktree, error) {
-	configDir, err := config.GetConfigDir()
+	orchDir, err := config.OrchestratorsDir()
 	if err != nil {
 		return nil, err
 	}
-	controlDir := filepath.Join(configDir, "orchestrators", id)
+	controlDir := filepath.Join(orchDir, id)
 	return &headlessWorktree{
 		id:         id,
 		controlDir: controlDir,

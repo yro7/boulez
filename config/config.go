@@ -36,6 +36,23 @@ func GetConfigDir() (string, error) {
 	return dir, nil
 }
 
+// OrchestratorsDir returns the path to the directory holding all orchestrator
+// control dirs (~/.cs2/orchestrators/<id>/). It is the single source of truth
+// for this path: shared by the headless worktree (session), the plan store
+// (kernel), and the orchestrator bootstrap package. Ensures the directory
+// exists.
+func OrchestratorsDir() (string, error) {
+	configDir, err := GetConfigDir()
+	if err != nil {
+		return "", err
+	}
+	dir := filepath.Join(configDir, "orchestrators")
+	if err := os.MkdirAll(dir, 0o755); err != nil {
+		return "", fmt.Errorf("failed to create orchestrators directory: %w", err)
+	}
+	return dir, nil
+}
+
 // Profile represents a named program configuration
 type Profile struct {
 	Name    string `json:"name"`

@@ -4,6 +4,7 @@ import (
 	"claude-squad/config"
 	"claude-squad/kernel"
 	"claude-squad/log"
+	"claude-squad/orchestrator"
 	"claude-squad/program"
 	"claude-squad/session"
 	"fmt"
@@ -47,6 +48,18 @@ func RunDaemon(cfg *config.Config) error {
 	// daemon startup, from the cwd the user launched cs2 from.
 	protected := resolveHostProtectedBranches()
 	k := kernel.New(storage, kernel.WithSpawner(kernelSpawner{}), kernel.WithMerger(realMerger{}), kernel.WithProtectedBranches(protected))
+
+	// Guarantee the global orchestrator (instance 0) exists. This is the
+	// "always-on" layer: on a fresh config dir, spawn an orchestrator; on a
+	// restart, refresh its context file. Done through the kernel (the single
+	// writer) so the spawn is attributed and persisted like any other. The
+	// daemon owns this policy (the kernel is consumer-agnostic and must not
+	// know "there is always one orchestrator").
+	defaultProgram := cfg.GetProgram()
+	if _, err := orchestrator.Ensure(&orchestratorAPI{k: k, program: defaultProgram}, defaultProgram); err != nil {
+		log.WarningLog.Printf("ensure orchestrator: %v", err)
+	}
+
 	socketPath, err := kernel.SocketPath()
 	if err != nil {
 		return fmt.Errorf("failed to resolve kernel socket path: %w", err)
