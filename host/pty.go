@@ -42,11 +42,17 @@ type sshPtyFactory struct {
 }
 
 func (f sshPtyFactory) Start(cmd *exec.Cmd) (*os.File, error) {
-	// Wrap the original command (e.g. `tmux attach-session -t foo`) as
-	// `ssh -t <alias> <cmd...>`. Join+quote args so they survive the remote
-	// shell (a session name with a space stays one arg).
-	wrapped := exec.Command("ssh", "-t", f.alias, joinShellQuoted(cmd.Args))
-	return pty.Start(wrapped)
+	return pty.Start(f.command(cmd))
+}
+
+// command builds the *exec.Cmd that runs cmd's argv over `ssh -t <alias> ...`
+// under a local PTY. The -t forces PTY allocation on the remote so interactive
+// tmux attach/restore works. Extracted so tests can assert the wrapping
+// (alias, -t, shell-joined args) without launching ssh or allocating a PTY.
+// Built directly as `exec.Command("ssh", "-t", alias, ...)` — never re-prepend
+// sshBin (the double-"ssh" bug class).
+func (f sshPtyFactory) command(cmd *exec.Cmd) *exec.Cmd {
+	return exec.Command("ssh", "-t", f.alias, joinShellQuoted(cmd.Args))
 }
 
 func (f sshPtyFactory) Close() {}

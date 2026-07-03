@@ -1,6 +1,7 @@
 package host
 
 import (
+	"os"
 	"os/exec"
 	"strings"
 	"testing"
@@ -107,10 +108,172 @@ func shellReparse(t *testing.T, joined string) []string {
 	return parts
 }
 
+// TestSSHExecutor_RunBuildsWrapArgv is the regression guard for the
+// double-"ssh" bug: Run/Output/CombinedOutput must execute exactly wrap's
+// argv, not `ssh ssh <alias> ...`. Re-prepending sshBin made ssh resolve the
+// literal "ssh" as the hostname (exit 255), which surfaced as
+// "not a git repository" at instance creation. We assert the built command's
+// Args equal wrap(c.Args) — no more, no less.
+func TestSSHExecutor_RunBuildsWrapArgv(t *testing.T) {
+	e := sshExecutor{alias: "dev-machine"}
+	orig := exec.Command("git", "-C", "/repo", "status", "--porcelain")
+	built := e.command(orig)
+	assert.Equal(t, e.wrap(orig.Args), built.Args,
+		"executor must run exactly wrap's argv; never re-prepend sshBin")
+}
+
 // TestShellQuote_EdgeCases pins the quoting helper on tricky inputs.
 func TestShellQuote_EdgeCases(t *testing.T) {
 	assert.Equal(t, "''", shellQuote(""))
 	assert.Equal(t, "'simple'", shellQuote("simple"))
 	assert.Equal(t, `'with space'`, shellQuote("with space"))
 	assert.Equal(t, `'it'\''s'`, shellQuote("it's"))
+}
+
+// TestSSHHost_ResolveRepoPath_Passthrough proves the remote branch of
+// transport-specific path resolution: SSHHost returns the path unchanged so
+// the remote shell resolves ~ and relative paths against the remote $HOME.
+// Resolving locally (filepath.Abs) would point at the wrong machine — the
+// "not a git repository" bug. This is the counterpart to LocalHost's
+// absolutizing (TestLocalHost_ResolveRepoPath_Absolutizes).
+func TestSSHHost_ResolveRepoPath_Passthrough(t *testing.T) {
+	h := NewSSHHost("dev-machine")
+	cases := []string{
+		"/home/freebox/testgit", // absolute
+		"testgit",                // relative — must reach the remote shell as-is
+		"~/repos/proj",          // ~-relative — expanded remotely, not here
+		"./foo/../bar",          // dirty relative — remote shell cleans it
+	}
+	for _, p := range cases {
+		assert.Equal(t, p, h.ResolveRepoPath(p),
+			"remote path must be returned unchanged so the remote shell resolves it")
+	}
+}
+
+// TestSSHFS_CommandBuildsArgv is the regression guard for the double-"ssh" bug
+// on the FS seam (the executor seam is guarded by
+// TestSSHExecutor_RunBuildsWrapArgv). command() must build exactly
+// `ssh <alias> <script>`, never re-prepend sshBin. We assert the built
+// command's Args — without launching ssh — so a re-introduction of the bug
+// class fails loudly instead of silently corrupting every sshFS op.
+func TestSSHFS_CommandBuildsArgv(t *testing.T) {
+	f := sshFS{alias: "dev-machine"}
+	built := f.command("echo hi")
+	assert.Equal(t, []string{"ssh", "dev-machine", "echo hi"}, built.Args,
+		"sshFS.command must build exactly [ssh alias script]; never re-prepend sshBin")
+}
+
+// TestSSHFS_StatScript_QuotesPath proves the remote test script quotes the
+// path (so a path with a space or a metachar survives the remote shell and
+// cannot break out into a second command). Pure (no alias), so it's
+// unit-testable independently of the transport.
+func TestSSHFS_StatScript_QuotesPath(t *testing.T) {
+	cases := []struct {
+		name string
+		path string
+	}{
+		{"simple", "/repo"},
+		{"space", "/home/me/my repo"},
+		{"~", "~/worktrees/x"},
+		{"relative", "testgit"},
+		{"injection", "/repo; rm -rf /"},
+	}
+	for _, tc := range cases {
+		t.Run(tc.name, func(t *testing.T) {
+			script := statScript(tc.path)
+			// The path must appear inside single quotes in the script, so the
+			// remote shell treats it as a literal (no expansion of ; / space / ~).
+			assert.Contains(t, script, shellQuote(tc.path),
+				"path must be shell-quoted in the stat script")
+			// And the quoted path must round-trip back to the original via a
+			// POSIX shell (the real safety property the remote shell relies on).
+			assert.Equal(t, tc.path, shellReparse(t, shellQuote(tc.path))[0])
+		})
+	}
+}
+
+// TestSSHFS_ParseStat_Dispatch proves the dir/file/missing dispatch is correct
+// without an ssh round-trip. os.IsNotExist must hold for the missing branch
+// (IsValidWorktree/Cleanup rely on it to detect orphaned worktrees).
+func TestSSHFS_ParseStat_Dispatch(t *testing.T) {
+	info, err := parseStat("/p", "dir")
+	require.NoError(t, err)
+	assert.True(t, info.IsDir(), "'dir' -> IsDir")
+	assert.Equal(t, "/p", info.Name())
+
+	info, err = parseStat("/p", "file")
+	require.NoError(t, err)
+	assert.False(t, info.IsDir(), "'file' -> not IsDir")
+	assert.Equal(t, "/p", info.Name())
+
+	_, err = parseStat("/p", "missing")
+	assert.True(t, os.IsNotExist(err), "'missing' must satisfy os.IsNotExist")
+
+	// Defensive: unexpected output is treated as not-exist (not a crash).
+	_, err = parseStat("/p", "garbage")
+	assert.True(t, os.IsNotExist(err), "unexpected output -> os.IsNotExist")
+}
+
+// TestSSHFS_ReaddirScript_QuotesPath proves the remote find script quotes the
+// path. Pure so it's unit-testable independently of the transport.
+func TestSSHFS_ReaddirScript_QuotesPath(t *testing.T) {
+	script := readdirScript("/home/me/my repo")
+	assert.Contains(t, script, shellQuote("/home/me/my repo"),
+		"path must be shell-quoted in the readdir script")
+	assert.Contains(t, script, "-print0", "readdir must null-delimit to survive spaces")
+}
+
+// TestSSHFS_ParseDirEntries_SplitsNullDelimited proves the find -print0 output
+// is split correctly: one entry per name, names with spaces/newlines survive.
+// Pure so it's unit-testable without an ssh round-trip.
+func TestSSHFS_ParseDirEntries_SplitsNullDelimited(t *testing.T) {
+	// Empty / no entries.
+	assert.Nil(t, parseDirEntries(""))
+	assert.Nil(t, parseDirEntries("\x00"))
+
+	// Single entry.
+	e := parseDirEntries("a\x00")
+	require.Len(t, e, 1)
+	assert.Equal(t, "a", e[0].Name())
+
+	// Multiple entries, one with a space.
+	e = parseDirEntries("a\x00b c\x00d\x00")
+	require.Len(t, e, 3)
+	assert.Equal(t, "a", e[0].Name())
+	assert.Equal(t, "b c", e[1].Name(), "name with space must survive")
+	assert.Equal(t, "d", e[2].Name())
+
+	// A newline inside a name survives (find -print0 null-delimits, not
+	// newline-delimited — this is the reason -print0 is used).
+	e = parseDirEntries("x\ny\x00")
+	require.Len(t, e, 1)
+	assert.Equal(t, "x\ny", e[0].Name(), "name with newline must survive")
+}
+
+// TestSSHPtyFactory_CommandBuildsArgv is the regression guard for the
+// double-"ssh" bug on the PTY seam. command() must build exactly
+// `ssh -t <alias> <shell-joined args>`, never re-prepend sshBin. We assert
+// the built command's Args — without launching ssh or allocating a PTY — so
+// a re-introduction of the bug class fails loudly.
+func TestSSHPtyFactory_CommandBuildsArgv(t *testing.T) {
+	f := sshPtyFactory{alias: "dev-machine"}
+	orig := exec.Command("tmux", "attach-session", "-t", "foo")
+	built := f.command(orig)
+
+	// Args[0] is sshBin exactly once; Args[1] is -t; Args[2] is the alias;
+	// Args[3] is the shell-joined-and-quoted original args, which must
+	// round-trip back to the original args via a POSIX shell.
+	require.Equal(t, []string{"ssh", "-t", "dev-machine", "'tmux' 'attach-session' '-t' 'foo'"}, built.Args)
+	assert.Equal(t, orig.Args, shellReparse(t, built.Args[3]),
+		"joined args must re-parse to the original args")
+}
+
+// TestSSHPtyFactory_Command_Quoting proves args survive the remote shell: a
+// session name with a space stays a single arg. Same property as the
+// executor's quoting, on the PTY seam.
+func TestSSHPtyFactory_Command_Quoting(t *testing.T) {
+	orig := exec.Command("tmux", "attach-session", "-t", "my session")
+	built := sshPtyFactory{alias: "h"}.command(orig)
+	require.Len(t, built.Args, 4)
+	assert.Equal(t, orig.Args, shellReparse(t, built.Args[3]))
 }
