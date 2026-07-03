@@ -362,6 +362,14 @@ func (m *home) Update(msg tea.Msg) (tea.Model, tea.Cmd) {
 			m.textInputOverlay.SetBranchResults(msg.branches, msg.version)
 		}
 		return m, nil
+	case reposFilteredMsg:
+		// Late-arriving filter result: only apply if we're still in the repo
+		// selector (user may have canceled). Narrowing in place keeps the
+		// free-text input and cursor intact when possible.
+		if m.state == stateRepoSelect && m.repoSelector != nil {
+			m.repoSelector.SetRepos(msg.repos)
+		}
+		return m, nil
 	case tea.KeyMsg:
 		return m.handleKeyPress(msg)
 	case tea.WindowSizeMsg:
@@ -933,6 +941,13 @@ type branchSearchResultMsg struct {
 	version  uint64
 }
 
+// reposFilteredMsg carries the host-filtered repo list back to Update. The
+// repo selector is re-populated with only the repos that exist on the chosen
+// host (a local-only repo is dropped for an SSH host).
+type reposFilteredMsg struct {
+	repos []string
+}
+
 const branchSearchDebounce = 150 * time.Millisecond
 
 // scheduleBranchSearch returns a debounced tea.Cmd: sleeps, then triggers a search message.
@@ -954,6 +969,18 @@ func (m *home) runBranchSearch(repoPath, filter string, version uint64) tea.Cmd 
 			return nil
 		}
 		return branchSearchResultMsg{branches: branches, version: version}
+	}
+}
+
+// filterRepos returns a tea.Cmd that probes each registered repo against the
+// chosen host's executor and returns only those that exist on that host. Local
+// is instant; remote fans out concurrently (one `ssh host git -C <path> ...`
+// per repo). The repo selector starts with the full list and is narrowed when
+// this result lands, so local users see no flicker while remote users see the
+// inaccessible entries drop once probed.
+func (m *home) filterRepos(repos []string, h host.Host) tea.Cmd {
+	return func() tea.Msg {
+		return reposFilteredMsg{repos: git.FilterExistingRepos(repos, h.Executor())}
 	}
 }
 
@@ -1195,7 +1222,19 @@ func (m *home) openRepoSelector(promptFlow bool) tea.Cmd {
 	m.repoSelector = overlay.NewRepoSelector(repos)
 	m.repoSelectPrompt = promptFlow
 	m.state = stateRepoSelect
-	return tea.WindowSize()
+
+	// Filter the registered repos against the chosen host's executor: a remote
+	// host can only run instances from repos that exist on that machine, so a
+	// local-only repo is hidden rather than offered (and rejected at submit).
+	// Local is instant; remote fans out one `ssh host git -C <path> ...` per
+	// repo concurrently. The selector starts with the full list and is
+	// narrowed when the result lands — local users see no flicker, remote
+	// users see the inaccessible entries drop once probed.
+	h := m.pendingHost
+	if h == nil {
+		h = host.Local
+	}
+	return tea.Batch(tea.WindowSize(), m.filterRepos(repos, h))
 }
 
 // handleRepoSelectState dispatches key presses to the repo selector overlay

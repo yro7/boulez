@@ -5,6 +5,7 @@ import (
 	"fmt"
 	"os/exec"
 	"strings"
+	"sync"
 )
 
 // MaxBranchSearchResults is the maximum number of branches returned by Repo.SearchBranches.
@@ -99,4 +100,41 @@ func (r *Repo) Root() (string, error) {
 func (r *Repo) IsGitRepo() bool {
 	c := exec.Command("git", "-C", r.path, "rev-parse", "--show-toplevel")
 	return r.cmdExec.Run(c) == nil
+}
+
+// FilterExistingRepos returns the subset of paths that are git repositories
+// accessible via exec. Each path is checked with `git -C <path> rev-parse`, so
+// a remote host's executor (SSH) checks the path on that host: a repo that
+// exists locally but not on the target host is filtered out. Paths are checked
+// concurrently, which matters for a remote host without SSH multiplexing
+// (each check is a separate `ssh host ...` round-trip).
+//
+// Order is preserved (stable). A nil/empty executor returns paths unchanged
+// (caller is responsible for providing a real executor). Used by the repo
+// selector to show only repos that actually exist on the chosen host.
+func FilterExistingRepos(paths []string, exec cmd.Executor) []string {
+	if exec == nil || len(paths) == 0 {
+		return paths
+	}
+	type result struct {
+		index int
+		ok    bool
+	}
+	results := make([]result, len(paths))
+	var wg sync.WaitGroup
+	for i, p := range paths {
+		wg.Add(1)
+		go func(i int, p string) {
+			defer wg.Done()
+			results[i] = result{index: i, ok: NewRepoWithDeps(p, exec).IsGitRepo()}
+		}(i, p)
+	}
+	wg.Wait()
+	var kept []string
+	for _, r := range results {
+		if r.ok {
+			kept = append(kept, paths[r.index])
+		}
+	}
+	return kept
 }
