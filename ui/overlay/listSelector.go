@@ -197,6 +197,12 @@ func (l *ListSelector) HandleKeyPress(msg tea.KeyMsg) bool {
 		return true
 	case tea.KeyEnter:
 		return l.submit()
+	case tea.KeyCtrlD:
+		// Silent removal of the highlighted item from the registry. Does not
+		// close the overlay: the user can chain deletions or continue
+		// selecting. Non-deletable items (e.g. "local") are ignored.
+		l.deleteCurrent()
+		return false
 	case tea.KeyBackspace:
 		if len(l.filter) > 0 {
 			runes := []rune(l.filter)
@@ -267,6 +273,38 @@ func (l *ListSelector) IsFreeValue() bool {
 // The caller applies Registry.Remove for each, best-effort.
 func (l *ListSelector) DeletedValues() []string {
 	return l.deleted
+}
+
+// TakeDeletedValues returns the values removed via ctrl+d since the last call
+// and resets the accumulator. The caller applies Registry.Remove once per
+// value (Registry.Remove is idempotent regardless).
+func (l *ListSelector) TakeDeletedValues() []string {
+	d := l.deleted
+	l.deleted = nil
+	return d
+}
+
+// deleteCurrent removes the highlighted filtered item from the master item
+// list and records its value for the caller to persist. Non-deletable items
+// and out-of-range cursors are ignored. The cursor is clamped afterwards.
+func (l *ListSelector) deleteCurrent() {
+	items := l.filteredItems()
+	if l.cursor < 0 || l.cursor >= len(items) {
+		return
+	}
+	target := items[l.cursor]
+	if !target.deletable {
+		return
+	}
+	// Remove from the master list (values are unique per selector).
+	for i, it := range l.items {
+		if it.value == target.value {
+			l.items = append(l.items[:i], l.items[i+1:]...)
+			break
+		}
+	}
+	l.deleted = append(l.deleted, target.value)
+	l.clampCursor()
 }
 
 // Render renders the selector: a filter input line (always visible) followed
