@@ -9,7 +9,6 @@ import (
 	"crypto/rand"
 	"encoding/json"
 	"fmt"
-	"path/filepath"
 	"strings"
 	"time"
 
@@ -333,14 +332,19 @@ type InstanceOptions struct {
 func NewInstance(opts InstanceOptions) (*Instance, error) {
 	t := time.Now()
 
-	// Convert path to absolute
-	absPath, err := filepath.Abs(opts.Path)
-	if err != nil {
-		return nil, fmt.Errorf("failed to get absolute path: %w", err)
-	}
+	// The repo path is NOT absolutized here: the host is not known yet (it
+	// defaults to Local and is swapped to SSH via SetHost after name entry).
+	// Resolving locally now with filepath.Abs would corrupt a remote relative
+	// path (it would resolve against the local cwd, pointing at the wrong
+	// machine). Path resolution is transport-specific, so it is deferred to
+	// Host.ResolveRepoPath at Start time (see buildWorktree), where the host
+	// is known. For LocalHost that is filepath.Abs; for SSHHost it is a
+	// passthrough so the remote shell resolves ~ and relative paths.
+	path := opts.Path
 
 	id := opts.ID
 	if id == "" {
+		var err error
 		id, err = newInstanceID()
 		if err != nil {
 			return nil, fmt.Errorf("failed to allocate instance id: %w", err)
@@ -351,7 +355,7 @@ func NewInstance(opts InstanceOptions) (*Instance, error) {
 		ID:             id,
 		Title:          opts.Title,
 		Status:         Ready,
-		Path:           absPath,
+		Path:           path,
 		Program:        opts.Program,
 		Height:         0,
 		Width:          0,
@@ -359,7 +363,7 @@ func NewInstance(opts InstanceOptions) (*Instance, error) {
 		UpdatedAt:      t,
 		AutoYes:        false,
 		kind:           opts.Kind,
-		host:          host.Local,
+		host:           host.Local,
 		selectedBranch: opts.Branch,
 	}, nil
 }
@@ -446,14 +450,20 @@ func (i *Instance) buildWorktree() (Worktree, string, error) {
 	if err != nil {
 		return nil, "", fmt.Errorf("failed to resolve worktree directory: %w", err)
 	}
+	// Resolve the repo path for THIS host's transport. For LocalHost that's
+	// filepath.Abs (so a stored path survives a cwd change); for SSHHost it's
+	// a passthrough so the remote shell resolves ~ and relative paths against
+	// the remote $HOME. Done here, after the host is known, rather than in
+	// NewInstance (where the host isn't set yet).
+	repoPath := i.host.ResolveRepoPath(i.Path)
 	if i.selectedBranch != "" {
-		gitWorktree, err := git.NewGitWorktreeFromBranchWithDeps(i.Path, i.selectedBranch, i.Title, i.host.Executor(), i.host.FS(), worktreeDir)
+		gitWorktree, err := git.NewGitWorktreeFromBranchWithDeps(repoPath, i.selectedBranch, i.Title, i.host.Executor(), i.host.FS(), worktreeDir)
 		if err != nil {
 			return nil, "", fmt.Errorf("failed to create git worktree from branch: %w", err)
 		}
 		return gitWorktree, i.selectedBranch, nil
 	}
-	gitWorktree, branchName, err := git.NewGitWorktreeWithDeps(i.Path, i.Title, i.host.Executor(), i.host.FS(), worktreeDir)
+	gitWorktree, branchName, err := git.NewGitWorktreeWithDeps(repoPath, i.Title, i.host.Executor(), i.host.FS(), worktreeDir)
 	if err != nil {
 		return nil, "", fmt.Errorf("failed to create git worktree: %w", err)
 	}
