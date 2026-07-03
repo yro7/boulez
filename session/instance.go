@@ -6,9 +6,9 @@ import (
 	"claude-squad/program"
 	"claude-squad/session/git"
 	"claude-squad/session/tmux"
-	"path/filepath"
-
+	"crypto/rand"
 	"fmt"
+	"path/filepath"
 	"strings"
 	"time"
 
@@ -30,6 +30,11 @@ const (
 
 // Instance is a running instance of claude code.
 type Instance struct {
+	// ID is the stable, immutable handle of the instance. Allocated at
+	// creation, never mutated, never reused. It is the universal handle of
+	// the control API (syscalls speak in ID, never Title). Persisted in
+	// InstanceData so it survives save/load round-trips.
+	ID string
 	// Title is the title of the instance.
 	Title string
 	// Path is the path to the workspace.
@@ -77,6 +82,7 @@ type Instance struct {
 // ToInstanceData converts an Instance to its serializable form
 func (i *Instance) ToInstanceData() InstanceData {
 	data := InstanceData{
+		ID:        i.ID,
 		Title:     i.Title,
 		Path:      i.Path,
 		Branch:    i.Branch,
@@ -116,12 +122,23 @@ func (i *Instance) ToInstanceData() InstanceData {
 
 // FromInstanceData creates a new Instance from serialized data
 func FromInstanceData(data InstanceData) (*Instance, error) {
+	// Backfill an ID for instances persisted before this field existed.
+	// The ID is immutable from here on; a backfilled one is just as stable
+	// as one allocated at creation.
+	if data.ID == "" {
+		id, err := newInstanceID()
+		if err != nil {
+			return nil, fmt.Errorf("failed to allocate instance id: %w", err)
+		}
+		data.ID = id
+	}
 	h := host.Lookup(data.Host)
 	worktreeDir, err := h.WorktreeDir()
 	if err != nil {
 		return nil, fmt.Errorf("failed to resolve worktree directory: %w", err)
 	}
 	instance := &Instance{
+		ID:        data.ID,
 		Title:     data.Title,
 		Path:      data.Path,
 		Branch:    data.Branch,
@@ -175,6 +192,10 @@ type InstanceOptions struct {
 	AutoYes bool
 	// Branch is an existing branch name to start the session on (empty = new branch from HEAD)
 	Branch string
+	// ID optionally presets the instance ID. If empty, a new UUID v4 is
+	// allocated. Used by tests and backfill paths; production callers leave
+	// it empty.
+	ID string
 }
 
 func NewInstance(opts InstanceOptions) (*Instance, error) {
@@ -186,7 +207,16 @@ func NewInstance(opts InstanceOptions) (*Instance, error) {
 		return nil, fmt.Errorf("failed to get absolute path: %w", err)
 	}
 
+	id := opts.ID
+	if id == "" {
+		id, err = newInstanceID()
+		if err != nil {
+			return nil, fmt.Errorf("failed to allocate instance id: %w", err)
+		}
+	}
+
 	return &Instance{
+		ID:             id,
 		Title:          opts.Title,
 		Status:         Ready,
 		Path:           absPath,
@@ -199,6 +229,26 @@ func NewInstance(opts InstanceOptions) (*Instance, error) {
 		host:          host.Local,
 		selectedBranch: opts.Branch,
 	}, nil
+}
+
+// newInstanceID allocates a random RFC 4122 v4 UUID string. Uses crypto/rand
+// so IDs are unguessable (important: they are the handle by which an
+// orchestrator's control API addresses instances). No external dependency.
+func newInstanceID() (string, error) {
+	var b [16]byte
+	if _, err := rand.Read(b[:]); err != nil {
+		return "", err
+	}
+	// Set version (4) and variant (10xx) bits per RFC 4122.
+	b[6] = (b[6] & 0x0f) | 0x40
+	b[8] = (b[8] & 0x3f) | 0x80
+	return fmt.Sprintf("%x-%x-%x-%x-%x", b[0:4], b[4:6], b[6:8], b[8:10], b[10:16]), nil
+}
+
+// GetID returns the immutable instance ID. It is the canonical handle used by
+// the control API.
+func (i *Instance) GetID() string {
+	return i.ID
 }
 
 func (i *Instance) RepoName() (string, error) {
