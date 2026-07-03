@@ -5,6 +5,7 @@ import (
 	"testing"
 
 	"github.com/charmbracelet/bubbles/spinner"
+	"github.com/charmbracelet/lipgloss"
 	"github.com/stretchr/testify/require"
 )
 
@@ -20,6 +21,23 @@ func newTestList(titles ...string) *List {
 		l.AddInstance(inst)
 	}
 	return l
+}
+
+func TestRepoBadgeColorInPaletteAndStable(t *testing.T) {
+	name := "some-repo"
+	c := repoBadgeColor(name)
+	require.Contains(t, repoBadgePalette, c)
+	require.Equal(t, c, repoBadgeColor(name))
+}
+
+func TestRepoBadgeColorEmptyFallback(t *testing.T) {
+	require.Equal(t, repoBadgePalette[0], repoBadgeColor(""))
+}
+
+func TestRepoBadgeRendersName(t *testing.T) {
+	// The badge must embed the repo name so it is readable in the list.
+	out := repoBadge("my-repo", lipgloss.Color("#000000"))
+	require.Contains(t, out, "[my-repo]")
 }
 
 func TestMoveUp(t *testing.T) {
