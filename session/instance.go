@@ -330,15 +330,13 @@ func (i *Instance) HasUpdated() (updated bool, hasPrompt bool) {
 	return i.tmuxSession.HasUpdated()
 }
 
-// CheckAndHandleTrustPrompt checks for and dismisses the trust prompt for supported programs.
+// CheckAndHandleTrustPrompt checks for and dismisses a prompt the agent's
+// adapter knows how to resolve (e.g. a trust or MCP approval prompt), for
+// any program. Unknown programs resolve to NoOpAdapter which detects nothing,
+// so this is safe to call regardless of the program. Agent-specific knowledge
+// lives in program.Adapter, not here.
 func (i *Instance) CheckAndHandleTrustPrompt() bool {
 	if !i.started || i.tmuxSession == nil {
-		return false
-	}
-	program := i.Program
-	if !strings.HasSuffix(program, tmux.ProgramClaude) &&
-		!strings.HasSuffix(program, tmux.ProgramAider) &&
-		!strings.HasSuffix(program, tmux.ProgramGemini) {
 		return false
 	}
 	return i.tmuxSession.CheckAndHandleTrustPrompt()
