@@ -30,13 +30,14 @@ import (
 // the kernel's dependency on "how to create an instance" explicit and
 // swappable — the Spawner seam.
 type SpawnOptions struct {
-	Repo    string
-	Branch  string
-	Prompt  string
-	Program string
-	Title   string
-	Host    host.Host
-	Kind    session.Kind
+	Repo            string
+	Branch          string
+	BranchMustExist bool
+	Prompt          string
+	Program         string
+	Title           string
+	Host            host.Host
+	Kind            session.Kind
 }
 
 // Spawner is the seam for creating+starting an instance. The real

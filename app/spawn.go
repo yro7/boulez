@@ -3,6 +3,7 @@ package app
 import (
 	"claude-squad/host"
 	"claude-squad/session"
+	"claude-squad/session/git"
 	"claude-squad/session/tmux"
 	"fmt"
 	"time"
@@ -16,8 +17,9 @@ type SpawnOptions struct {
 	// Repo is the path to the git repository the new instance works in.
 	// Required.
 	Repo string
-	// Branch is an existing branch to start on. Empty = a new branch from HEAD
-	// (the cs2/<title> convention).
+	// Branch is the branch to start on. Empty = a new branch from HEAD
+	// (the cs2/<title> convention). When set, the branch is created from HEAD
+	// if absent (unless BranchMustExist is set, which requires it to pre-exist).
 	Branch string
 	// Prompt is the initial task to send to the agent once it has started.
 	// Empty = no initial prompt (the instance starts in Ready).
@@ -36,6 +38,15 @@ type SpawnOptions struct {
 	// the kernel (Spawn's caller), not here; Spawn itself just builds whatever
 	// Kind it is told to.
 	Kind session.Kind
+
+	// BranchMustExist controls what happens when Branch is set but does not
+	// exist in the repo. The default (false) makes cs2 create the branch from
+	// HEAD — the orchestrator-friendly behaviour (deterministic branch names
+	// without pre-creating them). When true, Spawn refuses with
+	// git.ErrBranchNotFound (mapped to BRANCH_NOT_FOUND on the wire) — this
+	// restores the pre-fix behaviour for callers that want to resume work on a
+	// branch that must already be there. Ignored when Branch is empty.
+	BranchMustExist bool
 
 	// tmuxSession is a test-only seam: when non-nil, Spawn installs it on the
 	// instance before Start so Start reuses it instead of creating a real tmux
@@ -69,6 +80,17 @@ func Spawn(opts SpawnOptions) (*session.Instance, error) {
 	title := opts.Title
 	if title == "" {
 		title = deriveSpawnTitle(opts)
+	}
+
+	// When a branch is requested, ensure it exists before the instance is
+	// created: by default create it from HEAD (deterministic names for an
+	// orchestrator); with BranchMustExist, refuse if absent. Doing this here
+	// (not inside the worktree setup) keeps the "create if absent" policy in
+	// one place and the worktree layer purely mechanical.
+	if opts.Branch != "" {
+		if err := git.EnsureBranch(opts.Repo, opts.Branch, opts.BranchMustExist); err != nil {
+			return nil, fmt.Errorf("spawn: %w", err)
+		}
 	}
 
 	inst, err := session.NewInstance(session.InstanceOptions{

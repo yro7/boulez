@@ -216,6 +216,30 @@ func TestTransport_WorkerCannotSpawn_ErrCode(t *testing.T) {
 	assert.Empty(t, spawner.spawned[1:], "no second instance created on a refused spawn")
 }
 
+// TestTransport_Spawn_BranchNotFound_ErrCode proves the typed branch error
+// survives the kernel's `spawn: %w` wrapping and surfaces over the wire as
+// BRANCH_NOT_FOUND (not INTERNAL). This is the contract a caller relies on to
+// branch on "the requested branch is missing" vs a generic failure. The
+// branch-creation logic itself is covered by app/git tests; here we pin the
+// wire mapping of the wrapped typed error.
+func TestTransport_Spawn_BranchNotFound_ErrCode(t *testing.T) {
+	spawner := &fakeSpawner{spawnErr: git.ErrBranchNotFound{Name: "ghost"}}
+	socketPath, stop := startTestKernel(t, spawner, &fakeMerger{})
+	defer stop()
+
+	params, _ := json.Marshal(map[string]interface{}{
+		"repo":              "/r",
+		"branch":            "ghost",
+		"branch_must_exist": true,
+		"program":           "bash",
+	})
+	resp, err := Call(socketPath, Request{Method: "spawn_worker", Params: params})
+	require.NoError(t, err)
+	require.NotNil(t, resp.Error, "spawn with a missing required branch must error")
+	assert.Equal(t, CodeBranchNotFound, resp.Error.Code)
+	assert.Contains(t, resp.Error.Message, "ghost")
+}
+
 // TestTransport_AutoLaunchNotNeeded proves the wire path doesn't itself launch
 // a daemon — Call just dials and errors if down. The auto-launch logic lives
 // in the ctl client (cmd_ctl.go), not in Call. We assert Call errors cleanly

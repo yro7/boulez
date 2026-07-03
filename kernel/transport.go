@@ -11,6 +11,7 @@ package kernel
 import (
 	"bufio"
 	"encoding/json"
+	"errors"
 	"fmt"
 	"io"
 	"net"
@@ -62,6 +63,7 @@ const (
 	CodeWorkerCannotSpawn  = "WORKER_CANNOT_SPAWN"
 	CodeNestedOrchestrator = "NESTED_ORCHESTRATOR"
 	CodeProtectedBranch    = "PROTECTED_BRANCH"
+	CodeBranchNotFound    = "BRANCH_NOT_FOUND"
 	CodeInternal           = "INTERNAL"
 )
 
@@ -246,23 +248,25 @@ func composeStatusFilter(f ListFilter, s session.Status) ListFilter {
 }
 
 type spawnParams struct {
-	Repo    string        `json:"repo"`
-	Branch  string        `json:"branch,omitempty"`
-	Prompt  string        `json:"prompt,omitempty"`
-	Program string        `json:"program,omitempty"`
-	Title   string        `json:"title,omitempty"`
-	Kind    session.Kind  `json:"kind,omitempty"`
-	Caller  callerParams   `json:"caller,omitempty"`
+	Repo            string         `json:"repo"`
+	Branch          string         `json:"branch,omitempty"`
+	BranchMustExist bool           `json:"branch_must_exist,omitempty"`
+	Prompt          string         `json:"prompt,omitempty"`
+	Program         string         `json:"program,omitempty"`
+	Title           string         `json:"title,omitempty"`
+	Kind            session.Kind   `json:"kind,omitempty"`
+	Caller          callerParams   `json:"caller,omitempty"`
 }
 
 func (p spawnParams) toOptions() SpawnOptions {
 	return SpawnOptions{
-		Repo:    p.Repo,
-		Branch:  p.Branch,
-		Prompt:  p.Prompt,
-		Program: p.Program,
-		Title:   p.Title,
-		Kind:    p.Kind,
+		Repo:            p.Repo,
+		Branch:          p.Branch,
+		BranchMustExist: p.BranchMustExist,
+		Prompt:          p.Prompt,
+		Program:         p.Program,
+		Title:           p.Title,
+		Kind:            p.Kind,
 	}
 }
 
@@ -305,8 +309,17 @@ func errResp(code, msg string) Response {
 	return Response{Error: &ErrorInfo{Code: code, Message: msg}}
 }
 
-// kernelErrResp maps a kernel error to its wire code.
+// kernelErrResp maps a kernel error to its wire code. It uses errors.As so
+// typed errors wrapped by a syscall (notably Spawn wraps its spawner error as
+// `spawn: %w`, which carries git.ErrBranchNotFound from app.Spawn) are still
+// recognised — a plain type switch would miss wrapped errors and surface them
+// as INTERNAL. Each typed error thus survives exactly one layer of wrapping,
+// which is all the kernel applies.
 func kernelErrResp(err error) Response {
+	var branchNF git.ErrBranchNotFound
+	if errors.As(err, &branchNF) {
+		return errResp(CodeBranchNotFound, branchNF.Error())
+	}
 	switch err.(type) {
 	case ErrUnknownInstance:
 		return errResp(CodeUnknownInstance, err.Error())

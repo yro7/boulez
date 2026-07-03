@@ -209,6 +209,7 @@ func newCtlListCmd() *cobra.Command {
 
 func newCtlSpawnCmd() *cobra.Command {
 	var repo, branch, prompt, program, title, kind string
+	var branchExisting bool
 	cmd := &cobra.Command{
 		Use:   "spawn_worker",
 		Short: "Spawn a new worker instance",
@@ -221,6 +222,9 @@ func newCtlSpawnCmd() *cobra.Command {
 			}
 			if branch != "" {
 				params["branch"] = branch
+			}
+			if branchExisting {
+				params["branch_must_exist"] = true
 			}
 			if prompt != "" {
 				params["prompt"] = prompt
@@ -238,7 +242,8 @@ func newCtlSpawnCmd() *cobra.Command {
 		},
 	}
 	cmd.Flags().StringVar(&repo, "repo", "", "repository path (required)")
-	cmd.Flags().StringVar(&branch, "branch", "", "existing branch to start on (default: new branch from HEAD)")
+	cmd.Flags().StringVar(&branch, "branch", "", "branch to start on; created from HEAD if absent (default: new branch from HEAD when omitted)")
+	cmd.Flags().BoolVar(&branchExisting, "branch-existing", false, "require --branch to pre-exist (resume an existing branch); errors BRANCH_NOT_FOUND if absent")
 	cmd.Flags().StringVar(&prompt, "prompt", "", "initial prompt to send after start")
 	cmd.Flags().StringVar(&program, "program", "", "agent command (default: claude)")
 	cmd.Flags().StringVar(&title, "title", "", "instance title (default: auto-derived)")

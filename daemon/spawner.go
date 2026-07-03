@@ -18,13 +18,14 @@ type kernelSpawner struct{}
 
 func (kernelSpawner) Spawn(opts kernel.SpawnOptions) (*session.Instance, error) {
 	return app.Spawn(app.SpawnOptions{
-		Repo:    opts.Repo,
-		Branch:  opts.Branch,
-		Prompt:  opts.Prompt,
-		Program: opts.Program,
-		Title:   opts.Title,
-		Host:    opts.Host,
-		Kind:    opts.Kind,
+		Repo:            opts.Repo,
+		Branch:          opts.Branch,
+		BranchMustExist: opts.BranchMustExist,
+		Prompt:          opts.Prompt,
+		Program:         opts.Program,
+		Title:           opts.Title,
+		Host:            opts.Host,
+		Kind:            opts.Kind,
 	})
 }
 
