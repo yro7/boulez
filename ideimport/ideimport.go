@@ -210,7 +210,7 @@ func (i *Importer) scanOne(spec ideSpec) ([]FoundRepo, []Warning, error) {
 		if !ok {
 			continue
 		}
-		if git.IsGitRepo(p) {
+		if git.NewRepo(p).IsGitRepo() {
 			found = append(found, FoundRepo{Path: p, IDE: spec.name})
 		}
 	}

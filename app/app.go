@@ -909,7 +909,7 @@ func (m *home) scheduleBranchSearch(repoPath, filter string, version uint64) tea
 // never the process cwd).
 func (m *home) runBranchSearch(repoPath, filter string, version uint64) tea.Cmd {
 	return func() tea.Msg {
-		branches, err := git.SearchBranches(repoPath, filter)
+		branches, err := git.NewRepo(repoPath).SearchBranches(filter)
 		if err != nil {
 			log.WarningLog.Printf("branch search failed: %v", err)
 			return nil
@@ -1128,7 +1128,7 @@ func (m *home) handleRepoSelectState(msg tea.KeyMsg) (tea.Model, tea.Cmd) {
 		m.repoSelector.Submitted = false
 		return m, m.handleError(fmt.Errorf("please select a repo or type a path"))
 	}
-	if !git.IsGitRepo(selected) {
+	if !git.NewRepo(selected).IsGitRepo() {
 		m.repoSelector.Submitted = false
 		return m, m.handleError(fmt.Errorf("not a git repository: %s", selected))
 	}
@@ -1169,7 +1169,7 @@ func (m *home) startNewInstance(repoPath string, promptFlow bool) tea.Cmd {
 	if promptFlow {
 		// Best-effort background fetch so the branch picker is up to date.
 		return func() tea.Msg {
-			git.FetchBranches(instance.Path)
+			git.NewRepo(instance.Path).FetchBranches()
 			return nil
 		}
 	}
