@@ -117,8 +117,34 @@ func RunDaemon(cfg *config.Config) error {
 	return nil
 }
 
-// LaunchDaemon launches the daemon process.
+// LaunchDaemon launches the daemon process. It is concurrency-safe: if a
+// daemon is already running OR another launcher is in the middle of starting
+// one, LaunchDaemon returns nil without launching a second process. This
+// fixes the auto-launch race found in dogfooding: a storm of concurrent
+// 'cs2 ctl' calls (with the daemon down) each saw the socket missing and
+// each launched its own daemon — up to 5+ processes.
+//
+// The guard is a lock file (~/.cs2/daemon.lock) created with O_EXCL (atomic
+// across processes). The lock carries the launcher's PID so a stale lock
+// (from a crashed launcher) is reclaimed. The daemon itself writes the real
+// PID to daemon.pid on startup (StopDaemon consumes that).
 func LaunchDaemon() error {
+	pidDir, err := config.GetConfigDir()
+	if err != nil {
+		return fmt.Errorf("failed to get config directory: %w", err)
+	}
+
+	lockPath := filepath.Join(pidDir, "daemon.lock")
+	acquired, err := acquireLaunchLock(lockPath)
+	if err != nil {
+		return fmt.Errorf("acquire launch lock: %w", err)
+	}
+	if !acquired {
+		// Another launcher is starting (or has started) a daemon. Let it.
+		log.InfoLog.Printf("daemon launch already in progress; not launching a second")
+		return nil
+	}
+
 	// Find the claude squad binary.
 	execPath, err := os.Executable()
 	if err != nil {
@@ -136,17 +162,13 @@ func LaunchDaemon() error {
 	cmd.SysProcAttr = getSysProcAttr()
 
 	if err := cmd.Start(); err != nil {
+		_ = os.Remove(lockPath)
 		return fmt.Errorf("failed to start child process: %w", err)
 	}
 
 	log.InfoLog.Printf("started daemon child process with PID: %d", cmd.Process.Pid)
 
 	// Save PID to a file for later management
-	pidDir, err := config.GetConfigDir()
-	if err != nil {
-		return fmt.Errorf("failed to get config directory: %w", err)
-	}
-
 	pidFile := filepath.Join(pidDir, "daemon.pid")
 	if err := os.WriteFile(pidFile, []byte(fmt.Sprintf("%d", cmd.Process.Pid)), 0644); err != nil {
 		return fmt.Errorf("failed to write PID file: %w", err)
@@ -187,10 +209,12 @@ func StopDaemon() error {
 		return fmt.Errorf("failed to stop daemon process: %w", err)
 	}
 
-	// Clean up PID file
+	// Clean up PID file and the launch lock (the lock is the "a daemon exists"
+	// sentinel; removing it lets a future LaunchDaemon proceed).
 	if err := os.Remove(pidFile); err != nil {
 		return fmt.Errorf("failed to remove PID file: %w", err)
 	}
+	_ = os.Remove(filepath.Join(filepath.Dir(pidFile), "daemon.lock"))
 
 	log.InfoLog.Printf("daemon process (PID: %d) stopped successfully", pid)
 	return nil
@@ -220,4 +244,91 @@ func resolveHostProtectedBranches() []string {
 	}
 	log.InfoLog.Printf("host repo %s is on branch %q; protecting it from merges", cwd, branch)
 	return []string{branch}
+}
+
+// acquireLaunchLock tries to atomically create the launch lock file. Returns
+// true if THIS caller acquired it (and so owns the launch), false if another
+// launcher already holds it. A stale lock (holder PID dead) is reclaimed.
+//
+// The lock is released implicitly: the daemon, once up, takes over and writes
+// daemon.pid; the lock file itself is left in place as a "a daemon exists"
+// sentinel. StopDaemon removes daemon.pid AND the lock when it kills the
+// daemon. We do NOT release the lock on the launcher's exit (the launcher is
+// short-lived; the lock outlives it as the "daemon is up" marker).
+func acquireLaunchLock(path string) (bool, error) {
+	// If a lock file exists, check whether its holder is alive.
+	if data, err := os.ReadFile(path); err == nil {
+		pidStr := strings.TrimSpace(string(data))
+		if pid, perr := parsePID(pidStr); perr == nil {
+			if !pidAlive(pid) {
+				// Stale lock from a crashed launcher — reclaim it.
+				_ = os.Remove(path)
+			} else {
+				// A launcher is mid-flight (or a daemon is up). Don't launch again.
+				return false, nil
+			}
+		}
+	} else if !os.IsNotExist(err) {
+		return false, fmt.Errorf("read lock file: %w", err)
+	}
+
+	// Atomically create the lock with OUR pid. O_EXCL guarantees only one
+	// concurrent writer wins across processes.
+	f, err := os.OpenFile(path, os.O_CREATE|os.O_EXCL|os.O_WRONLY, 0644)
+	if err != nil {
+		if os.IsExist(err) {
+			// Raced with another launcher that won — let it.
+			return false, nil
+		}
+		return false, err
+	}
+	_, err = fmt.Fprintf(f, "%d", os.Getpid())
+	_ = f.Close()
+	if err != nil {
+		_ = os.Remove(path)
+		return false, err
+	}
+	return true, nil
+}
+
+// parsePID parses a decimal PID from a string (the lock/pid file contents).
+func parsePID(s string) (int, error) {
+	var pid int
+	_, err := fmt.Sscanf(s, "%d", &pid)
+	return pid, err
+}
+
+// pidAlive reports whether a process with the given PID exists. On any error
+// it returns true (treat the holder as alive to avoid double-launching).
+func pidAlive(pid int) bool {
+	if pid <= 0 {
+		return false
+	}
+	// findProcess always succeeds on Unix; the signal-zero probe is the real
+	// liveness check (signal 0 = "is there a process?", no actual signal sent).
+	p, err := os.FindProcess(pid)
+	if err != nil {
+		return true
+	}
+	if err := p.Signal(syscall.Signal(0)); err != nil {
+		return false
+	}
+	return true
+}
+
+// WaitForSocket polls for the control socket to appear, up to timeout. Used
+// by the ctl client after LaunchDaemon: instead of a blind sleep, wait
+// actively (50ms cadence) for the daemon to bind. Returns nil if the socket
+// appeared, an error on timeout.
+func WaitForSocket(socketPath string, timeout time.Duration) error {
+	deadline := time.Now().Add(timeout)
+	for {
+		if _, err := os.Stat(socketPath); err == nil {
+			return nil
+		}
+		if time.Now().After(deadline) {
+			return fmt.Errorf("daemon socket %s did not appear within %s", socketPath, timeout)
+		}
+		time.Sleep(50 * time.Millisecond)
+	}
 }
