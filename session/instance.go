@@ -856,6 +856,14 @@ func (i *Instance) UpdateDiffStats() error {
 	}
 
 	stats := i.gitWorktree.Diff()
+	if stats == nil {
+		// A headless worktree (orchestrator) has no git repo and returns a nil
+		// Diff. Nothing to report; leave diffStats clear and avoid nil-deref'ing
+		// stats.Error below. This is what keeps the daemon's poll loop alive when
+		// an orchestrator is in the fleet.
+		i.diffStats = nil
+		return nil
+	}
 	if stats.Error != nil {
 		if strings.Contains(stats.Error.Error(), "base commit SHA not set") {
 			// Worktree is not fully set up yet, not an error
