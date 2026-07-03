@@ -91,9 +91,16 @@ func Serve(k *Kernel, socketPath string) error {
 
 // handleConn serves one client connection: read newline-delimited requests,
 // dispatch each, write newline-delimited responses. A connection may carry
-// multiple requests (the client may pipeline).
+// multiple requests (the client may pipeline). Each connection owns a
+// session — the authoritative caller identity. A session starts
+// unauthenticated (top-level, like `cs2 ctl`) and may bind to an instance
+// via the `authenticate` syscall. The caller identity is derived from the
+// session by the transport, NEVER from request params — so a client cannot
+// spoof another instance's identity to bypass the recursion guard.
 func handleConn(k *Kernel, conn net.Conn) {
 	defer func() { _ = conn.Close() }()
+	sess := k.newSession()
+	defer k.releaseSession(sess)
 	scanner := bufio.NewScanner(conn)
 	scanner.Buffer(make([]byte, 0, 64*1024), 4*1024*1024) // raise for large diffs/logs
 	enc := json.NewEncoder(conn)
@@ -103,16 +110,29 @@ func handleConn(k *Kernel, conn net.Conn) {
 			_ = enc.Encode(Response{Error: &ErrorInfo{Code: CodeInternal, Message: "bad json: " + err.Error()}})
 			continue
 		}
-		resp := dispatch(k, req)
+		resp := dispatch(k, sess, req)
 		_ = enc.Encode(resp)
 	}
 }
 
 // dispatch maps a Request to a Kernel method. This is the only place method
 // names live — the canonical table. Adding a syscall = one case here + one
-// Kernel method.
-func dispatch(k *Kernel, req Request) Response {
+// Kernel method. The caller identity comes from the session (authoritative),
+// not from request params — a client cannot declare a caller identity.
+func dispatch(k *Kernel, sess *ctlSession, req Request) Response {
 	switch req.Method {
+	case "authenticate":
+		var p struct {
+			ID   string        `json:"instance_id"`
+			Kind session.Kind  `json:"kind"`
+		}
+		if err := json.Unmarshal(req.Params, &p); err != nil {
+			return errResp(CodeInternal, "bad params: "+err.Error())
+		}
+		if err := k.BindCaller(sess, p.ID, p.Kind); err != nil {
+			return kernelErrResp(err)
+		}
+		return okResp(map[string]bool{"ok": true})
 	case "list_instances":
 		var p listParams
 		if err := json.Unmarshal(req.Params, &p); err != nil {
@@ -135,7 +155,12 @@ func dispatch(k *Kernel, req Request) Response {
 		if err := json.Unmarshal(req.Params, &p); err != nil {
 			return errResp(CodeInternal, "bad params: "+err.Error())
 		}
-		id, err := k.Spawn(p.Caller.toContext(), p.toOptions())
+		// The caller comes from the session (authoritative), not from the
+		// request's `caller` field. A client cannot declare a caller identity
+		// to bypass the recursion guard — the kernel binds it via
+		// `authenticate`. The `caller` field in params is ignored (kept in the
+		// struct for back-compat with older clients, but never read).
+		id, err := k.Spawn(k.callerFor(sess), p.toOptions())
 		if err != nil {
 			return kernelErrResp(err)
 		}
@@ -163,7 +188,8 @@ func dispatch(k *Kernel, req Request) Response {
 		if err := json.Unmarshal(req.Params, &p); err != nil {
 			return errResp(CodeInternal, "bad params: "+err.Error())
 		}
-		res, err := k.Merge(p.Caller.toContext(), p.TargetRepo, p.TargetBranch, p.SourceBranches, git.Strategy(p.Strategy))
+		// Caller from the session, not from request params (see spawn_worker).
+		res, err := k.Merge(k.callerFor(sess), p.TargetRepo, p.TargetBranch, p.SourceBranches, git.Strategy(p.Strategy))
 		if err != nil {
 			return kernelErrResp(err)
 		}
@@ -240,11 +266,19 @@ func (p spawnParams) toOptions() SpawnOptions {
 	}
 }
 
+// callerParams is the DEPRECATED client-declared caller. It is retained in
+// the wire structs for back-compat with older clients but is NEVER read by
+// the transport — the caller identity is derived from the session (bound via
+// `authenticate`), so a client cannot spoof another instance to bypass the
+// recursion guard. Kept here so an old client sending `caller` doesn't
+// break the JSON unmarshal.
 type callerParams struct {
 	ID   string        `json:"id,omitempty"`
 	Kind session.Kind `json:"kind,omitempty"`
 }
 
+// toContext is retained for tests that construct a CallerContext directly;
+// the transport no longer calls it.
 func (c callerParams) toContext() CallerContext {
 	return CallerContext{CallerID: c.ID, Kind: c.Kind}
 }
@@ -317,4 +351,40 @@ func Call(socketPath string, req Request) (Response, error) {
 		return Response{}, fmt.Errorf("unmarshal response: %w", err)
 	}
 	return resp, nil
+}
+
+// CallSession sends a sequence of requests on a SINGLE connection and returns
+// the responses in order. This is how a client authenticates then issues a
+// syscall in the same session: `authenticate` binds the connection to an
+// instance, and the subsequent request is attributed to that instance. A
+// one-shot `Call` can't do this because each Call is a fresh connection
+// (unauthenticated top-level). Used by `cs2 ctl as <id> ...` and by tests.
+func CallSession(socketPath string, reqs []Request) ([]Response, error) {
+	conn, err := net.Dial("unix", socketPath)
+	if err != nil {
+		return nil, fmt.Errorf("dial kernel socket %s: %w (is the daemon running?)", socketPath, err)
+	}
+	defer func() { _ = conn.Close() }()
+
+	reader := bufio.NewReader(conn)
+	resps := make([]Response, 0, len(reqs))
+	for _, req := range reqs {
+		line, err := json.Marshal(req)
+		if err != nil {
+			return nil, fmt.Errorf("marshal request: %w", err)
+		}
+		if _, err := conn.Write(append(line, '\n')); err != nil {
+			return nil, fmt.Errorf("write request: %w", err)
+		}
+		respLine, err := reader.ReadBytes('\n')
+		if err != nil && err != io.EOF {
+			return nil, fmt.Errorf("read response: %w", err)
+		}
+		var resp Response
+		if err := json.Unmarshal(respLine, &resp); err != nil {
+			return nil, fmt.Errorf("unmarshal response: %w", err)
+		}
+		resps = append(resps, resp)
+	}
+	return resps, nil
 }
