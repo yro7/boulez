@@ -670,3 +670,51 @@ func TestRepoSelectCancelReturnsToDefault(t *testing.T) {
 	assert.Equal(t, 0, h.list.NumInstances())
 	assert.Nil(t, h.repoSelector)
 }
+
+// TestBranchPickerScansSelectedRepoNotCwd is the end-to-end guard for the
+// multi-repo wiring: after the repo selector picks repo A, the branch picker
+// must list A's branches, never the process cwd's branches. It exercises the
+// full flow selector -> NewInstance -> initial branch search.
+func TestBranchPickerScansSelectedRepoNotCwd(t *testing.T) {
+	h := newRepoSelectHome(t)
+	repoA := t.TempDir()
+	makeTestRepo(t, repoA) // branches: default, feature-one, feature-two
+
+	// Run the process from a different, non-git directory to prove cwd is
+	// irrelevant to the branch search.
+	nonRepo := t.TempDir()
+	originalDir, err := os.Getwd()
+	require.NoError(t, err)
+	require.NoError(t, os.Chdir(nonRepo))
+	defer os.Chdir(originalDir)
+
+	// 1. Open the repo selector (prompt flow, so the branch picker follows).
+	h.openRepoSelector(true)
+	require.Equal(t, stateRepoSelect, h.state)
+
+	// 2. Type repoA as a free path and submit.
+	driveRepoSelector(t, h, []tea.KeyMsg{
+		{Type: tea.KeyRunes, Runes: []rune(repoA)},
+		{Type: tea.KeyEnter},
+	})
+	require.Equal(t, stateNew, h.state, "should be in name-entry after repo selection")
+	instance := h.list.GetInstances()[len(h.list.GetInstances())-1]
+	abs, err := filepath.Abs(repoA)
+	require.NoError(t, err)
+	assert.Equal(t, abs, instance.Path)
+
+	// 3. Simulate the initial branch search the prompt flow triggers on the
+	//    instance's repo. It must return repoA's branches despite cwd != repoA.
+	msg := h.runBranchSearch(instance.Path, "", 0)()
+	result, ok := msg.(branchSearchResultMsg)
+	require.True(t, ok)
+	assert.Contains(t, result.branches, "feature-one")
+	assert.Contains(t, result.branches, "feature-two")
+
+	// 4. A debounced search scheduled from the prompt overlay must also scan
+	//    the instance's repo (selected.Path), not cwd.
+	scheduled := h.scheduleBranchSearch(instance.Path, "feature-one", 1)()
+	debounced, ok := scheduled.(branchSearchDebounceMsg)
+	require.True(t, ok)
+	assert.Equal(t, instance.Path, debounced.repoPath)
+}
