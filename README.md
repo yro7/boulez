@@ -1,4 +1,20 @@
-# Claude Squad [![CI](https://github.com/smtg-ai/claude-squad/actions/workflows/build.yml/badge.svg)](https://github.com/smtg-ai/claude-squad/actions/workflows/build.yml) [![GitHub Release](https://img.shields.io/github/v/release/smtg-ai/claude-squad)](https://github.com/smtg-ai/claude-squad/releases/latest)
+# cs2 — a fork of Claude Squad
+
+> ⚠️ **This is a fork.** cs2 is a local fork of [claude-squad](https://github.com/smtg-ai/claude-squad) (upstream commit `5a604f7`, v1.0.19), **not** the upstream project. It is not affiliated with `smtg-ai`. The badges, links, and screenshots below originate from upstream and are kept for reference only.
+>
+> Before working here, read **[AGENTS.md](./AGENTS.md)** for the project's goals, non-negotiable rules, and code philosophy.
+>
+> Differences from upstream:
+> - Ships as a separate `cs2` binary (the official Homebrew `cs` is left untouched).
+> - **Modular agent support** via a `program.Adapter` seam: adding a new agent (Pi, Codex, Amp, …) is one file under `program/` + one `Register` line, with no edits to the tmux core, TUI, or daemon.
+> - **Multi-repo orchestration** (in progress): the TUI centralizes instances running across several different repositories.
+> - A small Pi ↔ cs2 ready-signal bridge (see `extensions/pi-cs2.ts` + `program/pi.go`).
+>
+> Upstream documentation below is preserved as-is for feature reference.
+
+---
+
+# Claude Squad (upstream reference) [![CI](https://github.com/smtg-ai/claude-squad/actions/workflows/build.yml/badge.svg)](https://github.com/smtg-ai/claude-squad/actions/workflows/build.yml) [![GitHub Release](https://img.shields.io/github/v/release/smtg-ai/claude-squad)](https://github.com/smtg-ai/claude-squad/releases/latest)
 
 [Claude Squad](https://smtg-ai.github.io/claude-squad/) is a terminal app that manages multiple [Claude Code](https://github.com/anthropics/claude-code), [Codex](https://github.com/openai/codex), [Gemini](https://github.com/google-gemini/gemini-cli) (and other local agents including [Aider](https://github.com/Aider-AI/aider)) in separate workspaces, allowing you to work on multiple tasks simultaneously.
 
