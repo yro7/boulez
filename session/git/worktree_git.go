@@ -12,9 +12,9 @@ import (
 // runGitCommand executes a git command and returns any error
 func (g *GitWorktree) runGitCommand(path string, args ...string) (string, error) {
 	baseArgs := []string{"-C", path}
-	cmd := exec.Command("git", append(baseArgs, args...)...)
+	c := exec.Command("git", append(baseArgs, args...)...)
 
-	output, err := cmd.CombinedOutput()
+	output, err := g.cmdExec.CombinedOutput(c)
 	if err != nil {
 		return "", fmt.Errorf("git command failed: %s (%w)", output, err)
 	}
@@ -51,11 +51,11 @@ func (g *GitWorktree) PushChanges(commitMessage string, open bool) error {
 	// First push the branch to remote to ensure it exists
 	pushCmd := exec.Command("gh", "repo", "sync", "--source", "-b", g.branchName)
 	pushCmd.Dir = g.worktreePath
-	if err := pushCmd.Run(); err != nil {
+	if err := g.cmdExec.Run(pushCmd); err != nil {
 		// If sync fails, try creating the branch on remote first
 		gitPushCmd := exec.Command("git", "push", "-u", "origin", g.branchName)
 		gitPushCmd.Dir = g.worktreePath
-		if pushOutput, pushErr := gitPushCmd.CombinedOutput(); pushErr != nil {
+		if pushOutput, pushErr := g.cmdExec.CombinedOutput(gitPushCmd); pushErr != nil {
 			log.ErrorLog.Print(pushErr)
 			return fmt.Errorf("failed to push branch: %s (%w)", pushOutput, pushErr)
 		}
@@ -64,7 +64,7 @@ func (g *GitWorktree) PushChanges(commitMessage string, open bool) error {
 	// Now sync with remote
 	syncCmd := exec.Command("gh", "repo", "sync", "-b", g.branchName)
 	syncCmd.Dir = g.worktreePath
-	if output, err := syncCmd.CombinedOutput(); err != nil {
+	if output, err := g.cmdExec.CombinedOutput(syncCmd); err != nil {
 		log.ErrorLog.Print(err)
 		return fmt.Errorf("failed to sync changes: %s (%w)", output, err)
 	}
@@ -151,7 +151,7 @@ func (g *GitWorktree) OpenBranchURL() error {
 
 	cmd := exec.Command("gh", "browse", "--branch", g.branchName)
 	cmd.Dir = g.worktreePath
-	if err := cmd.Run(); err != nil {
+	if err := g.cmdExec.Run(cmd); err != nil {
 		return fmt.Errorf("failed to open branch URL: %w", err)
 	}
 	return nil

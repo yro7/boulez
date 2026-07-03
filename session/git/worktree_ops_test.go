@@ -1,6 +1,7 @@
 package git
 
 import (
+	"claude-squad/cmd"
 	"os"
 	"os/exec"
 	"path/filepath"
@@ -46,6 +47,7 @@ func TestSetupFromExistingBranch_RemovesOrphanedDirectory(t *testing.T) {
 		worktreePath:     worktreePath,
 		branchName:       "feature/test",
 		isExistingBranch: true,
+		cmdExec:          cmd.MakeExecutor(),
 	}
 
 	if err := g.Setup(); err != nil {
