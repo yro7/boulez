@@ -39,6 +39,7 @@ func init() {
 
 func runRepoImport(cmd *cobra.Command, args []string) error {
 	log.Initialize(false)
+	log.SetPrintPathOnClose(true) // human-facing: surface log path on exit
 	defer log.Close()
 
 	// D12: NewImporter validates --ide before any scan (fail-fast).

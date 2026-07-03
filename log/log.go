@@ -42,10 +42,32 @@ func Initialize(daemon bool) {
 	globalLogFile = f
 }
 
+// printPathOnClose controls whether Close prints the log file path to stdout.
+// It is off by default: machine-facing commands (notably `cs2 ctl`) must keep
+// stdout pure JSON so consumers can parse the response without post-processing.
+// Human-facing commands that want to surface the log path set this to true.
+var printPathOnClose bool
+
+// SetPrintPathOnClose enables/disables printing the log file path on Close.
+// Returns the previous value so callers can restore it.
+func SetPrintPathOnClose(v bool) bool {
+	prev := printPathOnClose
+	printPathOnClose = v
+	return prev
+}
+
 func Close() {
 	_ = globalLogFile.Close()
-	// TODO: maybe only print if verbose flag is set?
-	fmt.Println("wrote logs to " + logFileName)
+	if printPathOnClose {
+		fmt.Println("wrote logs to " + logFileName)
+	}
+}
+
+// LogFilePath returns the path of the log file (set during Initialize). Useful
+// for a human-facing command that wants to mention the log path without
+// polluting stdout via Close's side effect.
+func LogFilePath() string {
+	return logFileName
 }
 
 // Every is used to log at most once every timeout duration.
