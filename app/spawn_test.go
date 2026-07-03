@@ -97,6 +97,48 @@ func TestSpawn_WithBranch(t *testing.T) {
 	assert.True(t, inst.Started())
 }
 
+// TestSpawn_CreatesBranchIfAbsent proves the orchestrator-friendly default
+// (fix #1): `--branch X` where X does not exist creates X from HEAD and
+// starts the worktree on it, instead of erroring.
+func TestSpawn_CreatesBranchIfAbsent(t *testing.T) {
+	restore := withTempHome(t)
+	defer restore()
+	repoPath := makeTempGitRepoApp(t)
+
+	inst, err := Spawn(SpawnOptions{
+		Repo:    repoPath,
+		Branch:  "newfeat",
+		Program: "bash",
+	})
+	require.NoError(t, err)
+	t.Cleanup(func() { _ = inst.Kill() })
+
+	assert.Equal(t, "newfeat", inst.Branch, "instance uses the requested branch")
+	assert.True(t, inst.Started())
+
+	// The branch was actually created in the repo.
+	runGitApp(t, repoPath, "show-ref", "--verify", "refs/heads/newfeat")
+}
+
+// TestSpawn_BranchMustExistFailsIfAbsent proves --branch-existing restores the
+// old behaviour: an absent branch is refused with git.ErrBranchNotFound (mapped
+// to BRANCH_NOT_FOUND on the wire), so a caller can resume an existing branch
+// without silently creating a wrong one.
+func TestSpawn_BranchMustExistFailsIfAbsent(t *testing.T) {
+	restore := withTempHome(t)
+	defer restore()
+	repoPath := makeTempGitRepoApp(t)
+
+	_, err := Spawn(SpawnOptions{
+		Repo:            repoPath,
+		Branch:          "ghost",
+		BranchMustExist: true,
+		Program:         "bash",
+	})
+	require.Error(t, err)
+	assert.Contains(t, err.Error(), "ghost", "error names the missing branch")
+}
+
 // TestSpawn_WithInitialPrompt proves the initial prompt is sent after start.
 // We use a no-op program (bash) and just assert SendPrompt doesn't error and
 // the instance is running — the prompt content is delivered to the pane.

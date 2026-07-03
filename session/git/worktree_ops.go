@@ -49,7 +49,7 @@ func (g *GitWorktree) setupFromExistingBranch() error {
 		// Local branch doesn't exist — check if remote tracking branch exists
 		_, remoteErr := g.runGitCommand(g.repoPath, "show-ref", "--verify", fmt.Sprintf("refs/remotes/origin/%s", g.branchName))
 		if remoteErr != nil {
-			return fmt.Errorf("branch %s not found locally or on remote", g.branchName)
+			return ErrBranchNotFound{Name: g.branchName}
 		}
 		// Create a local tracking branch via worktree add -b
 		if _, err := g.runGitCommand(g.repoPath, "worktree", "add", "-b", g.branchName, g.worktreePath, fmt.Sprintf("origin/%s", g.branchName)); err != nil {
