@@ -1,7 +1,9 @@
 package git
 
 import (
+	"claude-squad/cmd"
 	"claude-squad/log"
+	"claude-squad/session/fs"
 	"fmt"
 	"os"
 	"os/exec"
@@ -152,70 +154,122 @@ func (g *GitWorktree) Prune() error {
 	return nil
 }
 
-// CleanupWorktrees removes all worktrees and their associated branches
+// CleanupWorktrees removes all worktrees under the local worktrees directory
+// and their associated branches. It is the "nuke" path used by `cs2 reset`.
+// Defaults to local deps; CleanupWorktreesWithDeps is the testable / host-aware
+// variant. Remote worktrees are not swept here (they live on the remote host,
+// not the local worktrees dir) — they are cleaned per-instance via
+// GitWorktree.Cleanup, which routes through the instance's host.
 func CleanupWorktrees() error {
-	worktreesDir, err := getWorktreeDirectory()
+	worktreeDir, err := getWorktreeDirectory()
 	if err != nil {
 		return fmt.Errorf("failed to get worktree directory: %w", err)
 	}
+	return CleanupWorktreesWithDeps(cmd.MakeExecutor(), fs.LocalFS{}, worktreeDir)
+}
 
-	entries, err := os.ReadDir(worktreesDir)
+// CleanupWorktreesWithDeps is the host+repo-aware sweep. It reads worktreeDir
+// via fsys and, for each worktree, removes it and its branch from that
+// worktree's OWN repository (via cmdExec with `git -C <repo-root> ...`) — not
+// from whatever repo happens to be in the cwd.
+//
+// This closes dette #1: the previous implementation ran `git worktree list`
+// and `git branch -D` without `-C`, operating on the cwd's repo — a latent
+// multi-repo bug (a sweep from repo A's cwd would silently fail to delete
+// branches belonging to repo B, and would never see A's worktrees if the
+// porcelain list didn't cover them). Routing per-worktree through -C fixes it
+// and makes the sweep independent of cwd.
+//
+// worktreeDir is the Host's worktree directory. For LocalHost this is the local
+// ~/.cs2/worktrees; for an SSHHost it would be the ~-relative literal — but
+// note this sweep only sees entries fsys can list, so in practice it covers
+// local worktrees (remote ones are cleaned per-instance through their host).
+func CleanupWorktreesWithDeps(cmdExec cmd.Executor, fsys fs.FS, worktreeDir string) error {
+	entries, err := fsys.ReadDir(worktreeDir)
 	if err != nil {
 		return fmt.Errorf("failed to read worktree directory: %w", err)
 	}
 
-	// Get a list of all branches associated with worktrees
-	cmd := exec.Command("git", "worktree", "list", "--porcelain")
-	output, err := cmd.Output()
-	if err != nil {
-		return fmt.Errorf("failed to list worktrees: %w", err)
-	}
-
-	// Parse the output to extract branch names
-	worktreeBranches := make(map[string]string)
-	currentWorktree := ""
-	lines := strings.Split(string(output), "\n")
-	for _, line := range lines {
-		if strings.HasPrefix(line, "worktree ") {
-			currentWorktree = strings.TrimPrefix(line, "worktree ")
-		} else if strings.HasPrefix(line, "branch ") {
-			branchPath := strings.TrimPrefix(line, "branch ")
-			// Extract branch name from refs/heads/branch-name
-			branchName := strings.TrimPrefix(branchPath, "refs/heads/")
-			if currentWorktree != "" {
-				worktreeBranches[currentWorktree] = branchName
-			}
-		}
-	}
+	// Prune each distinct repo once at the end (a worktree remove leaves no
+	// stale admin, but prune is cheap insurance and cleans any orphans).
+	prunedRepos := make(map[string]bool)
 
 	for _, entry := range entries {
-		if entry.IsDir() {
-			worktreePath := filepath.Join(worktreesDir, entry.Name())
+		if !entry.IsDir() {
+			continue
+		}
+		worktreePath := filepath.Join(worktreeDir, entry.Name())
 
-			// Delete the branch associated with this worktree if found
-			for path, branch := range worktreeBranches {
-				if strings.Contains(path, entry.Name()) {
-					// Delete the branch
-					deleteCmd := exec.Command("git", "branch", "-D", branch)
-					if err := deleteCmd.Run(); err != nil {
-						// Log the error but continue with other worktrees
+		// Resolve the main repo that owns this worktree, from the worktree's
+		// own context (git -C <worktree> ...). Empty => not a git worktree or
+		// corrupt; fall back to a raw directory removal.
+		repoRoot := worktreeRepoRoot(cmdExec, worktreePath)
+		// Branch checked out in this worktree (cs2 branches are named after
+		// the instance title). Empty => detached or unreadable; skip branch
+		// deletion but still drop the directory.
+		branch := worktreeBranch(cmdExec, worktreePath)
+
+		if repoRoot != "" {
+			// Remove the worktree from its repo's admin. Run from repoRoot (not
+			// the worktree dir) so git isn't operating inside the dir it removes.
+			if err := cmdExec.Run(exec.Command("git", "-C", repoRoot, "worktree", "remove", "-f", worktreePath)); err != nil {
+				// Corrupt/orphaned: git can't remove it via admin; drop the dir
+				// directly and let prune clean the stale admin below.
+				_ = fsys.RemoveAll(worktreePath)
+			}
+			// Delete the branch now that the worktree holding it is gone (git
+			// refuses to delete a branch checked out in a live worktree).
+			if branch != "" {
+				if err := cmdExec.Run(exec.Command("git", "-C", repoRoot, "branch", "-D", branch)); err != nil {
+					if !strings.Contains(err.Error(), "not found") {
 						log.ErrorLog.Printf("failed to delete branch %s: %v", branch, err)
 					}
-					break
 				}
 			}
-
-			// Remove the worktree directory
-			os.RemoveAll(worktreePath)
+			if !prunedRepos[repoRoot] {
+				_ = cmdExec.Run(exec.Command("git", "-C", repoRoot, "worktree", "prune"))
+				prunedRepos[repoRoot] = true
+			}
+		} else {
+			// Not a git worktree (or git can't read it): just drop the dir.
+			_ = fsys.RemoveAll(worktreePath)
 		}
-	}
 
-	// You have to prune the cleaned up worktrees.
-	cmd = exec.Command("git", "worktree", "prune")
-	_, err = cmd.Output()
-	if err != nil {
-		return fmt.Errorf("failed to prune worktrees: %w", err)
+		// Safety: ensure the directory is gone regardless of the path above
+		// (idempotent — RemoveAll on a removed dir is a no-op).
+		_ = fsys.RemoveAll(worktreePath)
 	}
 
 	return nil
+}
+
+// worktreeRepoRoot resolves the main repository root that owns the worktree at
+// worktreePath, via git's --git-common-dir (the dir shared across all
+// worktrees of a repo; its parent is the repo root). Returns "" if the path is
+// not a git worktree or git fails, so the caller can fall back to a raw
+// RemoveAll.
+func worktreeRepoRoot(cmdExec cmd.Executor, worktreePath string) string {
+	out, err := cmdExec.Output(exec.Command("git", "-C", worktreePath, "rev-parse", "--git-common-dir"))
+	if err != nil {
+		return ""
+	}
+	commonDir := strings.TrimSpace(string(out))
+	if commonDir == "" {
+		return ""
+	}
+	if !filepath.IsAbs(commonDir) {
+		// --git-common-dir can be relative to the worktree; resolve it.
+		commonDir = filepath.Join(worktreePath, commonDir)
+	}
+	return filepath.Dir(filepath.Clean(commonDir)) // strip /.git -> repo root
+}
+
+// worktreeBranch returns the branch checked out in the worktree at worktreePath
+// ("" if detached HEAD, unreadable, or not a git worktree).
+func worktreeBranch(cmdExec cmd.Executor, worktreePath string) string {
+	out, err := cmdExec.Output(exec.Command("git", "-C", worktreePath, "branch", "--show-current"))
+	if err != nil {
+		return ""
+	}
+	return strings.TrimSpace(string(out))
 }
