@@ -24,6 +24,10 @@ func (realGitMerger) Merge(repoPath, targetBranch string, sourceBranches []strin
 	return git.NewMerger(nil).Merge(repoPath, targetBranch, sourceBranches, strategy)
 }
 
+func (realGitMerger) MergeTrunk(repoPath, targetBranch string, sourceBranches []string, strategy git.Strategy) (git.MergeResult, error) {
+	return git.NewMerger(nil).MergeTrunk(repoPath, targetBranch, sourceBranches, strategy)
+}
+
 // startTestKernel builds a kernel with fake deps, serves it on a temp socket,
 // and returns the socket path + a stop func. This tests the full wire
 // round-trip without tmux or a real agent.
