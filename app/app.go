@@ -2,6 +2,7 @@ package app
 
 import (
 	"claude-squad/config"
+	"claude-squad/host"
 	"claude-squad/keys"
 	"claude-squad/log"
 	"claude-squad/program"
@@ -51,6 +52,10 @@ const (
 	// stateRepoSelect is the state when the user is choosing a repository for a
 	// new instance (registry + free path). It runs before instance creation.
 	stateRepoSelect
+	// stateHostSelect is the state when the user is choosing an execution host
+	// (local or a known ssh alias) for a new instance. It runs before repo
+	// selection, giving the flow: host → repo → branch.
+	stateHostSelect
 )
 
 type home struct {
@@ -108,11 +113,22 @@ type home struct {
 	confirmationOverlay *overlay.ConfirmationOverlay
 	// repoSelector displays the repo picker at instance creation
 	repoSelector *overlay.RepoSelector
+	// hostSelector displays the host picker at instance creation (before the
+	// repo picker). The chosen host is stored in pendingHost and applied to
+	// the instance in startNewInstance.
+	hostSelector *overlay.HostSelector
+	// pendingHost is the host chosen in the host selector, carried into the
+	// repo selector and finally into the instance.
+	pendingHost host.Host
 
 	// repoRegistry is the persistent set of known repository paths, used to
 	// pre-populate the repo selector. Free paths chosen at creation are added
 	// back here so they reappear next time.
 	repoRegistry *repo.Registry
+	// hostRegistry is the persistent set of known ssh aliases, used to
+	// pre-populate the host selector. Free aliases chosen at creation are added
+	// back here so they reappear next time.
+	hostRegistry *host.Registry
 
 	// repoSelectPrompt tracks whether the repo selector was opened from the
 	// prompt (KeyPrompt) flow; if so, after the repo is chosen we continue
@@ -137,6 +153,7 @@ func newHome(ctx context.Context, program string, autoYes bool) *home {
 	// The registry is best-effort: if it cannot be opened, the selector still
 	// works with a free path, so a nil registry is tolerated at the call sites.
 	repoRegistry, _ := repo.NewRegistry()
+	hostRegistry, _ := host.NewRegistry()
 
 	h := &home{
 		ctx:          ctx,
@@ -147,6 +164,7 @@ func newHome(ctx context.Context, program string, autoYes bool) *home {
 		storage:      storage,
 		appConfig:    appConfig,
 		repoRegistry: repoRegistry,
+		hostRegistry: hostRegistry,
 		program:      program,
 		autoYes:      autoYes,
 		state:        stateDefault,
@@ -196,6 +214,9 @@ func (m *home) updateHandleWindowSizeEvent(msg tea.WindowSizeMsg) {
 	}
 	if m.repoSelector != nil {
 		m.repoSelector.SetWidth(int(float32(msg.Width) * 0.6))
+	}
+	if m.hostSelector != nil {
+		m.hostSelector.SetWidth(int(float32(msg.Width) * 0.6))
 	}
 
 	previewWidth, previewHeight := m.tabbedWindow.GetPreviewSize()
@@ -408,7 +429,7 @@ func (m *home) handleMenuHighlighting(msg tea.KeyMsg) (cmd tea.Cmd, returnEarly 
 		m.keySent = false
 		return nil, false
 	}
-	if m.state == statePrompt || m.state == stateHelp || m.state == stateConfirm || m.state == stateRepoSelect {
+	if m.state == statePrompt || m.state == stateHelp || m.state == stateConfirm || m.state == stateRepoSelect || m.state == stateHostSelect {
 		return nil, false
 	}
 	// If it's in the global keymap, we should try to highlight it.
@@ -443,6 +464,10 @@ func (m *home) handleKeyPress(msg tea.KeyMsg) (mod tea.Model, cmd tea.Cmd) {
 
 	if m.state == stateHelp {
 		return m.handleHelpState(msg)
+	}
+
+	if m.state == stateHostSelect {
+		return m.handleHostSelectState(msg)
 	}
 
 	if m.state == stateRepoSelect {
@@ -671,9 +696,9 @@ func (m *home) handleKeyPress(msg tea.KeyMsg) (mod tea.Model, cmd tea.Cmd) {
 	case keys.KeyHelp:
 		return m.showHelpScreen(helpTypeGeneral{}, nil)
 	case keys.KeyPrompt:
-		return m, m.openRepoSelector(true /* promptAfterName flow */)
+		return m, m.openHostSelector(true /* promptAfterName flow */)
 	case keys.KeyNew:
-		return m, m.openRepoSelector(false /* plain new flow */)
+		return m, m.openHostSelector(false /* plain new flow */)
 	case keys.KeyUp:
 		m.list.Up()
 		return m, m.instanceChanged()
@@ -1084,9 +1109,70 @@ func (m *home) confirmAction(message string, action tea.Cmd) tea.Cmd {
 	return nil
 }
 
+// openHostSelector opens the host selector overlay first, before the repo
+// selector. promptFlow controls whether the prompt+branch overlay follows name
+// entry (KeyPrompt) or not (KeyNew). The chosen host is stashed in pendingHost
+// and carried into the repo selector.
+func (m *home) openHostSelector(promptFlow bool) tea.Cmd {
+	var aliases []string
+	if m.hostRegistry != nil {
+		aliases, _ = m.hostRegistry.List()
+	}
+	m.hostSelector = overlay.NewHostSelector(aliases)
+	m.repoSelectPrompt = promptFlow
+	m.state = stateHostSelect
+	return tea.WindowSize()
+}
+
+// handleHostSelectState dispatches key presses to the host selector overlay and
+// finalizes the selection on submit/cancel, transitioning to the repo selector.
+func (m *home) handleHostSelectState(msg tea.KeyMsg) (tea.Model, tea.Cmd) {
+	if m.hostSelector == nil {
+		m.state = stateDefault
+		return m, nil
+	}
+
+	// ctrl+c cancels like esc.
+	if msg.String() == "ctrl+c" {
+		m.hostSelector.Canceled = true
+	} else {
+		shouldClose := m.hostSelector.HandleKeyPress(msg)
+		if !shouldClose {
+			return m, nil
+		}
+	}
+
+	if m.hostSelector.Canceled {
+		m.hostSelector = nil
+		m.state = stateDefault
+		return m, tea.WindowSize()
+	}
+
+	// Submit: resolve the alias to a Host.
+	alias := m.hostSelector.SelectedAlias()
+	if alias == "" {
+		m.hostSelector.Submitted = false
+		return m, m.handleError(fmt.Errorf("please select a host or type an alias"))
+	}
+
+	// If the alias was typed freely (not picked from the registry and not
+	// local), register it so it reappears next time. Best-effort.
+	if m.hostSelector.IsFreeAlias() && alias != "local" && m.hostRegistry != nil {
+		_ = m.hostRegistry.Add(alias)
+	}
+
+	promptFlow := m.repoSelectPrompt
+	m.pendingHost = host.Lookup(alias)
+	m.hostSelector = nil
+	// Proceed to the repo selector, which will validate the repo path using
+	// the chosen host's executor (so a remote repo path is checked remotely).
+	return m, m.openRepoSelector(promptFlow)
+}
+
 // openRepoSelector opens the repo selector overlay before creating a new
 // instance. promptFlow controls whether the prompt+branch overlay follows name
-// entry (KeyPrompt) or not (KeyNew).
+// entry (KeyPrompt) or not (KeyNew). The repo path is validated against
+// m.pendingHost's executor (local or ssh).
 func (m *home) openRepoSelector(promptFlow bool) tea.Cmd {
 	var repos []string
 	if m.repoRegistry != nil {
@@ -1122,13 +1208,18 @@ func (m *home) handleRepoSelectState(msg tea.KeyMsg) (tea.Model, tea.Cmd) {
 		return m, tea.WindowSize()
 	}
 
-	// Submit: validate the chosen path.
+	// Submit: validate the chosen path against the selected host's executor
+	// (so a remote repo path is checked on the right machine).
+	h := m.pendingHost
+	if h == nil {
+		h = host.Local
+	}
 	selected := m.repoSelector.SelectedPath()
 	if selected == "" {
 		m.repoSelector.Submitted = false
 		return m, m.handleError(fmt.Errorf("please select a repo or type a path"))
 	}
-	if !git.NewRepo(selected).IsGitRepo() {
+	if !git.NewRepoWithDeps(selected, h.Executor()).IsGitRepo() {
 		m.repoSelector.Submitted = false
 		return m, m.handleError(fmt.Errorf("not a git repository: %s", selected))
 	}
@@ -1162,14 +1253,26 @@ func (m *home) startNewInstance(repoPath string, promptFlow bool) tea.Cmd {
 
 	m.newInstanceFinalizer = m.list.AddInstance(instance)
 	m.list.SetSelectedInstance(m.list.NumInstances() - 1)
+	// Apply the chosen host before Start binds tmux/git deps. SetHost refuses
+	// after Start, so this must happen here (name entry → Start).
+	if m.pendingHost != nil {
+		if err := instance.SetHost(m.pendingHost); err != nil {
+			return m.handleError(err)
+		}
+		m.pendingHost = nil
+	}
 	m.state = stateNew
 	m.menu.SetState(ui.StateNewInstance)
 	m.promptAfterName = promptFlow
 
 	if promptFlow {
 		// Best-effort background fetch so the branch picker is up to date.
+		// Use the instance's host executor so a remote repo is fetched remotely.
+		h := instance.Host()
+		repoPath := instance.Path
+		exec := h.Executor()
 		return func() tea.Msg {
-			git.NewRepo(instance.Path).FetchBranches()
+			git.NewRepoWithDeps(repoPath, exec).FetchBranches()
 			return nil
 		}
 	}
@@ -1203,6 +1306,12 @@ func (m *home) View() string {
 			log.ErrorLog.Printf("confirmation overlay is nil")
 		}
 		return overlay.PlaceOverlay(0, 0, m.confirmationOverlay.Render(), mainView, true, true)
+	} else if m.state == stateHostSelect {
+		if m.hostSelector == nil {
+			log.ErrorLog.Printf("host selector is nil")
+			return mainView
+		}
+		return overlay.PlaceOverlay(0, 0, m.hostSelector.Render(), mainView, true, true)
 	} else if m.state == stateRepoSelect {
 		if m.repoSelector == nil {
 			log.ErrorLog.Printf("repo selector is nil")
