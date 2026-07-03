@@ -76,6 +76,30 @@ func toClaudeSquadTmuxName(str string) string {
 	return fmt.Sprintf("%s%s", TmuxPrefix, str)
 }
 
+// SessionName returns the deterministic tmux session name for an instance
+// with the given title. It is the single source of truth for the mapping
+// title → session name, so other packages (e.g. the daemon's orchestrator
+// bootstrap, which must reason about a session by name without constructing
+// a TmuxSession) cannot drift from the sanitization logic above.
+func SessionName(title string) string {
+	return toClaudeSquadTmuxName(title)
+}
+
+// SessionExists reports whether a tmux session with the exact given name
+// exists. It is a package-level helper for callers that need to probe by
+// name (e.g. orphan reclamation) rather than via a TmuxSession value.
+func SessionExists(cmdExec cmd.Executor, name string) bool {
+	return cmdExec.Run(exec.Command("tmux", "has-session", fmt.Sprintf("-t=%s", name))) == nil
+}
+
+// KillSession kills a tmux session by exact name. It returns an error if the
+// session does not exist (tmux's kill-session exits non-zero for an absent
+// session). Callers that need an absent-safe no-op should guard with
+// SessionExists first — the orchestrator's reclaim path does exactly that.
+func KillSession(cmdExec cmd.Executor, name string) error {
+	return cmdExec.Run(exec.Command("tmux", "kill-session", "-t", name))
+}
+
 // NewTmuxSession creates a new TmuxSession with the given name and program.
 func NewTmuxSession(name string, program string) *TmuxSession {
 	return newTmuxSession(name, program, host.LocalPtyFactory(), cmd.MakeExecutor())
