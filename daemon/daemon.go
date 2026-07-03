@@ -11,6 +11,7 @@ import (
 	"os/exec"
 	"os/signal"
 	"path/filepath"
+	"strings"
 	"sync"
 	"syscall"
 	"time"
@@ -37,7 +38,15 @@ func RunDaemon(cfg *config.Config) error {
 	// The kernel is the single-writer control authority. The daemon owns it
 	// and serves the control socket so `cs2 ctl` (and future LLM tools) can
 	// drive the fleet. The auto-yes loop below runs alongside.
-	k := kernel.New(storage, kernel.WithSpawner(kernelSpawner{}), kernel.WithMerger(realMerger{}))
+	//
+	// Inject the host repo's current branch as a kernel-level protected
+	// branch (spec decision 7): an orchestrator may never merge INTO the
+	// branch the user is actively standing on — that would clobber their
+	// working tree. The Merger cannot see the host repo, so this guard lives
+	// in the kernel (non-contournable by the client). Resolved once here, at
+	// daemon startup, from the cwd the user launched cs2 from.
+	protected := resolveHostProtectedBranches()
+	k := kernel.New(storage, kernel.WithSpawner(kernelSpawner{}), kernel.WithMerger(realMerger{}), kernel.WithProtectedBranches(protected))
 	socketPath, err := kernel.SocketPath()
 	if err != nil {
 		return fmt.Errorf("failed to resolve kernel socket path: %w", err)
@@ -185,4 +194,30 @@ func StopDaemon() error {
 
 	log.InfoLog.Printf("daemon process (PID: %d) stopped successfully", pid)
 	return nil
+}
+
+// resolveHostProtectedBranches returns the host repo's currently checked-out
+// branch, so the kernel can refuse merges into it (spec decision 7). It uses
+// the daemon process's cwd — which is the directory the user launched cs2
+// from (the daemon inherits the parent's cwd). On any error (not a git repo,
+// detached HEAD, git missing) it returns nil: the conventional main/master
+// guard still applies via the Merger, so failing open is safe.
+func resolveHostProtectedBranches() []string {
+	cwd, err := os.Getwd()
+	if err != nil {
+		log.WarningLog.Printf("could not resolve cwd for host-branch guard: %v", err)
+		return nil
+	}
+	out, err := exec.Command("git", "-C", cwd, "rev-parse", "--abbrev-ref", "HEAD").Output()
+	if err != nil {
+		// Not a git repo, or git unavailable — no host branch to protect.
+		return nil
+	}
+	branch := strings.TrimSpace(string(out))
+	if branch == "" || branch == "HEAD" {
+		// detached HEAD — no branch name to protect.
+		return nil
+	}
+	log.InfoLog.Printf("host repo %s is on branch %q; protecting it from merges", cwd, branch)
+	return []string{branch}
 }

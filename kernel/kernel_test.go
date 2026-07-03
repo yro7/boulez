@@ -231,6 +231,38 @@ func TestKernel_Merge_NoMergerWired(t *testing.T) {
 	assert.Error(t, err)
 }
 
+// TestKernel_Merge_RefusesHostCurrentBranch proves the kernel-level guard
+// (spec decision 7): an injected protected branch (the host repo's current
+// branch) is refused at the kernel, BEFORE the merger runs. This is the case
+// that passed at fault in dogfooding — `merge --target-branch integration`
+// on a host repo checked out at integration succeeded. The guard is
+// non-contournable: a client cannot bypass it by lying, since the kernel
+// applies it from its injected config, not from request params.
+func TestKernel_Merge_RefusesHostCurrentBranch(t *testing.T) {
+	merger := &fakeMerger{result: git.MergeResult{Status: git.MergeMerged}}
+	k := New(nil, WithMerger(merger), WithoutAutosave(), WithProtectedBranches([]string{"integration"}))
+
+	res, err := k.Merge(CallerContext{}, "/repo", "integration", []string{"feat"}, git.StrategyDefault)
+	require.Error(t, err, "merging into the host's current branch must be refused")
+	var pbe git.ErrProtectedBranch
+	require.ErrorAs(t, err, &pbe)
+	assert.Equal(t, "integration", pbe.Branch)
+	assert.Equal(t, git.MergeConflict, res.Status)
+	assert.Empty(t, merger.calls, "the merger must not run when the kernel guard refuses")
+}
+
+// TestKernel_Merge_CaseInsensitiveProtected proves a caller can't bypass the
+// host-current-branch guard by capitalising ("Main" vs "main"). git branch
+// names are case-sensitive on disk, but the protected check is defensive.
+func TestKernel_Merge_CaseInsensitiveProtected(t *testing.T) {
+	merger := &fakeMerger{result: git.MergeResult{Status: git.MergeMerged}}
+	k := New(nil, WithMerger(merger), WithoutAutosave(), WithProtectedBranches([]string{"main"}))
+
+	_, err := k.Merge(CallerContext{}, "/repo", "Main", []string{"feat"}, git.StrategyDefault)
+	require.Error(t, err)
+	assert.Empty(t, merger.calls, "guard fires before the merger")
+}
+
 // TestKernel_Spawn_NoSpawnerWired proves a kernel with no spawner refuses.
 func TestKernel_Spawn_NoSpawnerWired(t *testing.T) {
 	k := New(nil, WithoutAutosave(), WithMerger(&fakeMerger{}))
