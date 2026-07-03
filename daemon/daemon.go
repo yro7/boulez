@@ -106,6 +106,22 @@ func RunDaemon(cfg *config.Config) error {
 				}
 			}
 
+			// Periodically guarantee a live orchestrator (instance 0) exists.
+			// The daemon is long-lived (it outlives the TUI), so this probe keeps
+			// instance 0 "always on" even while cs2 is closed: if the user killed
+			// the orchestrator's pane (Ctrl+D) or it crashed, the dead record is
+			// evicted and a fresh one spawned within one poll. This is the fix
+			// for the "closed the orchestrator once and it won't reopen until I
+			// restart" symptom — the next cs2 open always sees a live instance 0
+			// because the daemon respawned it. Cheap on the happy path: no disk
+			// I/O when the orchestrator is healthy (EnsureLive skips the context
+			// rewrite).
+			if _, err := orchestrator.EnsureLive(&orchestratorAPI{k: k, program: defaultProgram}, defaultProgram); err != nil {
+				if everyN.ShouldLog() {
+					log.WarningLog.Printf("ensure-live orchestrator: %v", err)
+				}
+			}
+
 			// Handle stop before ticker.
 			select {
 			case <-stopCh:
