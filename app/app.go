@@ -163,6 +163,13 @@ type home struct {
 	// inject a fake. Nil defaults to newSocketLandCaller() at first use so a
 	// bare &home{} test construct still works.
 	landCaller session.LandCaller
+
+	// fleet is the TUI's seam over the daemon's control socket (C3.1). The
+	// TUI is a pure client of the kernel: it owns the VIEW (a read-only cache
+	// of the fleet), not the TRUTH. Every fleet mutation goes through this
+	// seam; the daemon's kernel is the single writer. Nil defaults to
+	// newSocketFleetClient() at first use so test homes can inject a fake.
+	fleet fleetClient
 }
 
 func newHome(ctx context.Context, program string, autoYes bool) *home {
@@ -205,26 +212,18 @@ func newHome(ctx context.Context, program string, autoYes bool) *home {
 	}
 	h.list = ui.NewList(&h.spinner, autoYes)
 
-	// Load saved instances
-	instances, err := storage.LoadInstances()
-	if err != nil {
-		fmt.Printf("Failed to load instances: %v\n", err)
+	// The TUI is a pure client of the kernel (C3.2): the fleet is loaded
+	// from the daemon's control socket, not from session.Storage. The kernel
+	// is the single writer; the TUI keeps a read-only cache reconciled on
+	// the poll cadence (see fleetTickMsg) and after every mutation ack.
+	//
+	// Failure to read the fleet at boot is fatal: the TUI is a viewer of the
+	// kernel, no kernel, no viewer (decision D2). main.go's
+	// ensureDaemonRunning has already brought the daemon up; a failure here
+	// means the socket is unreachable despite that, which is a hard error.
+	if err := h.refreshFleetFromKernel(); err != nil {
+		fmt.Printf("Failed to read fleet from daemon: %v\n", err)
 		os.Exit(1)
-	}
-
-	// Pin orchestrators to the front of the list (stable partition). The list's
-	// selection starts at index 0 on cs2 open, so the orchestrator ("instance 0")
-	// must be first to be selected and accessible by default. Relative order
-	// among orchestrators and among workers is preserved.
-	instances = pinOrchestratorsFirst(instances)
-
-	// Add loaded instances to the list
-	for _, instance := range instances {
-		// Call the finalizer immediately.
-		h.list.AddInstance(instance)()
-		// AutoYes is per-instance, restored from storage. Do not force the
-		// global --auto-yes flag onto loaded instances: a remote instance that
-		// was created with AutoYes off stays off.
 	}
 
 	return h
@@ -278,6 +277,14 @@ func (m *home) Init() tea.Cmd {
 			return previewTickMsg{}
 		},
 		tickUpdateMetadataCmd(m.snapshotActiveInstances(), m.list.GetSelectedInstance()),
+		// Fleet refresh cadence (C3.2): the TUI is a client of the kernel and
+		// reconciles its read-only cache against list_instances_full on a steady
+		// tick so external mutations become visible without per-keystroke
+		// round-trips.
+		func() tea.Msg {
+			time.Sleep(fleetTickInterval)
+			return fleetTickMsg{}
+		},
 	)
 }
 
@@ -297,6 +304,27 @@ func (m *home) Update(msg tea.Msg) (tea.Model, tea.Cmd) {
 	case keyupMsg:
 		m.menu.ClearKeydown()
 		return m, nil
+	case fleetTickMsg:
+		// Refresh the read-only fleet cache from the kernel. Errors are
+		// surfaced non-fatally: a transient socket error must not kill the TUI
+		// (the kernel is the authority; the view just stays briefly stale and
+		// retries on the next tick).
+		if err := m.refreshFleetFromKernel(); err != nil {
+			return m, tea.Batch(
+				m.handleError(err),
+				func() tea.Msg {
+					time.Sleep(fleetTickInterval)
+					return fleetTickMsg{}
+				},
+			)
+		}
+		return m, tea.Batch(
+			m.instanceChanged(),
+			func() tea.Msg {
+				time.Sleep(fleetTickInterval)
+				return fleetTickMsg{}
+			},
+		)
 	case instanceStartDoneMsg:
 		m.instanceStarting = false
 		inst := msg.instance

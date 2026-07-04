@@ -523,3 +523,56 @@ func (l *List) MoveDown() bool {
 func (l *List) GetInstances() []*session.Instance {
 	return l.items
 }
+
+// SetInstances replaces the list's items wholesale, re-derives the repo
+// counts, and preserves the selection by ID. It is the TUI's read-only
+// reconcile path (C3.2): the TUI keeps a read-only cache of the fleet
+// refreshed from the kernel's list_instances_full snapshot, and this method
+// applies a new snapshot to the view without losing the user's selection.
+//
+// The caller owns the reconstruction of the *session.Instance view handles
+// (via session.FromInstanceData); the list only owns the view ordering and
+// per-instance bookkeeping (repo counts, selection).
+func (l *List) SetInstances(items []*session.Instance) {
+	// Remember the selected instance's ID so we can restore it after replace.
+	var selectedID string
+	if len(l.items) > 0 && l.selectedIdx < len(l.items) {
+		selectedID = l.items[l.selectedIdx].GetID()
+	}
+
+	l.items = items
+
+	// Re-derive repo counts from the new set.
+	l.repos = make(map[string]int, len(items))
+	for _, inst := range items {
+		if inst.Started() {
+			if repoName, err := inst.RepoName(); err == nil && repoName != "" {
+				l.repos[repoName]++
+			}
+		}
+	}
+
+	// Restore selection by ID; fall back to 0 (or no selection) if absent.
+	l.selectedIdx = 0
+	if selectedID != "" {
+		for i, inst := range items {
+			if inst.GetID() == selectedID {
+				l.selectedIdx = i
+				break
+			}
+		}
+	}
+	if len(items) == 0 {
+		l.selectedIdx = 0
+	}
+}
+
+// FindInstance returns the instance with the given ID, or nil if absent.
+func (l *List) FindInstance(id string) *session.Instance {
+	for _, inst := range l.items {
+		if inst.GetID() == id {
+			return inst
+		}
+	}
+	return nil
+}
