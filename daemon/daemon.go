@@ -59,6 +59,12 @@ func RunDaemon(cfg *config.Config) error {
 	protected, _ := protectedStore.Flat()
 	k := kernel.New(storage, kernel.WithSpawner(kernelSpawner{}), kernel.WithMerger(realMerger{}), kernel.WithProtectedBranches(protected))
 
+	// C4.4: after loading the fleet, demote any instance whose tmux session
+	// is gone (e.g. a daemon restart following a tmux crash) from Running to
+	// Dead, so the user sees a dead instance instead of a ghost "running".
+	// Only a definitive "session absent" from tmux demotes — never a timeout.
+	k.ReconcileLiveness()
+
 	// NOTE: the daemon no longer auto-spawns a global orchestrator. The old
 	// always-on "instance 0" bootstrap (orchestrator.Ensure at startup + a
 	// periodic EnsureLive probe) never worked reliably and is gone. An
