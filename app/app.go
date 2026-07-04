@@ -73,8 +73,6 @@ type home struct {
 	program string
 	autoYes bool
 
-	// storage is the interface for saving/loading data to/from the app's state
-	storage *session.Storage
 	// appConfig stores persistent application configuration
 	appConfig *config.Config
 	// appState stores persistent application state like seen help screens
@@ -94,10 +92,15 @@ type home struct {
 	// keySent is used to manage underlining menu items
 	keySent bool
 
-	// instanceStarting is true while a background instance start is in progress.
-	// Prevents double-submission and guards against interacting with a not-yet-started instance.
+	// instanceStarting is true while a background spawn syscall is in
+	// flight (C3.3). Prevents double-submission of the O / n / Shift+N keys.
+	// The draft instance is held in the list (Loading) and removed on the
+	// spawn ack.
 	instanceStarting bool
-	// startingInstance holds a reference to the instance being started in the background.
+	// startingInstance is retained for back-compat with callers that used to
+	// pass it to runInstanceStartCmd; it is now unused (spawn goes through the
+	// kernel) but kept here so a bare &home{} test construct that sets it
+	// still compiles. Phase 4 removes it.
 	startingInstance *session.Instance
 
 	// -- UI Components --
@@ -179,13 +182,6 @@ func newHome(ctx context.Context, program string, autoYes bool) *home {
 	// Load application state
 	appState := config.LoadState()
 
-	// Initialize storage
-	storage, err := session.NewStorage(appState)
-	if err != nil {
-		fmt.Printf("Failed to initialize storage: %v\n", err)
-		os.Exit(1)
-	}
-
 	// The registry is best-effort: if it cannot be opened, the selector still
 	// works with a free path, so a nil registry is tolerated at the call sites.
 	repoRegistry, _ := repo.NewRegistry()
@@ -199,7 +195,6 @@ func newHome(ctx context.Context, program string, autoYes bool) *home {
 		menu:         ui.NewMenu(),
 		tabbedWindow: ui.NewTabbedWindow(ui.NewPreviewPane(), ui.NewDiffPane(), ui.NewTerminalPane()),
 		errBox:       ui.NewErrBox(),
-		storage:      storage,
 		appConfig:    appConfig,
 		repoRegistry: repoRegistry,
 		hostRegistry: hostRegistry,
@@ -325,32 +320,6 @@ func (m *home) Update(msg tea.Msg) (tea.Model, tea.Cmd) {
 				return fleetTickMsg{}
 			},
 		)
-	case instanceStartDoneMsg:
-		m.instanceStarting = false
-		inst := msg.instance
-		m.startingInstance = nil
-
-		if msg.err != nil {
-			// Start failed — remove the instance from the list and show the error.
-			m.list.Kill()
-			return m, tea.Batch(tea.WindowSize(), m.instanceChanged(), m.handleError(msg.err))
-		}
-
-		// Save after successful start.
-		if err := m.storage.SaveInstances(m.list.GetInstances()); err != nil {
-			return m, m.handleError(err)
-		}
-
-		if m.promptAfterName {
-			m.state = statePrompt
-			m.menu.SetState(ui.StatePrompt)
-			m.textInputOverlay = overlay.NewTextInputOverlay("Enter prompt", "")
-			m.promptAfterName = false
-		} else {
-			m.showHelpScreen(helpStart(inst), nil)
-		}
-
-		return m, tea.Batch(tea.WindowSize(), m.instanceChanged())
 	case metadataUpdateDoneMsg:
 		for _, r := range msg.results {
 			// Skip instances that were paused while metadata was being computed
@@ -474,40 +443,6 @@ func (m *home) Update(msg tea.Msg) (tea.Model, tea.Cmd) {
 		// own ID, so we find it by the title we requested).
 		m.selectInstanceByTitle(msg.title)
 		return m, tea.Batch(tea.WindowSize(), m.instanceChanged(), refresh)
-	case instanceStartedMsg:
-		// Select the instance that just started (or failed)
-		m.list.SelectInstance(msg.instance)
-
-		if msg.err != nil {
-			m.list.Kill()
-			return m, tea.Batch(m.handleError(msg.err), m.instanceChanged())
-		}
-
-		// The kernel persists now (C3.2); the TUI is a pure client. The new
-		// instance is picked up by the next fleet tick; force a refresh here so
-		// the view reflects the started instance immediately.
-		// New instances inherit AutoYes from their host's policy: local follows
-		// the global --auto-yes flag (today's behaviour); remote defaults to off.
-		// The user can toggle it per-instance afterwards.
-		msg.instance.AutoYes = msg.instance.Host().AutoYesDefault()
-
-		if msg.promptAfterName {
-			m.state = statePrompt
-			m.menu.SetState(ui.StatePrompt)
-			m.textInputOverlay = m.newPromptOverlay(msg.instance.Path)
-		} else {
-			// If instance has a prompt (set from Shift+N flow), send it now
-			if msg.instance.Prompt != "" {
-				if err := msg.instance.SendPrompt(msg.instance.Prompt); err != nil {
-					log.ErrorLog.Printf("failed to send prompt: %v", err)
-				}
-				msg.instance.Prompt = ""
-			}
-			m.menu.SetState(ui.StateDefault)
-			m.showHelpScreen(helpStart(msg.instance), nil)
-		}
-
-		return m, tea.Batch(tea.WindowSize(), m.instanceChanged())
 	case spinner.TickMsg:
 		var cmd tea.Cmd
 		m.spinner, cmd = m.spinner.Update(msg)
@@ -517,9 +452,8 @@ func (m *home) Update(msg tea.Msg) (tea.Model, tea.Cmd) {
 }
 
 func (m *home) handleQuit() (tea.Model, tea.Cmd) {
-	if err := m.storage.SaveInstances(m.list.GetInstances()); err != nil {
-		return m, m.handleError(err)
-	}
+	// The kernel is the single writer (C3.5): it persists every mutation via
+	// autosave, so the TUI has nothing to flush on quit.
 	return m, tea.Quit
 }
 
@@ -959,18 +893,15 @@ func (m *home) handleKeyPress(msg tea.KeyMsg) (mod tea.Model, cmd tea.Cmd) {
 		})
 		return m, tea.Batch(m.instanceChanged(), m.refreshFleetAfterMutation())
 	case keys.KeyMoveUp:
+		// Reordering is view-only now (C3.5): the kernel's ordering is insertion
+		// order and is not propagated back. Persisting a custom order across
+		// restarts is a Phase 4 kernel-reconciliation concern.
 		if m.list.MoveUp() {
-			if err := m.storage.SaveInstances(m.list.GetInstances()); err != nil {
-				return m, m.handleError(err)
-			}
 			return m, m.instanceChanged()
 		}
 		return m, nil
 	case keys.KeyMoveDown:
 		if m.list.MoveDown() {
-			if err := m.storage.SaveInstances(m.list.GetInstances()); err != nil {
-				return m, m.handleError(err)
-			}
 			return m, m.instanceChanged()
 		}
 		return m, nil
@@ -979,13 +910,11 @@ func (m *home) handleKeyPress(msg tea.KeyMsg) (mod tea.Model, cmd tea.Cmd) {
 		if selected == nil {
 			return m, nil
 		}
-		// Toggle per-instance. The user can flip AutoYes on a remote host,
-		// but should be aware it auto-approves agent actions on a distant
-		// machine. The new value is persisted.
+		// Toggle per-instance. NOTE (C3.5): there is no set-autoyes syscall yet,
+		// so this toggle is view-only — the kernel's stored AutoYes overwrites
+		// it on the next fleet refresh via reconcileFleet. Phase 4 adds a
+		// set_autoyes syscall to make this authoritative.
 		selected.SetAutoYes(!selected.AutoYes)
-		if err := m.storage.SaveInstances(m.list.GetInstances()); err != nil {
-			return m, m.handleError(err)
-		}
 		return m, m.instanceChanged()
 	case keys.KeyResume:
 		selected := m.list.GetSelectedInstance()
@@ -1081,12 +1010,6 @@ type previewTickMsg struct{}
 
 type instanceChangedMsg struct{}
 
-type instanceStartedMsg struct {
-	instance        *session.Instance
-	err             error
-	promptAfterName bool
-	selectedBranch  string
-}
 
 // branchSearchDebounceMsg fires after the debounce interval to trigger a search.
 type branchSearchDebounceMsg struct {
@@ -1156,21 +1079,6 @@ type instanceMetaResult struct {
 // metadataUpdateDoneMsg is sent when the background metadata update completes.
 type metadataUpdateDoneMsg struct {
 	results []instanceMetaResult
-}
-
-// instanceStartDoneMsg is sent when the background instance start completes.
-type instanceStartDoneMsg struct {
-	instance *session.Instance
-	err      error
-}
-
-// runInstanceStartCmd returns a Cmd that performs the expensive instance.Start(true)
-// in a background goroutine so the main event loop stays responsive.
-func runInstanceStartCmd(instance *session.Instance) tea.Cmd {
-	return func() tea.Msg {
-		err := instance.Start(true)
-		return instanceStartDoneMsg{instance: instance, err: err}
-	}
 }
 
 // snapshotActiveInstances returns the currently active (started, not paused)
