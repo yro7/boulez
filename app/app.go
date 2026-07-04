@@ -861,13 +861,17 @@ func (m *home) handleKeyPress(msg tea.KeyMsg) (mod tea.Model, cmd tea.Cmd) {
 			// Clean up terminal session for this instance
 			m.tabbedWindow.CleanupTerminalForInstance(selected.Title)
 
-			// Delete from storage first
-			if err := m.storage.DeleteInstance(selected.Title); err != nil {
+			// Route kill through the kernel (C3.4): the kernel is the single
+			// writer, so the kill (and the remove from the kernel's fleet) takes
+			// effect on the authoritative copy. The TUI's view is reconciled by
+			// the post-mutation fleet refresh, which surfaces the removal.
+			if err := m.resolveFleet().Kill(selected.GetID()); err != nil {
 				return err
 			}
-
-			// Then kill the instance
-			m.list.Kill()
+			// Re-read the fleet so the killed instance drops from the view.
+			// Best-effort: a refresh failure only means the view is briefly
+			// stale (the next fleet tick reconciles).
+			_ = m.refreshFleetFromKernel()
 			return instanceChangedMsg{}
 		}
 
@@ -942,13 +946,18 @@ func (m *home) handleKeyPress(msg tea.KeyMsg) (mod tea.Model, cmd tea.Cmd) {
 
 		// Show help screen before pausing
 		m.showHelpScreen(helpTypeInstanceCheckout{}, func() {
-			if err := selected.Pause(); err != nil {
+			// Route pause through the kernel (C3.4): the kernel owns the tmux
+			// session + worktree lifecycle, so the pause (and the persistence)
+			// takes effect on the authoritative copy. The TUI's view is
+			// reconciled by the post-mutation fleet refresh issued below.
+			if err := m.resolveFleet().Pause(selected.GetID()); err != nil {
 				m.handleError(err)
 			}
 			m.tabbedWindow.CleanupTerminalForInstance(selected.Title)
 			m.instanceChanged()
+			_ = m.refreshFleetFromKernel()
 		})
-		return m, nil
+		return m, tea.Batch(m.instanceChanged(), m.refreshFleetAfterMutation())
 	case keys.KeyMoveUp:
 		if m.list.MoveUp() {
 			if err := m.storage.SaveInstances(m.list.GetInstances()); err != nil {
@@ -983,10 +992,13 @@ func (m *home) handleKeyPress(msg tea.KeyMsg) (mod tea.Model, cmd tea.Cmd) {
 		if selected == nil || selected.Status == session.Loading {
 			return m, nil
 		}
-		if err := selected.Resume(); err != nil {
+		// Route resume through the kernel (C3.4): the kernel owns the tmux
+		// session lifecycle, so the resume takes effect on the authoritative
+		// copy. The TUI's view is reconciled by the post-mutation fleet refresh.
+		if err := m.resolveFleet().Resume(selected.GetID()); err != nil {
 			return m, m.handleError(err)
 		}
-		return m, tea.WindowSize()
+		return m, tea.Batch(tea.WindowSize(), m.refreshFleetAfterMutation())
 	case keys.KeyEnter:
 		if m.list.NumInstances() == 0 {
 			return m, nil
