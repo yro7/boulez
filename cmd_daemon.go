@@ -47,6 +47,10 @@ Subcommands:
   unprotect <repo> <branch>   Remove a protected-branch declaration.
   list-protected               List declared protected branches per repo.
 
+  install                      Install the daemon as an OS service
+                               (launchd on macOS, systemd on Linux).
+  uninstall                    Stop and remove the OS service.
+
 The daemon is normally started automatically by the TUI (cs2 / cs2 tui) and
 by cs2 ctl when the socket is absent. These subcommands exist for explicit
 control and for service installation.`,
@@ -59,6 +63,8 @@ control and for service installation.`,
 	cmd.AddCommand(newDaemonProtectCmd())
 	cmd.AddCommand(newDaemonUnprotectCmd())
 	cmd.AddCommand(newDaemonListProtectedCmd())
+	cmd.AddCommand(newDaemonInstallCmd())
+	cmd.AddCommand(newDaemonUninstallCmd())
 	return cmd
 }
 
@@ -383,6 +389,73 @@ func newDaemonListProtectedCmd() *cobra.Command {
 				}
 			}
 			fmt.Printf("store: %s\n", store.Path())
+			return nil
+		},
+	}
+}
+
+// newDaemonInstallCmd installs the daemon as an OS service (C2.3/C2.4): a
+// launchd LaunchAgent on macOS, a systemd user unit on Linux. The service runs
+// `cs2 daemon run` and is kept alive (RunAtLoad+KeepAlive / Restart=on-failure)
+// so the kernel comes back after a reboot or a crash. After install, the
+// daemon is the persistent, repo-free authority (Phase 2 goal).
+//
+// C2.5 dev fallback: on platforms without launchd/systemd the command errors
+// out and points the user at `nohup cs2 daemon run &`. No custom supervisor.
+func newDaemonInstallCmd() *cobra.Command {
+	return &cobra.Command{
+		Use:   "install",
+		Short: "Install the daemon as an OS service (launchd / systemd)",
+		Long: `Installs the daemon as an OS service so it starts at login and survives
+reboots/crashes. On macOS this writes a LaunchAgent (RunAtLoad + KeepAlive);
+on Linux a systemd user unit (Restart=on-failure). The service runs
+` + "`cs2 daemon run`" + `.
+
+After install, the daemon is the persistent, repo-free authority: the TUI
+and ` + "`cs2 ctl`" + ` connect to it over the control socket on every launch.
+
+If neither launchd nor systemd is available, this command exits non-zero
+and points you at the dev fallback: ` + "`nohup cs2 daemon run &`" + `.`,
+		RunE: func(cmd *cobra.Command, args []string) error {
+			log.Initialize(false)
+			log.SetPrintPathOnClose(false)
+			defer log.Close()
+
+			if err := daemon.Install(); err != nil {
+				if _, ok := err.(daemon.ErrServiceUnsupported); ok {
+					fmt.Fprintln(os.Stderr, "cs2 daemon install: no launchd/systemd on this platform.")
+					fmt.Fprintln(os.Stderr, "Dev fallback: run `nohup cs2 daemon run >/dev/null 2>&1 &` to keep the daemon up without a service manager.")
+					return err
+				}
+				return fmt.Errorf("install daemon service: %w", err)
+			}
+			fmt.Printf("daemon installed via %s (runs `cs2 daemon run`, starts at login)\n", daemon.ServiceManager())
+			fmt.Println("manage it with: `cs2 daemon start|stop|status|log`")
+			fmt.Println("verify with:     `cs2 ctl list_instances`")
+			return nil
+		},
+	}
+}
+
+// newDaemonUninstallCmd stops and removes the OS service (C2.3/C2.4). It is
+// idempotent: a missing service is not an error.
+func newDaemonUninstallCmd() *cobra.Command {
+	return &cobra.Command{
+		Use:   "uninstall",
+		Short: "Stop and remove the daemon OS service",
+		RunE: func(cmd *cobra.Command, args []string) error {
+			log.Initialize(false)
+			log.SetPrintPathOnClose(false)
+			defer log.Close()
+
+			if err := daemon.Uninstall(); err != nil {
+				if _, ok := err.(daemon.ErrServiceUnsupported); ok {
+					fmt.Println("nothing to uninstall: no launchd/systemd service on this platform")
+					return nil
+				}
+				return fmt.Errorf("uninstall daemon service: %w", err)
+			}
+			fmt.Println("daemon service uninstalled")
 			return nil
 		},
 	}
