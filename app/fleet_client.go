@@ -3,9 +3,12 @@ package app
 import (
 	"encoding/json"
 	"fmt"
+	"time"
 
 	"claude-squad/kernel"
+	"claude-squad/log"
 	"claude-squad/session"
+	tea "github.com/charmbracelet/bubbletea"
 )
 
 // fleetClient is the TUI's seam over the daemon's control socket. The TUI is
@@ -144,3 +147,98 @@ func (socketFleetClient) Kill(id string) error {
 
 // Compile-time check that socketFleetClient satisfies the seam.
 var _ fleetClient = socketFleetClient{}
+
+// resolveFleet returns the home's fleet client, defaulting to the socket-backed
+// production client when nil (so a bare &home{} test construct still works).
+// Mirrors the landCaller lazy-default pattern.
+func (m *home) resolveFleet() fleetClient {
+	if m.fleet == nil {
+		m.fleet = newSocketFleetClient()
+	}
+	return m.fleet
+}
+
+// fleetTickMsg triggers a fleet refresh from the kernel on a steady cadence
+// (C3.2). The TUI polls list_instances_full at human cadence so external
+// mutations (cs2 ctl, another TUI, an orchestrator) become visible without a
+// per-keystroke round-trip. Mutations the TUI itself issues refresh the fleet
+// immediately on their ack (see refreshFleetAfterMutation).
+type fleetTickMsg struct{}
+
+const fleetTickInterval = 1 * time.Second
+
+// refreshFleetFromKernel fetches the fleet snapshot from the kernel and
+// reconciles the TUI's read-only cache against it (C3.2). This is the TUI's
+// only read path for fleet membership: the kernel is the single writer, the
+// TUI owns the view. Existing cached instances are kept by ID (so the
+// background metadata tick's pointers stay valid and tmux bindings are not
+// needlessly re-Restored); only their lightweight state (Status, AutoYes) is
+// updated in place. New instances are reconstructed via session.FromInstanceData
+// so the TUI gets a worktree-backed view handle for the preview/diff/terminal
+// panes and attach. Instances absent from the snapshot are dropped.
+//
+// Orchestrators are pinned to the front of the view (a view-only concern;
+// the kernel's own ordering is insertion order).
+func (m *home) refreshFleetFromKernel() error {
+	data, err := m.resolveFleet().ListInstances()
+	if err != nil {
+		return err
+	}
+	m.reconcileFleet(data)
+	return nil
+}
+
+// refreshFleetAfterMutation refreshes the fleet after the TUI issues a
+// mutation syscall (spawn/pause/resume/kill). Errors are surfaced via the
+// error box rather than fatal — the mutation itself already succeeded; a
+// refresh failure only means the view is briefly stale (the next fleet tick
+// reconciles). Returns a tea.Cmd so callers can batch it.
+func (m *home) refreshFleetAfterMutation() tea.Cmd {
+	if err := m.refreshFleetFromKernel(); err != nil {
+		return m.handleError(err)
+	}
+	return m.instanceChanged()
+}
+
+// reconcileFleet applies a kernel fleet snapshot to the TUI's view. See
+// refreshFleetFromKernel for the contract.
+func (m *home) reconcileFleet(data []session.InstanceData) {
+	existing := m.list.GetInstances()
+	byID := make(map[string]*session.Instance, len(existing))
+	for _, inst := range existing {
+		byID[inst.GetID()] = inst
+	}
+
+	seen := make(map[string]struct{}, len(data))
+	out := make([]*session.Instance, 0, len(data))
+	for _, d := range data {
+		seen[d.ID] = struct{}{}
+		if inst, ok := byID[d.ID]; ok {
+			// Reuse the existing view handle: keep its tmux/worktree binding,
+			// only refresh the lightweight state the kernel owns.
+			inst.Status = d.Status
+			inst.AutoYes = d.AutoYes
+			out = append(out, inst)
+			continue
+		}
+		// New instance: reconstruct a read-only view handle. FromInstanceData
+		// restores the tmux binding for live instances (so preview/attach
+		// work) and sets up the worktree path for the terminal/diff panes. A
+		// reconstruction failure (e.g. a transiently-unreachable tmux session,
+		// Bug B territory) is logged and skipped so one bad instance does not
+		// blank the whole view.
+		inst, err := session.FromInstanceData(d)
+		if err != nil {
+			log.ErrorLog.Printf("fleet: could not reconstruct instance %s (%s): %v", d.ID, d.Title, err)
+			continue
+		}
+		out = append(out, inst)
+	}
+
+	// Pin orchestrators to the front of the view (stable partition). This is a
+	// view-only concern: the kernel's ordering is insertion order, but the
+	// TUI's default selection is index 0, so the orchestrator must be first.
+	out = pinOrchestratorsFirst(out)
+
+	m.list.SetInstances(out)
+}
