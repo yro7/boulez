@@ -436,3 +436,39 @@ func (r Response) resultID() string {
 	_ = json.Unmarshal(r.Result, &got)
 	return got.ID
 }
+
+// TestCallSession_AbortsOnAuthError_NoSpawnSideEffect is the C4.2 (Bug C)
+// regression: `cs2 ctl as <unknown-id> spawn_worker` must surface
+// UNKNOWN_INSTANCE and must NOT issue the spawn. Before the fix,
+// CallSession sent the whole batch and rawCtlSession only showed the LAST
+// response — so the auth error was swallowed and spawn_worker ran as an
+// unauthenticated top-level caller, creating a worker despite the failed
+// authentication.
+//
+// CallSession now aborts the sequence after an error response, so the
+// spawn_worker request is never written to the socket. This test pins that
+// at the transport layer (the cmd layer is a thin wrapper over CallSession).
+func TestCallSession_AbortsOnAuthError_NoSpawnSideEffect(t *testing.T) {
+	spawner := &fakeSpawner{}
+	socketPath, stop := startTestKernel(t, spawner, &fakeMerger{})
+	defer stop()
+
+	authParams, _ := json.Marshal(map[string]string{"instance_id": "no-such-instance"})
+	spawnParams, _ := json.Marshal(map[string]string{"repo": "/r", "program": "bash"})
+
+	resps, err := CallSession(socketPath, []Request{
+		{Method: "authenticate", Params: authParams},
+		{Method: "spawn_worker", Params: spawnParams},
+	})
+	require.NoError(t, err)
+
+	// Only the authenticate response was collected — the spawn_worker request
+	// was never sent because CallSession aborted after the auth error.
+	require.Len(t, resps, 1, "spawn_worker must not be sent after a failed authenticate")
+	require.NotNil(t, resps[0].Error, "authenticate against a bogus ID must error")
+	assert.Equal(t, CodeUnknownInstance, resps[0].Error.Code)
+
+	// No spawn side-effect: the spawner was never invoked for the would-be
+	// worker. (No top-level spawn happened either.)
+	assert.Empty(t, spawner.spawned, "no instance created after a failed authenticate")
+}
