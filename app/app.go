@@ -451,6 +451,29 @@ func (m *home) Update(msg tea.Msg) (tea.Model, tea.Cmd) {
 	case instanceChangedMsg:
 		// Handle instance changed after confirmation action
 		return m, m.instanceChanged()
+	case spawnDoneMsg:
+		// C3.3: spawn routed through the kernel. On success the kernel created
+		// and started the instance; the TUI re-reads the fleet (C3.2) to pick it
+		// up. The draft instance held in the list during name entry is removed
+		// because the kernel owns the real instance now (with its own ID).
+		if msg.draftID != "" {
+			m.list.RemoveByID(msg.draftID)
+		}
+		if msg.err != nil {
+			// No draft to clean beyond RemoveByID; the failed spawn just surfaces
+			// the error. The view is already consistent (no kernel instance).
+			return m, tea.Batch(m.handleError(msg.err), m.instanceChanged())
+		}
+		// Force a refresh so the new instance appears immediately, then run the
+		// orchestrator post-spawn injection (if this was an O-key spawn).
+		refresh := m.refreshFleetAfterMutation()
+		if msg.orchestrator {
+			return m, tea.Batch(refresh, m.injectOrchestratorContext(msg.id, msg.title))
+		}
+		// Select the freshly-spawned instance by title (the kernel allocated its
+		// own ID, so we find it by the title we requested).
+		m.selectInstanceByTitle(msg.title)
+		return m, tea.Batch(tea.WindowSize(), m.instanceChanged(), refresh)
 	case instanceStartedMsg:
 		// Select the instance that just started (or failed)
 		m.list.SelectInstance(msg.instance)
@@ -460,10 +483,9 @@ func (m *home) Update(msg tea.Msg) (tea.Model, tea.Cmd) {
 			return m, tea.Batch(m.handleError(msg.err), m.instanceChanged())
 		}
 
-		// Save after successful start
-		if err := m.storage.SaveInstances(m.list.GetInstances()); err != nil {
-			return m, m.handleError(err)
-		}
+		// The kernel persists now (C3.2); the TUI is a pure client. The new
+		// instance is picked up by the next fleet tick; force a refresh here so
+		// the view reflects the started instance immediately.
 		// New instances inherit AutoYes from their host's policy: local follows
 		// the global --auto-yes flag (today's behaviour); remote defaults to off.
 		// The user can toggle it per-instance afterwards.
@@ -600,17 +622,21 @@ func (m *home) handleKeyPress(msg tea.KeyMsg) (mod tea.Model, cmd tea.Cmd) {
 			m.state = stateDefault
 			m.menu.SetState(ui.StateDefault)
 
-			// Return a tea.Cmd that runs instance.Start in the background
-			startCmd := func() tea.Msg {
-				err := instance.Start(true)
-				return instanceStartedMsg{
-					instance:        instance,
-					err:             err,
-					promptAfterName: false,
-				}
+			// Route spawn through the kernel (C3.3): the TUI keeps the draft
+			// (Loading) in the list while the syscall is in flight; on ack the
+			// draft is removed and the kernel's instance surfaces via the fleet
+			// refresh.
+			opts := SpawnOptions{
+				Repo:    instance.Path,
+				Title:   instance.Title,
+				Program: instance.Program,
+				Branch:  instance.SelectedBranch(),
 			}
-
-			return m, tea.Batch(tea.WindowSize(), m.instanceChanged(), startCmd)
+			if m.pendingHost != nil {
+				opts.Host = m.pendingHost
+				m.pendingHost = nil
+			}
+			return m, tea.Batch(tea.WindowSize(), m.instanceChanged(), m.runSpawnCmd(opts, instance.GetID(), false))
 		case tea.KeyRunes:
 			if runewidth.StringWidth(instance.Title) >= 32 {
 				return m, m.handleError(fmt.Errorf("title cannot be longer than 32 characters"))
@@ -679,7 +705,9 @@ func (m *home) handleKeyPress(msg tea.KeyMsg) (mod tea.Model, cmd tea.Cmd) {
 				selectedProgram := m.textInputOverlay.GetSelectedProgram()
 
 				if !selected.Started() {
-					// Shift+N flow: instance not started yet — set branch, start, then send prompt
+					// Shift+N flow: instance not started yet — hand the prompt+
+					// branch off to the kernel spawn syscall (C3.3). The draft
+					// stays Loading while the kernel creates the real instance.
 					if selectedBranch != "" {
 						selected.SetSelectedBranch(selectedBranch)
 					}
@@ -688,24 +716,21 @@ func (m *home) handleKeyPress(msg tea.KeyMsg) (mod tea.Model, cmd tea.Cmd) {
 					}
 					selected.Prompt = prompt
 
-					// Finalize into list and start
+					// Finalize into list and spawn via the kernel.
 					selected.SetStatus(session.Loading)
 					m.newInstanceFinalizer()
 					m.textInputOverlay = nil
 					m.state = stateDefault
 					m.menu.SetState(ui.StateDefault)
 
-					startCmd := func() tea.Msg {
-						err := selected.Start(true)
-						return instanceStartedMsg{
-							instance:        selected,
-							err:             err,
-							promptAfterName: false,
-							selectedBranch:  selectedBranch,
-						}
+					opts := SpawnOptions{
+						Repo:    selected.Path,
+						Title:   selected.Title,
+						Program: selected.Program,
+						Branch:  selected.SelectedBranch(),
+						Prompt:  prompt,
 					}
-
-					return m, tea.Batch(tea.WindowSize(), m.instanceChanged(), startCmd)
+					return m, tea.Batch(tea.WindowSize(), m.instanceChanged(), m.runSpawnCmd(opts, selected.GetID(), false))
 				}
 
 				// Regular flow: instance already running, just send prompt
@@ -1537,25 +1562,28 @@ func (m *home) startNewInstance(repoPath string, promptFlow bool) tea.Cmd {
 	return nil
 }
 
-// spawnOrchestrator handles the O key: it creates and starts a new orchestrator
-// instance on demand. This is the manual replacement for the old always-on
-// "instance 0" bootstrap — nothing is auto-spawned at startup; the user spawns
-// one when they want one.
+// spawnOrchestrator handles the O key: it spawns an orchestrator instance
+// through the kernel's spawn_worker syscall (C3.3). This is the manual
+// replacement for the old always-on "instance 0" bootstrap — nothing is
+// auto-spawned at startup; the user spawns one when they want one.
 //
 // An orchestrator is an ordinary fleet instance with KindOrchestrator: a
 // headless worktree (no repo, no branch) whose control dir holds
-// ORCHESTRATOR.md (the agent's tool documentation). After Start binds the
-// tmux session, we write that context file and inject a one-time prompt
-// pointing the agent at it (plus a fleet snapshot). Each O press spawns a
-// fresh orchestrator; the user kills one with D like any other instance.
+// ORCHESTRATOR.md (the agent's tool documentation). The kernel creates and
+// starts the instance; on ack the TUI writes ORCHESTRATOR.md into the control
+// dir and injects a one-time prompt pointing the agent at it (plus a fleet
+// snapshot). Each O press spawns a fresh orchestrator; the user kills one
+// with D like any other instance.
 //
-// The instance is created directly through session.NewInstance (not via the
-// kernel socket), so the TUI owns it like any worker it spawns — same
-// persistence path, same list, same save semantics. No double-writer split
-// between TUI and kernel for this instance.
+// The instance is spawned via the kernel socket (not session.NewInstance
+// directly), so the kernel is the single writer. The TUI keeps a draft in
+// the list (showing Loading) while the syscall is in flight.
 func (m *home) spawnOrchestrator() tea.Cmd {
 	title := deriveOrchestratorTitle()
-	inst, err := session.NewInstance(session.InstanceOptions{
+	// Draft instance for the view (Loading) while the kernel spawns. Its ID is
+	// local-only; the kernel allocates the real ID. On the spawn ack the draft
+	// is removed and the kernel's instance surfaces via the fleet refresh.
+	draft, err := session.NewInstance(session.InstanceOptions{
 		Title:   title,
 		Program: m.program,
 		Kind:    session.KindOrchestrator,
@@ -1563,37 +1591,56 @@ func (m *home) spawnOrchestrator() tea.Cmd {
 	if err != nil {
 		return m.handleError(err)
 	}
-
-	inst.SetStatus(session.Loading)
-	finalize := m.list.AddInstance(inst)
+	draft.SetStatus(session.Loading)
+	finalize := m.list.AddInstance(draft)
 	m.list.SetSelectedInstance(m.list.NumInstances() - 1)
 	finalize() // orchestrator has no repo, so the repo-name registration is a no-op
 
-	if err := m.storage.SaveInstances(m.list.GetInstances()); err != nil {
-		return m.handleError(err)
-	}
+	return tea.Batch(
+		tea.WindowSize(),
+		m.instanceChanged(),
+		m.runSpawnCmd(SpawnOptions{
+			Title:   title,
+			Program: m.program,
+			Kind:    session.KindOrchestrator,
+		}, draft.GetID(), true /* orchestrator post-spawn injection */),
+	)
+}
 
-	startCmd := func() tea.Msg {
-		if err := inst.Start(true); err != nil {
-			return instanceStartedMsg{instance: inst, err: err}
+// injectOrchestratorContext writes ORCHESTRATOR.md into the orchestrator's
+// control dir and sends the one-time injection prompt. Run on the spawn ack
+// (the instance is now started by the kernel). Best-effort: a failure here
+// surfaces as an error but does not undo the spawn.
+func (m *home) injectOrchestratorContext(id, title string) tea.Cmd {
+	return func() tea.Msg {
+		if err := orchestrator.WriteContextFile(id); err != nil {
+			return fmt.Errorf("write orchestrator context: %w", err)
 		}
-		inst.SetAutoYes(inst.Host().AutoYesDefault())
-
-		// Write ORCHESTRATOR.md into the control dir (the agent's cwd) and
-		// inject a one-time prompt pointing the agent at it. Best-effort:
-		// the instance is already running, so a failure here surfaces as an
-		// error but does not undo the spawn.
-		if werr := orchestrator.WriteContextFile(inst.ID); werr != nil {
-			return instanceStartedMsg{instance: inst, err: fmt.Errorf("write orchestrator context: %w", werr)}
+		// Find the live instance (now in the TUI's reconciled cache) to send the
+		// injection prompt and to render the fleet snapshot.
+		inst := m.list.FindInstance(id)
+		if inst == nil {
+			// Instance gone between ack and injection (e.g. killed). Non-fatal.
+			return nil
 		}
 		fleet := orchestrator.RenderFleet(toOrchestratorFleet(m.list.GetInstances()))
-		if perr := inst.SendPrompt(orchestrator.InjectionPrompt(fleet)); perr != nil {
-			return instanceStartedMsg{instance: inst, err: fmt.Errorf("inject orchestrator prompt: %w", perr)}
+		if err := inst.SendPrompt(orchestrator.InjectionPrompt(fleet)); err != nil {
+			return fmt.Errorf("inject orchestrator prompt: %w", err)
 		}
-		return instanceStartedMsg{instance: inst, err: nil}
+		return nil
 	}
+}
 
-	return tea.Batch(tea.WindowSize(), m.instanceChanged(), startCmd)
+// selectInstanceByTitle selects the first instance whose Title matches, used
+// to land the selection on a freshly-spawned instance (the kernel allocates
+// its own ID, so the TUI finds it by the title it requested).
+func (m *home) selectInstanceByTitle(title string) {
+	for i, inst := range m.list.GetInstances() {
+		if inst.Title == title {
+			m.list.SetSelectedInstance(i)
+			return
+		}
+	}
 }
 
 // toOrchestratorFleet projects the TUI's []*session.Instance into the
