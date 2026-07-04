@@ -142,22 +142,31 @@ func (k *Kernel) persist(storage *Storage, _ *session.Instance) error {
 	return nil
 }
 
-// ReconcileLiveness probes the tmux liveness of every loaded instance and
-// demotes any whose tmux session is definitively gone to Dead. It is the
+// ReconcileLiveness probes the liveness of every loaded instance and
+// demotes any whose resources are definitively gone to Dead. It is the
 // C4.4 boot reconciliation: after a daemon restart following a tmux crash,
 // instances persisted as Running would otherwise show as a ghost "running"
 // even though their tmux session no longer exists.
 //
+// An instance is demoted when EITHER signal is gone:
+//   - the tmux session is definitively absent (DoesSessionExist == false), or
+//   - the git worktree is orphaned (its directory or .git is gone).
+//
+// The worktree check closes the collision-from-shared-titles hole: when two
+// workers shared the same sanitized tmux session name (duplicate titles),
+// one live session made BOTH report TmuxAlive, masking a worker whose
+// worktree had been deleted on disk. Checking the worktree too means an
+// orphaned instance is demoted regardless of a coincidentally-live session.
+//
 // Only a started, non-paused, non-dead instance is a candidate: a Paused
 // instance intentionally has no live tmux session (Pause kills it), and an
-// already-Dead instance is left alone. Demotion happens ONLY when tmux
-// definitively reports the session absent (DoesSessionExist == false) — a
-// timeout or tmux error must NOT demote, because a slow instance is not a
-// dead one (spec: never demote on a timeout).
+// already-Dead instance is left alone. Demotion happens ONLY on definitive
+// absence — a tmux timeout/error or a worktree probe failure must NOT demote,
+// because a slow/transiently-unreachable instance is not a dead one (spec:
+// never demote on a timeout).
 //
 // Safe to call with no tmux available (e.g. in-memory test kernels): an
-// instance with no tmuxSession handle is skipped, since there is nothing to
-// probe.
+// instance with no tmuxSession handle and an intact worktree is skipped.
 func (k *Kernel) ReconcileLiveness() {
 	k.mu.Lock()
 	instances := k.instancesLocked()
@@ -174,11 +183,22 @@ func (k *Kernel) ReconcileLiveness() {
 
 	demoted := false
 	for _, inst := range candidates {
-		if inst.TmuxAlive() {
+		if inst.TmuxAlive() && !inst.IsWorktreeOrphaned() {
 			continue
 		}
+		// Reclaim resources: the instance is dead, so its tmux session (if any
+		// lingers under a shared/collided name) and its worktree are torn down
+		// best-effort. This closes the resource leak where a dead instance's
+		// tmux session kept running after reconciliation (C4.4 left the session
+		// alive when demoting). Errors are logged, not returned: a dead instance
+		// is already lost; cleanup failures must not block the reconcile loop.
+		if inst.TmuxAlive() {
+			if err := inst.Kill(); err != nil {
+				log.InfoLog.Printf("kernel: instance %s demoted to Dead; resource cleanup failed: %v", inst.GetID(), err)
+			}
+		}
 		inst.SetStatus(session.Dead)
-		log.WarningLog.Printf("kernel: instance %s demoted to Dead (tmux session gone)", inst.GetID())
+		log.WarningLog.Printf("kernel: instance %s demoted to Dead (tmux session gone or worktree orphaned)", inst.GetID())
 		demoted = true
 	}
 

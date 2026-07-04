@@ -2,11 +2,17 @@ package kernel
 
 import (
 	"encoding/json"
+	"os/exec"
+	"strings"
 	"sync"
 	"testing"
 
+	"claude-squad/cmd"
+	"claude-squad/cmd/cmd_test"
 	"claude-squad/config"
+	"claude-squad/host"
 	"claude-squad/session"
+	"claude-squad/session/tmux"
 
 	"github.com/stretchr/testify/assert"
 	"github.com/stretchr/testify/require"
@@ -136,6 +142,58 @@ func TestKernel_Kill_LeavesSiblingInstancesAlone(t *testing.T) {
 	require.Len(t, live, 1)
 	assert.Equal(t, idB, live[0].GetID())
 	assert.ElementsMatch(t, []string{"b"}, storedTitles(t, state))
+}
+
+// TestKernel_Kill_RemovesRecordEvenWhenCleanupFails is the regression for the
+// unkillable-zombie: when inst.Kill() partially fails (e.g. a Dead instance
+// whose tmux session is already gone, or a worktree whose branch is checked
+// out elsewhere), the kernel MUST still remove the record from the fleet
+// and from storage. Before the fix, Kill returned the cleanup error early
+// without removing the record, so a Dead instance accumulated forever — only
+// `cs2 reset` could clear it.
+func TestKernel_Kill_RemovesRecordEvenWhenCleanupFails(t *testing.T) {
+	k, spawner, state := newStorageKernel(t)
+
+	// Build a TmuxSession whose kill-session fails but whose has-session
+	// reports the session as STILL EXISTING — so Close() is NOT idempotent
+	// and surfaces a real error. This models a dead instance whose tmux
+	// session is wedged (present but unkillable), the worst case for the
+	// zombie regression.
+	mockExec := cmd_test.MockCmdExec{
+		RunFunc: func(c *exec.Cmd) error {
+			if strings.Contains(cmd.ToString(c), "has-session") {
+				return nil // session "exists" → Close won't swallow the kill error
+			}
+			if strings.Contains(cmd.ToString(c), "kill-session") {
+				return &exec.ExitError{} // kill fails
+			}
+			return nil
+		},
+		OutputFunc: func(c *exec.Cmd) ([]byte, error) { return []byte{}, nil },
+	}
+	spawner.tmuxInjector = func(inst *session.Instance) {
+		inst.SetTmuxSession(tmux.NewTmuxSessionWithDeps("wedge", "bash",
+			host.LocalPtyFactory(), mockExec))
+	}
+
+	id, err := k.Spawn(CallerContext{}, SpawnOptions{
+		Repo: "/r", Title: "wedge", Program: "bash",
+	})
+	require.NoError(t, err)
+	require.Len(t, k.LiveInstances(), 1)
+
+	// Kill — inst.Kill() errors (tmux kill-session fails on a "live" session).
+	err = k.Kill(id)
+	require.Error(t, err, "cleanup error is surfaced to the caller")
+	assert.Contains(t, err.Error(), "kill",
+		"the surfaced error is the tmux kill failure")
+
+	// But the record is GONE from the fleet — no zombie.
+	assert.Empty(t, k.LiveInstances(),
+		"record removed even when cleanup fails")
+	assert.NotContains(t, storedTitles(t, state), "wedge",
+		"record not re-persisted")
+	assert.Empty(t, storedTitles(t, state))
 }
 
 // Compile-time: memStorage satisfies config.InstanceStorage (and AppState).

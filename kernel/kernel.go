@@ -339,6 +339,17 @@ func (k *Kernel) Resume(id string) error {
 }
 
 // Kill terminates an instance by ID and removes it from the fleet. Mutating.
+//
+// The record is ALWAYS removed from the in-memory fleet and persisted, even
+// when the underlying resource cleanup (tmux session, git worktree, branch)
+// partially fails. This is the C4.1 invariant: a killed instance must never
+// linger as an unkillable zombie. If we returned early on a cleanup error the
+// record would stay in the fleet forever (the regression seen when killing
+// an already-Dead instance whose tmux session is gone — inst.Kill errors on
+// kill-session, and the record was never removed). Cleanup errors are
+// collected and returned to the caller as a single error AFTER the removal
+// and persistence have happened, so the user sees what failed but the fleet
+// stays consistent. A nil error means everything cleaned up cleanly.
 func (k *Kernel) Kill(id string) error {
 	k.mu.Lock()
 	inst, ok := k.findLocked(id)
@@ -348,9 +359,13 @@ func (k *Kernel) Kill(id string) error {
 	if !ok {
 		return ErrUnknownInstance{ID: id}
 	}
-	if err := inst.Kill(); err != nil {
-		return err
-	}
+
+	// Best-effort resource cleanup. Errors here are surfaced to the caller
+	// but do NOT prevent the record removal below — a half-cleaned instance
+	// (tmux session already gone, worktree dir missing) is still removed
+	// from the fleet.
+	killErr := inst.Kill()
+
 	// Remove from the in-memory fleet before persisting. Without this the
 	// just-killed instance is re-saved to storage and resurrected on the next
 	// daemon boot (Bug B: kill zombie). The kernel is the single writer, so
@@ -363,7 +378,7 @@ func (k *Kernel) Kill(id string) error {
 	if autosave && storage != nil {
 		_ = k.persist(storage, inst)
 	}
-	return nil
+	return killErr
 }
 
 // Merge merges source branches into a target branch of a repo. The guarded

@@ -7,6 +7,8 @@ import (
 	"claude-squad/session/git"
 	"claude-squad/session/tmux"
 	"crypto/rand"
+	"crypto/sha256"
+	"encoding/hex"
 	"encoding/json"
 	"fmt"
 	"strings"
@@ -247,7 +249,7 @@ func (i *Instance) ToInstanceData() InstanceData {
 		data.Worktree = GitWorktreeData{
 			RepoPath:         i.gitWorktree.GetRepoPath(),
 			WorktreePath:     i.gitWorktree.GetWorktreePath(),
-			SessionName:      i.Title,
+			SessionName:      i.SessionLabel(),
 			BranchName:       i.gitWorktree.GetBranchName(),
 			BaseCommitSHA:    i.gitWorktree.GetBaseCommitSHA(),
 			IsExistingBranch: i.gitWorktree.IsExistingBranch(),
@@ -307,7 +309,7 @@ func FromInstanceData(data InstanceData) (*Instance, error) {
 
 	if instance.Paused() {
 		instance.started = true
-		instance.tmuxSession = tmux.NewTmuxSession(instance.Title, instance.Program)
+		instance.tmuxSession = tmux.NewTmuxSession(instance.SessionName(), instance.Program)
 	} else {
 		if err := instance.Start(false); err != nil {
 			return nil, err
@@ -397,6 +399,27 @@ func (i *Instance) GetID() string {
 	return i.ID
 }
 
+// SessionName returns the tmux session name for this instance. It is the
+// title sanitized per tmux's rules, with a short hash of the immutable
+// instance ID appended so that two instances cannot collide on the same
+// tmux session name even when they share a title (the
+// collision-from-shared-titles regression: a live session under a shared
+// name masked orphaned worktrees during liveness reconciliation). The ID
+// hash is stable across daemon restarts, so a persisted instance resumes
+// the same session name. The host alias is never included (PII: decision 5).
+func (i *Instance) SessionName() string {
+	return tmux.SessionName(i.SessionLabel())
+}
+
+// SessionLabel is the pre-sanitization, pre-prefix label that uniquely
+// identifies this instance's tmux session: "<title>-<idhash8>". It is the
+// input to tmux.SessionName. Exposed so storage and tests can predict the
+// session name without re-deriving the hash.
+func (i *Instance) SessionLabel() string {
+	sum := sha256.Sum256([]byte(i.ID))
+	return i.Title + "-" + hex.EncodeToString(sum[:])[:8]
+}
+
 func (i *Instance) Kind() Kind {
 	return i.kind
 }
@@ -474,13 +497,13 @@ func (i *Instance) buildWorktree() (Worktree, string, error) {
 	// NewInstance (where the host isn't set yet).
 	repoPath := i.host.ResolveRepoPath(i.Path)
 	if i.selectedBranch != "" {
-		gitWorktree, err := git.NewGitWorktreeFromBranchWithDeps(repoPath, i.selectedBranch, i.Title, i.host.Executor(), i.host.FS(), worktreeDir)
+		gitWorktree, err := git.NewGitWorktreeFromBranchWithDeps(repoPath, i.selectedBranch, i.SessionLabel(), i.host.Executor(), i.host.FS(), worktreeDir)
 		if err != nil {
 			return nil, "", fmt.Errorf("failed to create git worktree from branch: %w", err)
 		}
 		return gitWorktree, i.selectedBranch, nil
 	}
-	gitWorktree, branchName, err := git.NewGitWorktreeWithDeps(repoPath, i.Title, i.host.Executor(), i.host.FS(), worktreeDir)
+	gitWorktree, branchName, err := git.NewGitWorktreeWithDeps(repoPath, i.SessionLabel(), i.host.Executor(), i.host.FS(), worktreeDir)
 	if err != nil {
 		return nil, "", fmt.Errorf("failed to create git worktree: %w", err)
 	}
@@ -522,9 +545,15 @@ func (i *Instance) Start(firstTimeSetup bool) error {
 	} else {
 	// Create new tmux session bound to this instance's host (local today;
 		// v2 SSHHost swaps in ssh-backed deps here). The session name is derived
-		// from i.Title only — never the host alias — so a remote host never
+		// from i.Title — never the host alias — so a remote host never
 		// appears in tmux session names (PII discipline, decision 5).
-		tmuxSession = tmux.NewTmuxSessionWithDeps(i.Title, i.Program, i.host.PtyFactory(), i.host.Executor())
+		//
+		// A short hash of the instance ID is appended so that two instances
+		// sharing a title (duplicate titles, or an orchestrator+worker with
+		// the same name) cannot collide on the same tmux session name. Without
+		// this, the shared session masked orphaned worktrees during liveness
+		// reconciliation (the collision-from-shared-titles regression).
+		tmuxSession = tmux.NewTmuxSessionWithDeps(i.SessionName(), i.Program, i.host.PtyFactory(), i.host.Executor())
 	}
 	i.tmuxSession = tmuxSession
 
@@ -711,7 +740,36 @@ func (i *Instance) Paused() bool {
 
 // TmuxAlive returns true if the tmux session is alive. This is a sanity check before attaching.
 func (i *Instance) TmuxAlive() bool {
+	if i.tmuxSession == nil {
+		return false
+	}
 	return i.tmuxSession.DoesSessionExist()
+}
+
+// IsWorktreeOrphaned reports whether the instance's git worktree is missing
+// from the filesystem. It is the filesystem-side liveness check that pairs
+// with TmuxAlive: a Worker instance whose worktree directory or its .git
+// entry is gone is orphaned, even if a tmux session under its name still
+// exists (e.g. another instance shares the same sanitized session name —
+// the collision-from-shared-titles regression). ReconcileLiveness demotes an
+// instance to Dead when EITHER signal is gone, so a collided-name session
+// does not mask an orphaned worktree.
+//
+// An Orchestrator (headless worktree) is never orphaned — its control dir
+// is recreatable and the orchestrator supervises, it does not edit a repo.
+// A not-yet-started instance, or one with no worktree handle, is treated as
+// not orphaned (not a reconciliation candidate).
+func (i *Instance) IsWorktreeOrphaned() bool {
+	if i.gitWorktree == nil {
+		return false
+	}
+	valid, err := i.gitWorktree.IsValidWorktree()
+	if err != nil {
+		// Could not probe the FS — do NOT claim orphaned. A probe failure is
+		// the same class as a tmux timeout: never demote on uncertainty.
+		return false
+	}
+	return !valid
 }
 
 // Pause stops the tmux session and removes the worktree, preserving the branch

@@ -3,6 +3,7 @@ package git
 import (
 	"claude-squad/cmd"
 	"fmt"
+	"os"
 	"os/exec"
 	"strings"
 )
@@ -48,6 +49,14 @@ type MergeResult struct {
 	// Message is a human-readable summary (e.g. the merge output), for logs
 	// and for an orchestrator's context.
 	Message string
+	// WorktreePath is the isolated git worktree the merge ran in. It is set
+	// ONLY when Status == MergeConflict: the worktree is left in the merging
+	// state (NOT auto-aborted) so a resolver (human or spawned worker) can
+	// inspect and resolve there. The user's main checkout is never left in a
+	// merging state. Callers that want to abandon a conflicted merge remove
+	// this worktree (`git -C <repo> worktree remove --force <path>`). Empty
+	// on a clean merge (the throwaway worktree is removed immediately).
+	WorktreePath string
 }
 
 // Merger is the abstraction over merging one or more source branches into a
@@ -139,43 +148,87 @@ func mergeValidate(repoPath, targetBranch string, sourceBranches []string, strat
 	return nil
 }
 
-// mergeInto is the shared body of Merge and MergeTrunk: it checks out the
-// target branch and merges the sources with the given strategy. On a clean
-// merge it returns MergeMerged; on a conflicting merge it returns
-// MergeConflict (with the list of conflicted files) and leaves the repo in
-// the merging state (never auto-aborts). Guards that differ between the two
-// callers (trunk protection) are applied by the respective entrypoints.
+// mergeInto is the shared body of Merge and MergeTrunk: it merges the sources
+// into targetBranch using the given strategy, ISOLATED from the user's main
+// checkout. The merge runs in a detached throwaway git worktree of
+// targetBranch so the user's working tree is never switched, dirtied, or
+// left in a merging state — the daemon has no repo/workspace of its own
+// (inversion north-star), and a merge must not mutate the host's checkout.
+//
+// On a clean merge, the target branch ref is fast-forwarded to the new
+// commit via `git update-ref` (plumbing, not subject to the
+// checked-out-branch guard), and the throwaway worktree is removed. On a conflicting merge, the
+// throwaway worktree is LEFT in the merging state (not auto-aborted) so a
+// resolver can act there; its path is returned in MergeResult.WorktreePath.
+// Guards that differ between the two callers (trunk protection) are applied
+// by the respective entrypoints.
 func (m *defaultMerger) mergeInto(repoPath, targetBranch string, sourceBranches []string, strategy Strategy) (MergeResult, error) {
-	// Checkout the target branch. This is the branch the orchestrator merges
-	// INTO; sources merge into it.
-	if out, err := m.runGit(repoPath, "checkout", targetBranch); err != nil {
+	// Create a throwaway worktree detached at targetBranch's commit. --detach
+	// is essential: without it, `git worktree add <dir> <branch>` refuses when
+	// targetBranch is already checked out in another worktree (e.g. the
+	// user's main checkout). A detached worktree at the branch's commit has
+	// the same content but does not "check out" the branch, so it coexists
+	// with the user's checkout.
+	tmpDir, err := os.MkdirTemp("", "cs2-merge-*")
+	if err != nil {
+		return MergeResult{}, fmt.Errorf("merge: create temp worktree dir: %w", err)
+	}
+	removeWorktree := func() {
+		_, _ = m.runGit(repoPath, "worktree", "remove", "--force", tmpDir)
+		_ = os.RemoveAll(tmpDir)
+	}
+
+	if out, err := m.runGit(repoPath, "worktree", "add", "--detach", tmpDir, targetBranch); err != nil {
+		removeWorktree()
 		return MergeResult{Status: MergeConflict, Message: out}, fmt.Errorf("merge: checkout target %q: %s: %w", targetBranch, out, err)
 	}
 
-	// Merge the sources. Use --no-edit so a clean merge never blocks on an
-	// editor. On conflict, git exits non-zero and leaves the repo in the
-	// merging state (conflicted files marked in the index).
-	args := []string{"merge", "--no-edit"}
-	args = append(args, sourceBranches...)
-	out, err := m.runGit(repoPath, args...)
+	// Merge the sources in the isolated worktree. Use --no-edit so a clean
+	// merge never blocks on an editor. On conflict, git exits non-zero and
+	// leaves the worktree in the merging state (conflicted files in the index).
+	mergeArgs := []string{"-C", tmpDir, "merge", "--no-edit"}
+	mergeArgs = append(mergeArgs, sourceBranches...)
+	mergeCmd := exec.Command("git", mergeArgs...)
+	out, err := m.cmdExec.CombinedOutput(mergeCmd)
+	outStr := string(out)
 	if err == nil {
-		return MergeResult{Status: MergeMerged, Message: out}, nil
+		// Clean merge: fast-forward the target branch ref to the new commit.
+		// update-ref is plumbing: it moves the ref even when the branch is
+		// checked out elsewhere (unlike `git branch -f`), so the user's main
+		// checkout is not disturbed. The new commit is the detached HEAD of
+		// the throwaway worktree.
+		headOut, headErr := m.cmdExec.Output(exec.Command("git", "-C", tmpDir, "rev-parse", "HEAD"))
+		removeWorktree()
+		if headErr != nil {
+			return MergeResult{Status: MergeConflict, Message: outStr}, fmt.Errorf("merge: read merged HEAD: %s: %w", string(headOut), headErr)
+		}
+		newHead := strings.TrimSpace(string(headOut))
+		if _, refErr := m.runGit(repoPath, "update-ref", "refs/heads/"+targetBranch, newHead); refErr != nil {
+			return MergeResult{Status: MergeConflict, Message: outStr}, fmt.Errorf("merge: update target ref: %w", refErr)
+		}
+		return MergeResult{Status: MergeMerged, Message: outStr}, nil
 	}
 
-	// Non-zero exit: either a conflict or a fast-forward/other failure.
-	// Detect conflicted files via the index status.
-	conflicts, cErr := m.conflictedFiles(repoPath)
+	// Non-zero exit: either a conflict or another failure. Detect conflicted
+	// files via the worktree's index. The worktree is left in place on a real
+	// conflict so a resolver can act (WorktreePath reported); other failures
+	// clean it up.
+	conflicts, cErr := m.conflictedFiles(tmpDir)
 	if cErr != nil {
-		// Could not inspect the index — return what we have.
-		return MergeResult{Status: MergeConflict, Conflicts: nil, Message: out}, fmt.Errorf("merge: failed and could not inspect conflicts: %s: %w", out, err)
+		removeWorktree()
+		return MergeResult{Status: MergeConflict, Conflicts: nil, Message: outStr}, fmt.Errorf("merge: failed and could not inspect conflicts: %s: %w", outStr, err)
 	}
 	if len(conflicts) == 0 {
-		// Non-zero exit but no conflicted files — some other failure (e.g.
-		// a source branch didn't exist). Surface the error without claiming
-		// a conflict.
-		return MergeResult{Status: MergeConflict, Conflicts: nil, Message: out}, fmt.Errorf("merge: git merge failed: %s: %w", out, err)
+		// Non-zero exit but no conflicted files — some other failure (e.g. a
+		// source branch didn't exist). Surface the error, clean up.
+		removeWorktree()
+		return MergeResult{Status: MergeConflict, Conflicts: nil, Message: outStr}, fmt.Errorf("merge: git merge failed: %s: %w", outStr, err)
 	}
-	return MergeResult{Status: MergeConflict, Conflicts: conflicts, Message: out}, nil
+	// Conflict: leave the worktree in the merging state for a resolver, and
+	// surface the underlying git error (the original contract: a conflicting
+	// merge returns MergeConflict + a non-nil error wrapping git's non-zero
+	// exit, so callers can distinguish clean vs conflicting by err != nil).
+	return MergeResult{Status: MergeConflict, Conflicts: conflicts, Message: outStr, WorktreePath: tmpDir}, fmt.Errorf("merge: git merge failed: %s: %w", outStr, err)
 }
 
 // runGit runs `git -C repoPath args...` and returns the combined output + error.
