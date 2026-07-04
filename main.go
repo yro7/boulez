@@ -36,10 +36,7 @@ var (
 			defer log.Close()
 
 			if daemonFlag {
-				cfg := config.LoadConfig()
-				err := daemon.RunDaemon(cfg)
-				log.ErrorLog.Printf("failed to start daemon %v", err)
-				return err
+				return runDaemon()
 			}
 
 			cfg := config.LoadConfig()
@@ -170,6 +167,7 @@ func init() {
 	rootCmd.AddCommand(versionCmd)
 	rootCmd.AddCommand(resetCmd)
 	rootCmd.AddCommand(newCtlCmd())
+	rootCmd.AddCommand(newDaemonCmd())
 }
 
 func main() {
