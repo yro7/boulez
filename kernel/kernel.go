@@ -83,7 +83,7 @@ func (c CallerContext) IsWorker() bool {
 // syscalls go through the kernel so the guards are enforced in one place.
 type Kernel struct {
 	mu       sync.Mutex
-	storage  *session.Storage
+	storage  *Storage
 	spawner  Spawner
 	merger   git.Merger
 	autosave bool // if true, persist to storage after every mutation
@@ -155,7 +155,7 @@ func (k *Kernel) SetProtectedBranches(branches []string) {
 // no-op spawner that errors (production wires the real one via WithSpawner);
 // the merger defaults to git.NewMerger(nil) (local executor). Autosave is on
 // by default so production persists every mutation.
-func New(storage *session.Storage, opts ...Option) *Kernel {
+func New(storage *Storage, opts ...Option) *Kernel {
 	k := &Kernel{
 		storage:  storage,
 		merger:   git.NewMerger(nil),

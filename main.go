@@ -6,7 +6,6 @@ import (
 	"claude-squad/config"
 	"claude-squad/daemon"
 	"claude-squad/log"
-	"claude-squad/session"
 	"claude-squad/session/git"
 	"claude-squad/session/tmux"
 	"context"
@@ -77,11 +76,7 @@ var (
 			defer log.Close()
 
 			state := config.LoadState()
-			storage, err := session.NewStorage(state)
-			if err != nil {
-				return fmt.Errorf("failed to initialize storage: %w", err)
-			}
-			if err := storage.DeleteAllInstances(); err != nil {
+			if err := state.DeleteAllInstances(); err != nil {
 				return fmt.Errorf("failed to reset storage: %w", err)
 			}
 			fmt.Println("Storage has been reset successfully")
