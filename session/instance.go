@@ -413,6 +413,14 @@ func (i *Instance) SetSelectedBranch(branch string) {
 	i.selectedBranch = branch
 }
 
+// SelectedBranch returns the existing branch the instance will start on, or
+// empty when a new branch from HEAD is to be created. It is the read twin of
+// SetSelectedBranch, used by the TUI to build kernel spawn options from a
+// draft instance (C3.3).
+func (i *Instance) SelectedBranch() string {
+	return i.selectedBranch
+}
+
 // SetAutoYes toggles the per-instance AutoYes flag. Persisted on InstanceData
 // and respected by the daemon (which no longer forces it globally). Used by
 // the TUI toggle: flipping on a remote host is allowed but the user should

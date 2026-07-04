@@ -576,3 +576,25 @@ func (l *List) FindInstance(id string) *session.Instance {
 	}
 	return nil
 }
+
+// RemoveByID removes the instance with the given ID from the view. It is the
+// TUI's path to drop a local draft once the kernel owns the real instance
+// (C3.3): the TUI kept a draft in the list during name entry, and on the
+// spawn ack it removes the draft and lets the fleet refresh surface the
+// kernel's instance. No-op if the ID is absent. Selection is nudged to the
+// previous index when the removed item was selected.
+func (l *List) RemoveByID(id string) {
+	for i, inst := range l.items {
+		if inst.GetID() != id {
+			continue
+		}
+		l.items = append(l.items[:i], l.items[i+1:]...)
+		if l.selectedIdx >= len(l.items) {
+			l.selectedIdx = len(l.items) - 1
+		}
+		if l.selectedIdx < 0 {
+			l.selectedIdx = 0
+		}
+		return
+	}
+}
