@@ -42,7 +42,7 @@ func TestCtl_StdoutIsPureJSON(t *testing.T) {
 	t.Setenv("HOME", home)
 
 	// Start the daemon.
-	daemon := exec.Command(binPath, "--daemon")
+	daemon := exec.Command(binPath, "daemon", "run")
 	daemon.Dir = mustRepoRoot(t)
 	require.NoError(t, daemon.Start())
 	t.Cleanup(func() { _ = daemon.Process.Kill() })

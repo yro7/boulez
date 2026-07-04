@@ -186,8 +186,7 @@ func LaunchDaemon() error {
 	}
 
 	// `cs2 daemon run` is the canonical daemon entrypoint (decision D2): the
-	// OS service (Phase 2) and the auto-start both invoke it. The hidden
-	// `--daemon` flag remains as a back-compat alias for external scripts.
+	// OS service (Phase 2) and the auto-start both invoke it.
 	cmd := exec.Command(execPath, "daemon", "run")
 
 	// Detach the process from the parent

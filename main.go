@@ -21,20 +21,15 @@ var (
 	version     = "1.0.19"
 	programFlag string
 	autoYesFlag bool
-	daemonFlag  bool
 	binName     string
 	rootCmd     = &cobra.Command{
 		Use:   "claude-squad",
 		Short: "Claude Squad - Manage multiple AI agents like Claude Code, Aider, Codex, and Amp.",
 		RunE: func(cmd *cobra.Command, args []string) error {
 			ctx := context.Background()
-			log.Initialize(daemonFlag)
-			log.SetPrintPathOnClose(!daemonFlag) // daemon: silent; interactive: surface log path
+			log.Initialize(false)
+			log.SetPrintPathOnClose(true) // interactive: surface log path on exit
 			defer log.Close()
-
-			if daemonFlag {
-				return runDaemon()
-			}
 
 			cfg := config.LoadConfig()
 
@@ -134,18 +129,10 @@ var (
 )
 
 func init() {
-	rootCmd.Flags().StringVarP(&programFlag, "program", "p", "",
+	rootCmd.Flags().StringVarP(&programFlag, "program", "p", "", 
 		"Program to run in new instances (e.g. 'aider --model ollama_chat/gemma3:1b')")
 	rootCmd.Flags().BoolVarP(&autoYesFlag, "autoyes", "y", false,
 		"[experimental] If enabled, all instances will automatically accept prompts")
-	rootCmd.Flags().BoolVar(&daemonFlag, "daemon", false, "Run a program that loads all sessions"+
-		" and runs autoyes mode on them.")
-
-	// Hide the daemonFlag as it's only for internal use
-	err := rootCmd.Flags().MarkHidden("daemon")
-	if err != nil {
-		panic(err)
-	}
 
 	rootCmd.AddCommand(debugCmd)
 	rootCmd.AddCommand(versionCmd)
