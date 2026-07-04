@@ -4,7 +4,6 @@ import (
 	"claude-squad/config"
 	"claude-squad/kernel"
 	"claude-squad/log"
-	"claude-squad/orchestrator"
 	"claude-squad/program"
 	"claude-squad/session"
 	"fmt"
@@ -53,16 +52,13 @@ func RunDaemon(cfg *config.Config) error {
 	protected := resolveHostProtectedBranches()
 	k := kernel.New(storage, kernel.WithSpawner(kernelSpawner{}), kernel.WithMerger(realMerger{}), kernel.WithProtectedBranches(protected))
 
-	// Guarantee the global orchestrator (instance 0) exists. This is the
-	// "always-on" layer: on a fresh config dir, spawn an orchestrator; on a
-	// restart, refresh its context file. Done through the kernel (the single
-	// writer) so the spawn is attributed and persisted like any other. The
-	// daemon owns this policy (the kernel is consumer-agnostic and must not
-	// know "there is always one orchestrator").
-	defaultProgram := cfg.GetProgram()
-	if _, err := orchestrator.Ensure(&orchestratorAPI{k: k, program: defaultProgram}, defaultProgram); err != nil {
-		log.WarningLog.Printf("ensure orchestrator: %v", err)
-	}
+	// NOTE: the daemon no longer auto-spawns a global orchestrator. The old
+	// always-on "instance 0" bootstrap (orchestrator.Ensure at startup + a
+	// periodic EnsureLive probe) never worked reliably and is gone. An
+	// orchestrator is now spawned explicitly by the user from the TUI via the
+	// O key (app.spawnOrchestrator) — same as any other instance. The daemon
+	// still owns the kernel/control socket so `cs2 ctl` works; it just no
+	// longer has any orchestrator-specific policy.
 
 	socketPath, err := kernel.SocketPath()
 	if err != nil {
@@ -103,22 +99,6 @@ func RunDaemon(cfg *config.Config) error {
 							}
 						}
 					}
-				}
-			}
-
-			// Periodically guarantee a live orchestrator (instance 0) exists.
-			// The daemon is long-lived (it outlives the TUI), so this probe keeps
-			// instance 0 "always on" even while cs2 is closed: if the user killed
-			// the orchestrator's pane (Ctrl+D) or it crashed, the dead record is
-			// evicted and a fresh one spawned within one poll. This is the fix
-			// for the "closed the orchestrator once and it won't reopen until I
-			// restart" symptom — the next cs2 open always sees a live instance 0
-			// because the daemon respawned it. Cheap on the happy path: no disk
-			// I/O when the orchestrator is healthy (EnsureLive skips the context
-			// rewrite).
-			if _, err := orchestrator.EnsureLive(&orchestratorAPI{k: k, program: defaultProgram}, defaultProgram); err != nil {
-				if everyN.ShouldLog() {
-					log.WarningLog.Printf("ensure-live orchestrator: %v", err)
 				}
 			}
 

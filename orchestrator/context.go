@@ -1,20 +1,22 @@
-// Package orchestrator is the "instance 0" layer: the always-on global
-// orchestrator that consumes cs2's control API (the kernel syscalls) to
-// supervise the fleet.
+// Package orchestrator holds the context an orchestrator instance needs at
+// spawn time: the ORCHESTRATOR.md tool documentation and the one-time fleet
+// snapshot injected into the agent's pane. The orchestrator is an ordinary
+// fleet instance (KindOrchestrator, headless worktree) that consumes cs2's
+// control API (the kernel syscalls) to supervise the fleet. It is spawned
+// on demand by the user from the TUI (O key), NOT auto-spawned at startup.
 //
-// cs2 is agent-agnostic: the orchestrator is an ordinary Instance of
-// KindOrchestrator running some agent program (Pi by user choice, but any
-// terminal agent works). This package does NOT know which agent is running —
-// it only (a) writes a context file (ORCHESTRATOR.md) into the orchestrator's
-// control dir documenting the `cs2 ctl` tool surface + the orchestrator's
-// own ID, and (b) injects a one-time fleet snapshot into the agent's pane via
-// SendPrompt. After that the agent is supervised: it calls `cs2 ctl` shell
-// tools to drive the fleet at its own pace.
+// cs2 is agent-agnostic: the orchestrator runs some agent program (Pi by
+// user choice, but any terminal agent works). This package does NOT know
+// which agent is running — it only (a) writes a context file (ORCHESTRATOR.md)
+// into the orchestrator's control dir documenting the `cs2 ctl` tool surface
+// + the orchestrator's own ID, and (b) injects a one-time fleet snapshot
+// into the agent's pane via RenderFleet + InjectionPrompt. After that the
+// agent is supervised: it calls `cs2 ctl` shell tools to drive the fleet at
+// its own pace.
 //
-// The package is deliberately decoupled from the kernel: it defines a minimal
-// API interface (ListInstances / SpawnOrchestrator / SendPrompt) so the Ensure
-// logic is unit-testable without tmux, without a real LLM, without even the
-// kernel — exactly the testability property the kernel package established.
+// The package is deliberately decoupled from the kernel and from session:
+// it works on its own Instance projection, so RenderFleet/InjectionPrompt are
+// unit-testable without tmux, without a real LLM, without even the kernel.
 package orchestrator
 
 import (
