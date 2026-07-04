@@ -874,7 +874,7 @@ func (m *home) handleKeyPress(msg tea.KeyMsg) (mod tea.Model, cmd tea.Cmd) {
 		return m, m.confirmAction(message, landAction)
 	case keys.KeyCheckout:
 		selected := m.list.GetSelectedInstance()
-		if selected == nil || selected.Status == session.Loading {
+		if selected == nil || selected.Status == session.Loading || selected.Status == session.Dead {
 			return m, nil
 		}
 
@@ -918,7 +918,7 @@ func (m *home) handleKeyPress(msg tea.KeyMsg) (mod tea.Model, cmd tea.Cmd) {
 		return m, m.instanceChanged()
 	case keys.KeyResume:
 		selected := m.list.GetSelectedInstance()
-		if selected == nil || selected.Status == session.Loading {
+		if selected == nil || selected.Status == session.Loading || selected.Status == session.Dead {
 			return m, nil
 		}
 		// Route resume through the kernel (C3.4): the kernel owns the tmux
