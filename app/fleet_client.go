@@ -242,3 +242,34 @@ func (m *home) reconcileFleet(data []session.InstanceData) {
 
 	m.list.SetInstances(out)
 }
+
+// --- spawn routing (C3.3) ---
+
+// spawnDoneMsg is sent when a fleet.Spawn syscall completes (C3.3). The TUI
+// routes spawn through the kernel (single writer); the syscall returns the new
+// ID and the TUI re-reads the fleet (C3.2) to pick it up. The draftID is the
+// TUI-local draft instance kept in the list during name entry — on ack it is
+// removed because the kernel now owns the real instance (with its own ID).
+type spawnDoneMsg struct {
+	id           string // new instance ID (empty on error)
+	title        string // requested title (for the help screen + fallback selection)
+	err          error
+	draftID      string // TUI-local draft to remove on ack
+	orchestrator bool   // run the orchestrator post-spawn injection on success
+}
+
+// runSpawnCmd issues a spawn_worker syscall in the background and returns the
+// result as spawnDoneMsg. The draft instance stays in the list (showing
+// Loading) while the kernel creates+starts the real instance.
+func (m *home) runSpawnCmd(opts SpawnOptions, draftID string, orchestrator bool) tea.Cmd {
+	return func() tea.Msg {
+		id, err := m.resolveFleet().Spawn(opts)
+		return spawnDoneMsg{
+			id:           id,
+			title:        opts.Title,
+			err:          err,
+			draftID:      draftID,
+			orchestrator: orchestrator,
+		}
+	}
+}
