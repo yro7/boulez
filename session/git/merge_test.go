@@ -1,6 +1,7 @@
 package git
 
 import (
+	"os"
 	"os/exec"
 	"path/filepath"
 	"strings"
@@ -91,13 +92,21 @@ func TestMerger_CleanMerge(t *testing.T) {
 	require.NoError(t, err)
 	assert.Equal(t, MergeMerged, res.Status, "disjoint branches merge cleanly")
 	assert.Empty(t, res.Conflicts)
+	assert.Empty(t, res.WorktreePath, "clean merge removes its throwaway worktree")
 
-	// Both files are now present on integration.
-	mrun(t, repo, "checkout", "integration") // merger already checked out target, but be safe
-	out, err := exec.Command("git", "-C", repo, "ls-files").Output()
+	// The integration branch ref is updated to the merged commit. Verify by
+	// checking the files are present on the branch's tree (not the user's
+	// working tree — the merge no longer touches the main checkout).
+	out, err := exec.Command("git", "-C", repo, "ls-tree", "-r", "--name-only", "integration").Output()
 	require.NoError(t, err)
 	assert.Contains(t, string(out), "a.txt")
 	assert.Contains(t, string(out), "b.txt")
+
+	// The user's main checkout (still on integration from the test setup) was
+	// NOT switched or dirtied by the merge: the working tree matches HEAD
+	// before the merge's ref update. We assert no MERGE_HEAD is left behind.
+	_, err = os.Stat(filepath.Join(repo, ".git", "MERGE_HEAD"))
+	assert.True(t, os.IsNotExist(err), "main checkout not left in a merging state")
 }
 
 // TestMerger_ConflictDetected proves a real conflict is detected, the result
@@ -122,17 +131,26 @@ func TestMerger_ConflictDetected(t *testing.T) {
 	res, err := m.Merge(repo, "integration", []string{"feat"}, StrategyDefault)
 	// A conflicting merge returns MergeConflict + a non-nil error (git merge
 	// exits non-zero) but the result carries the conflict list. The contract:
-	// Status=Conflict + Conflicts populated, repo left merging.
-	_ = err // git merge exits non-zero on conflict; we care about the result
+	// Status=Conflict + Conflicts populated + WorktreePath set (the throwaway
+	// worktree is left for a resolver).
+	require.Error(t, err, "conflicting merge returns an error")
 	assert.Equal(t, MergeConflict, res.Status)
 	require.NotEmpty(t, res.Conflicts, "conflicted file must be reported")
 	assert.Equal(t, "file.txt", res.Conflicts[0].File)
+	require.NotEmpty(t, res.WorktreePath, "conflict leaves the throwaway worktree for a resolver")
+	t.Cleanup(func() {
+		_, _ = exec.Command("git", "-C", repo, "worktree", "remove", "--force", res.WorktreePath).CombinedOutput()
+		_ = os.RemoveAll(res.WorktreePath)
+	})
 
-	// The repo is left in a merging state (not aborted): git status shows
-	// "Unmerged paths".
-	status, err := exec.Command("git", "-C", repo, "status", "--porcelain").Output()
+	// The throwaway worktree (not the main checkout) is in the merging state.
+	status, err := exec.Command("git", "-C", res.WorktreePath, "status", "--porcelain").Output()
 	require.NoError(t, err)
-	assert.Contains(t, string(status), "UU", "repo left in merging state, not auto-aborted")
+	assert.Contains(t, string(status), "UU", "throwaway worktree left in merging state, not auto-aborted")
+
+	// The main checkout was NOT touched: no MERGE_HEAD left behind.
+	_, err = os.Stat(filepath.Join(repo, ".git", "MERGE_HEAD"))
+	assert.True(t, os.IsNotExist(err), "main checkout not left in a merging state")
 }
 
 // TestMerger_MergeTrunk_AcceptsMain proves the trunk-allowed path: a clean
@@ -173,14 +191,22 @@ func TestMerger_MergeTrunk_ConflictNotAborted(t *testing.T) {
 
 	m := NewMerger(cmd2.MakeExecutor())
 	res, err := m.MergeTrunk(repo, "main", []string{"feat"}, StrategyDefault)
-	_ = err
+	require.Error(t, err, "conflicting merge returns an error")
 	assert.Equal(t, MergeConflict, res.Status)
 	require.NotEmpty(t, res.Conflicts, "conflicted file must be reported")
 	assert.Equal(t, "file.txt", res.Conflicts[0].File)
+	require.NotEmpty(t, res.WorktreePath, "conflict leaves the throwaway worktree for a resolver")
+	t.Cleanup(func() {
+		_, _ = exec.Command("git", "-C", repo, "worktree", "remove", "--force", res.WorktreePath).CombinedOutput()
+		_ = os.RemoveAll(res.WorktreePath)
+	})
 
-	status, err := exec.Command("git", "-C", repo, "status", "--porcelain").Output()
+	status, err := exec.Command("git", "-C", res.WorktreePath, "status", "--porcelain").Output()
 	require.NoError(t, err)
-	assert.Contains(t, string(status), "UU", "repo left in merging state, not auto-aborted")
+	assert.Contains(t, string(status), "UU", "throwaway worktree left in merging state, not auto-aborted")
+
+	_, err = os.Stat(filepath.Join(repo, ".git", "MERGE_HEAD"))
+	assert.True(t, os.IsNotExist(err), "main checkout not left in a merging state")
 }
 
 // TestMerger_ProtectedBranchRefused proves the guard: merging INTO main is
@@ -264,4 +290,55 @@ func TestMerger_NilExecutorDefaultsToLocal(t *testing.T) {
 	res, err := m.Merge(repo, "integration", []string{"feat"}, StrategyDefault)
 	require.NoError(t, err)
 	assert.Equal(t, MergeMerged, res.Status)
+}
+
+// TestMerger_DoesNotMutateMainCheckout is the isolation regression: a merge
+// must NOT switch, dirty, or leave MERGE_HEAD in the user's main checkout.
+// Before the fix, mergeInto ran `git checkout <target>` in repoPath directly,
+// switching the user's branch and leaving a merge-in-progress on conflict.
+// The daemon has no repo/workspace of its own (inversion north-star); merges
+// run in an isolated throwaway worktree and only the target branch ref moves.
+func TestMerger_DoesNotMutateMainCheckout(t *testing.T) {
+	repo := makeMergeRepoTrunk(t) // trunk = integration
+
+	// Set up a conflicting feat branch so the merge leaves a worktree behind
+	// (the path most likely to leak state into the main checkout pre-fix).
+	writeCommit(t, repo, "file.txt", "base\n", "base")
+	mrun(t, repo, "branch", "feat")
+	mrun(t, repo, "checkout", "feat")
+	writeCommit(t, repo, "file.txt", "theirs\n", "theirs")
+	mrun(t, repo, "checkout", "integration")
+	writeCommit(t, repo, "file.txt", "ours\n", "ours")
+
+	// Record the main checkout's state before the merge.
+	beforeBranch := strings.TrimSpace(mustOutput(t, repo, "branch", "--show-current"))
+	beforeHead := strings.TrimSpace(mustOutput(t, repo, "rev-parse", "HEAD"))
+
+	m := NewMerger(cmd2.MakeExecutor())
+	res, err := m.Merge(repo, "integration", []string{"feat"}, StrategyDefault)
+	require.Error(t, err, "conflicting merge")
+	require.Equal(t, MergeConflict, res.Status)
+	require.NotEmpty(t, res.WorktreePath)
+	t.Cleanup(func() {
+		_, _ = exec.Command("git", "-C", repo, "worktree", "remove", "--force", res.WorktreePath).CombinedOutput()
+		_ = os.RemoveAll(res.WorktreePath)
+	})
+
+	// The main checkout's branch and HEAD are unchanged.
+	afterBranch := strings.TrimSpace(mustOutput(t, repo, "branch", "--show-current"))
+	afterHead := strings.TrimSpace(mustOutput(t, repo, "rev-parse", "HEAD"))
+	assert.Equal(t, beforeBranch, afterBranch, "main checkout branch not switched")
+	assert.Equal(t, beforeHead, afterHead, "main checkout HEAD not moved")
+
+	// No merge state left in the main checkout.
+	_, statErr := os.Stat(filepath.Join(repo, ".git", "MERGE_HEAD"))
+	assert.True(t, os.IsNotExist(statErr), "no MERGE_HEAD left in main checkout")
+}
+
+func mustOutput(t *testing.T, dir string, args ...string) string {
+	t.Helper()
+	full := append([]string{"-C", dir}, args...)
+	out, err := exec.Command("git", full...).Output()
+	require.NoErrorf(t, err, "git %v: %s", args, out)
+	return string(out)
 }

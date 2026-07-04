@@ -18,6 +18,11 @@ type fakeSpawner struct {
 	mu       sync.Mutex
 	spawned  []*session.Instance
 	spawnErr error
+	// tmuxInjector, when set, is called on each spawned instance to inject a
+	// tmux session. Tests that need inst.Kill() to exercise a specific tmux
+	// behaviour (e.g. a wedged kill-session) use this; by default no session
+	// is injected and Kill is a no-op.
+	tmuxInjector func(*session.Instance)
 }
 
 func (f *fakeSpawner) Spawn(opts SpawnOptions) (*session.Instance, error) {
@@ -35,6 +40,9 @@ func (f *fakeSpawner) Spawn(opts SpawnOptions) (*session.Instance, error) {
 	// Mark as started so the kernel's summarize treats it as live.
 	inst.SetStatus(session.Running)
 	inst.MarkStartedForTest()
+	if f.tmuxInjector != nil {
+		f.tmuxInjector(inst)
+	}
 	f.mu.Lock()
 	f.spawned = append(f.spawned, inst)
 	f.mu.Unlock()

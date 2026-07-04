@@ -12,6 +12,7 @@ import (
 
 	"claude-squad/cmd/cmd_test"
 
+	"github.com/stretchr/testify/assert"
 	"github.com/stretchr/testify/require"
 )
 
@@ -85,6 +86,60 @@ func TestStartTmuxSession(t *testing.T) {
 	// File should be open
 	_, err = ptyFactory.files[1].Stat()
 	require.NoError(t, err)
+}
+
+// TestClose_IdempotentWhenSessionGone proves the zombie fix: Close() on a
+// session that is already gone (e.g. the instance was reconciled to Dead
+// after a tmux crash) is a no-op success, not an error. Without this, killing
+// an already-Dead instance failed the whole Kill and its record lingered in
+// the fleet forever (the unkillable-zombie regression).
+func TestClose_IdempotentWhenSessionGone(t *testing.T) {
+	// Mock executor: has-session fails (session gone), kill-session also
+	// fails. Pre-fix, Close() would append the kill-session error; post-fix,
+	// the kill error is swallowed because DoesSessionExist() is false.
+	exec := cmd_test.MockCmdExec{
+		RunFunc: func(c *exec.Cmd) error {
+			s := cmd2.ToString(c)
+			if strings.Contains(s, "has-session") {
+				return fmt.Errorf("can't find session") // session gone
+			}
+			if strings.Contains(s, "kill-session") {
+				return fmt.Errorf("kill-session failed") // should be swallowed
+			}
+			return nil
+		},
+		OutputFunc: func(c *exec.Cmd) ([]byte, error) { return []byte{}, nil },
+	}
+
+	sess := newTmuxSession("gone-session", "bash", NewMockPtyFactory(t), exec)
+	err := sess.Close()
+	require.NoError(t, err, "Close on a gone session is a no-op success")
+}
+
+// TestClose_SurfacesErrorOnLiveSession proves the other side: when the session
+// IS still alive but kill-session fails (a wedged session), Close() surfaces
+// the error rather than silently swallowing it. This is the guard against
+// making Close() too lenient — a real kill failure on a live session must
+// still be reported.
+func TestClose_SurfacesErrorOnLiveSession(t *testing.T) {
+	exec := cmd_test.MockCmdExec{
+		RunFunc: func(c *exec.Cmd) error {
+			s := cmd2.ToString(c)
+			if strings.Contains(s, "has-session") {
+				return nil // session IS alive
+			}
+			if strings.Contains(s, "kill-session") {
+				return fmt.Errorf("kill-session wedged")
+			}
+			return nil
+		},
+		OutputFunc: func(c *exec.Cmd) ([]byte, error) { return []byte{}, nil },
+	}
+
+	sess := newTmuxSession("wedge-session", "bash", NewMockPtyFactory(t), exec)
+	err := sess.Close()
+	require.Error(t, err, "kill failure on a live session is surfaced")
+	assert.Contains(t, err.Error(), "kill-session")
 }
 
 // TestSessionName_Deterministic pins that SessionName is the single source of
