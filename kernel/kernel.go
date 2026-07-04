@@ -197,6 +197,36 @@ func (k *Kernel) ListInstances(filter ListFilter) []InstanceSummary {
 	return out
 }
 
+// ListInstancesData returns a snapshot of the fleet as serializable
+// InstanceData records, optionally filtered. It is the TUI's read path: the
+// TUI is a pure client of the kernel and reconstructs read-only view handles
+// (session.FromInstanceData) from these records. Returning InstanceData (not
+// just InstanceSummary) lets the TUI rebuild worktree-backed handles for the
+// preview/diff/terminal panes and attach, without the TUI reading
+// session.Storage or writing fleet state. The kernel remains the single
+// writer; this is a read syscall, safe to call concurrently.
+//
+// This is Option B of the inversion plan: the TUI keeps a read-only cache of
+// *session.Instance view handles (refreshed from this syscall), while every
+// fleet mutation goes through the kernel. The wire alias is
+// `list_instances_full`; the lightweight `list_instances` (summaries) stays
+// for `cs2 ctl`'s human-facing output.
+func (k *Kernel) ListInstancesData(filter ListFilter) []session.InstanceData {
+	k.mu.Lock()
+	defer k.mu.Unlock()
+
+	instances := k.instancesLocked()
+	out := make([]session.InstanceData, 0, len(instances))
+	for _, inst := range instances {
+		s := summarize(inst)
+		if !filter.matches(s) {
+			continue
+		}
+		out = append(out, inst.ToInstanceData())
+	}
+	return out
+}
+
 // GetInstance returns the details of a single instance by ID, including its
 // diff and tmux scrollback (best-effort). Read syscall.
 func (k *Kernel) GetInstance(id string) (InstanceDetail, error) {

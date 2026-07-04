@@ -18,6 +18,7 @@ import (
 	"os"
 
 	"claude-squad/config"
+	"claude-squad/host"
 	"claude-squad/session"
 	"claude-squad/session/git"
 )
@@ -143,6 +144,17 @@ func dispatch(k *Kernel, sess *ctlSession, req Request) Response {
 		}
 		summaries := k.ListInstances(p.toFilter())
 		return okResp(summaries)
+	case "list_instances_full":
+		// The TUI's read path (Option B): returns full InstanceData records so
+		// the TUI can reconstruct read-only view handles via
+		// session.FromInstanceData. The lightweight `list_instances` (summaries)
+		// remains for `cs2 ctl`'s human-facing output.
+		var p listParams
+		if err := json.Unmarshal(req.Params, &p); err != nil {
+			return errResp(CodeInternal, "bad params: "+err.Error())
+		}
+		data := k.ListInstancesData(p.toFilter())
+		return okResp(data)
 	case "get_instance":
 		var p struct{ ID string `json:"id"` }
 		if err := json.Unmarshal(req.Params, &p); err != nil {
@@ -269,6 +281,7 @@ type spawnParams struct {
 	Program         string         `json:"program,omitempty"`
 	Title           string         `json:"title,omitempty"`
 	Kind            session.Kind   `json:"kind,omitempty"`
+	Host            string         `json:"host,omitempty"`
 	Caller          callerParams   `json:"caller,omitempty"`
 }
 
@@ -281,6 +294,7 @@ func (p spawnParams) toOptions() SpawnOptions {
 		Program:         p.Program,
 		Title:           p.Title,
 		Kind:            p.Kind,
+		Host:            host.Lookup(p.Host),
 	}
 }
 
