@@ -55,23 +55,22 @@ var (
 				autoYes = true
 			}
 			// Launch the daemon (detached) so it is up during the TUI session. The
-			// daemon owns the kernel (control API) and guarantees the global
-			// orchestrator (instance 0) exists via orchestrator.Ensure. It is the
+			// daemon owns the kernel (control API) so `cs2 ctl` works. It is the
 			// single writer; the TUI is a console/observer. The daemon's
 			// single-instance lock makes a duplicate launch a no-op. We no longer
 			// stop a running daemon on TUI start — the daemon is now canonical and
 			// long-lived, not a throwaway auto-yes poller.
+			//
+			// NOTE: the daemon no longer spawns a global orchestrator at startup
+			// (the old "instance 0" always-on bootstrap is gone). Orchestrators
+			// are spawned on demand from the TUI via the O key.
 			if err := daemon.LaunchDaemon(); err != nil {
 				log.ErrorLog.Printf("failed to launch daemon: %v", err)
 			} else {
-				// Wait for the daemon's control socket before loading the fleet.
-				// orchestrator.Ensure runs in the daemon BEFORE kernel.Serve binds the
-				// socket, so the socket appearing guarantees the global orchestrator
-				// (instance 0) is already persisted to storage. Without this wait the
-				// TUI's initial LoadInstances races the daemon's Ensure and the
-				// orchestrator is missing from the list until the next cs2 restart.
-				// Best-effort: on timeout we proceed with whatever storage holds
-				// (a previously persisted orchestrator, or none on a cold start).
+				// Wait for the daemon's control socket before loading the fleet so
+				// a `cs2 ctl` call from the TUI/agents does not race a still-starting
+				// daemon. Best-effort: on timeout we proceed with whatever storage
+				// holds.
 				if socketPath, serr := kernel.SocketPath(); serr == nil {
 					if werr := daemon.WaitForSocket(socketPath, 5*time.Second); werr != nil {
 						log.WarningLog.Printf("daemon socket not ready at TUI start: %v", werr)

@@ -43,6 +43,7 @@ func (h helpTypeGeneral) toContent() string {
 		keyStyle.Render("n")+descStyle.Render("         - Create a new session"),
 		keyStyle.Render("N")+descStyle.Render("         - Create a new session with a prompt"),
 		keyStyle.Render("R")+descStyle.Render("         - Quick session from a named preset"),
+		keyStyle.Render("O")+descStyle.Render("         - Spawn an orchestrator instance"),
 		keyStyle.Render("D")+descStyle.Render("         - Kill (delete) the selected session"),
 		keyStyle.Render("↑/j, ↓/k")+descStyle.Render("  - Navigate between sessions"),
 		keyStyle.Render("J/K")+descStyle.Render("       - Reorder sessions"),

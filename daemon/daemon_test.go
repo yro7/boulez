@@ -1,11 +1,8 @@
 package daemon
 
 import (
-	cmd2 "claude-squad/cmd"
 	"claude-squad/log"
-	"claude-squad/session/tmux"
 	"os"
-	"os/exec"
 	"path/filepath"
 	"sync"
 	"testing"
@@ -16,8 +13,8 @@ import (
 )
 
 // TestMain initializes the logger before any daemon tests run. Several daemon
-// helpers (e.g. reclaimOrphanedOrchestratorSession) log via the package-level
-// loggers which are nil until Initialize is called; without this they panic.
+// helpers log via the package-level loggers which are nil until Initialize is
+// called; without this they panic.
 func TestMain(m *testing.M) {
 	log.Initialize(false)
 	defer log.Close()
@@ -129,42 +126,3 @@ func itoa(pid int) string {
 	return string(b[i:])
 }
 
-// TestReclaimOrphanedOrchestratorSession_KillsLeftover proves the optional
-// robustness fix: if a previous cs2 run crashed after spawning the global
-// orchestrator's tmux session but before the kernel persisted the instance,
-// a leftover claudesquad_orchestrator session would survive. On the next
-// Ensure, the fresh spawn would collide ("tmux session already exists"). The
-// reclaim step kills the orphan before the spawn so the bootstrap succeeds.
-//
-// This is the belt-and-suspenders fix; the root-cause fix (the daemon no
-// longer clobbers the kernel's persisted state) is pinned by the kernel
-// LiveInstances test. Both together make the orchestrator robust.
-func TestReclaimOrphanedOrchestratorSession_KillsLeftover(t *testing.T) {
-	c := cmd2.MakeExecutor()
-	name := tmux.SessionName(orchestratorSessionTitle)
-	// Clean slate (a previous test in this process may have left it).
-	_ = tmux.KillSession(c, name)
-
-	// Simulate an orphaned session from a crashed previous run.
-	require.NoError(t, c.Run(exec.Command("tmux", "new-session", "-d", "-s", name, "sh")))
-	require.True(t, tmux.SessionExists(c, name), "orphan session exists before reclaim")
-	t.Cleanup(func() { _ = tmux.KillSession(c, name) })
-
-	reclaimOrphanedOrchestratorSession()
-
-	assert.False(t, tmux.SessionExists(c, name),
-		"the orphaned orchestrator session must be killed before a fresh spawn")
-}
-
-// TestReclaimOrphanedOrchestratorSession_NoopWhenAbsent proves the reclaim is
-// a safe no-op when there is nothing to reclaim (the normal path).
-func TestReclaimOrphanedOrchestratorSession_NoopWhenAbsent(t *testing.T) {
-	c := cmd2.MakeExecutor()
-	name := tmux.SessionName(orchestratorSessionTitle)
-	_ = tmux.KillSession(c, name)
-	require.False(t, tmux.SessionExists(c, name))
-
-	// Must not error and must not create a session.
-	reclaimOrphanedOrchestratorSession()
-	assert.False(t, tmux.SessionExists(c, name))
-}

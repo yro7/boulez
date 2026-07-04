@@ -5,6 +5,7 @@ import (
 	"claude-squad/host"
 	"claude-squad/keys"
 	"claude-squad/log"
+	"claude-squad/orchestrator"
 	"claude-squad/prefs"
 	"claude-squad/presets"
 	"claude-squad/program"
@@ -763,6 +764,8 @@ func (m *home) handleKeyPress(msg tea.KeyMsg) (mod tea.Model, cmd tea.Cmd) {
 		return m, m.openHostSelector(false /* plain new flow */)
 	case keys.KeyQuickSession:
 		return m, m.openPresetSelector()
+	case keys.KeySpawnOrchestrator:
+		return m, m.spawnOrchestrator()
 	case keys.KeyUp:
 		m.list.Up()
 		return m, m.instanceChanged()
@@ -1504,6 +1507,98 @@ func (m *home) startNewInstance(repoPath string, promptFlow bool) tea.Cmd {
 		}
 	}
 	return nil
+}
+
+// spawnOrchestrator handles the O key: it creates and starts a new orchestrator
+// instance on demand. This is the manual replacement for the old always-on
+// "instance 0" bootstrap — nothing is auto-spawned at startup; the user spawns
+// one when they want one.
+//
+// An orchestrator is an ordinary fleet instance with KindOrchestrator: a
+// headless worktree (no repo, no branch) whose control dir holds
+// ORCHESTRATOR.md (the agent's tool documentation). After Start binds the
+// tmux session, we write that context file and inject a one-time prompt
+// pointing the agent at it (plus a fleet snapshot). Each O press spawns a
+// fresh orchestrator; the user kills one with D like any other instance.
+//
+// The instance is created directly through session.NewInstance (not via the
+// kernel socket), so the TUI owns it like any worker it spawns — same
+// persistence path, same list, same save semantics. No double-writer split
+// between TUI and kernel for this instance.
+func (m *home) spawnOrchestrator() tea.Cmd {
+	title := deriveOrchestratorTitle()
+	inst, err := session.NewInstance(session.InstanceOptions{
+		Title:   title,
+		Program: m.program,
+		Kind:    session.KindOrchestrator,
+	})
+	if err != nil {
+		return m.handleError(err)
+	}
+
+	inst.SetStatus(session.Loading)
+	finalize := m.list.AddInstance(inst)
+	m.list.SetSelectedInstance(m.list.NumInstances() - 1)
+	finalize() // orchestrator has no repo, so the repo-name registration is a no-op
+
+	if err := m.storage.SaveInstances(m.list.GetInstances()); err != nil {
+		return m.handleError(err)
+	}
+
+	startCmd := func() tea.Msg {
+		if err := inst.Start(true); err != nil {
+			return instanceStartedMsg{instance: inst, err: err}
+		}
+		inst.SetAutoYes(inst.Host().AutoYesDefault())
+
+		// Write ORCHESTRATOR.md into the control dir (the agent's cwd) and
+		// inject a one-time prompt pointing the agent at it. Best-effort:
+		// the instance is already running, so a failure here surfaces as an
+		// error but does not undo the spawn.
+		if werr := orchestrator.WriteContextFile(inst.ID); werr != nil {
+			return instanceStartedMsg{instance: inst, err: fmt.Errorf("write orchestrator context: %w", werr)}
+		}
+		fleet := orchestrator.RenderFleet(toOrchestratorFleet(m.list.GetInstances()))
+		if perr := inst.SendPrompt(orchestrator.InjectionPrompt(fleet)); perr != nil {
+			return instanceStartedMsg{instance: inst, err: fmt.Errorf("inject orchestrator prompt: %w", perr)}
+		}
+		return instanceStartedMsg{instance: inst, err: nil}
+	}
+
+	return tea.Batch(tea.WindowSize(), m.instanceChanged(), startCmd)
+}
+
+// toOrchestratorFleet projects the TUI's []*session.Instance into the
+// decoupled []orchestrator.Instance type the bootstrap/prompt helpers expect
+// (they live in the orchestrator package, which deliberately does not import
+// session). The projection stays here at the seam.
+func toOrchestratorFleet(instances []*session.Instance) []orchestrator.Instance {
+	out := make([]orchestrator.Instance, 0, len(instances))
+	for _, in := range instances {
+		if in == nil {
+			continue
+		}
+		repoName, _ := in.RepoName()
+		out = append(out, orchestrator.Instance{
+			ID:      in.ID,
+			Kind:    in.Kind().String(),
+			Status:  in.Status.String(),
+			Title:   in.Title,
+			Repo:    repoName,
+			Branch:  in.Branch,
+			Program: in.Program,
+			Host:    in.Host().Name(),
+		})
+	}
+	return out
+}
+
+// deriveOrchestratorTitle builds a unique title for a manually-spawned
+// orchestrator. The title drives the tmux session name, so it must be unique
+// across spawns to avoid collisions with a lingering session from a previous
+// orchestrator.
+func deriveOrchestratorTitle() string {
+	return fmt.Sprintf("orchestrator-%d", time.Now().UnixNano())
 }
 
 // openPresetSelector opens the named-preset picker (Ctrl+R). Presets are read

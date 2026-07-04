@@ -6,10 +6,10 @@ import (
 )
 
 // Instance is the orchestrator package's view of a fleet member. It is a
-// decoupled projection of kernel.InstanceSummary: the orchestrator package
-// does not import the kernel, so its bootstrap logic is unit-testable without
-// the kernel (and without tmux). The daemon adapts kernel.InstanceSummary to
-// this type at the seam.
+// decoupled projection: the orchestrator package does not import the kernel
+// (nor session), so RenderFleet/InjectionPrompt are unit-testable without the
+// kernel (and without tmux). The TUI adapts its []*session.Instance to this
+// type at the seam (app.toOrchestratorFleet).
 type Instance struct {
 	ID      string
 	Kind    string // "worker" | "orchestrator"

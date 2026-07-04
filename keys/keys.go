@@ -46,6 +46,13 @@ const (
 
 	// KeyToggleAutoYes toggles the per-instance AutoYes flag.
 	KeyToggleAutoYes
+
+	// KeySpawnOrchestrator spawns a new orchestrator instance (Shift+O). The
+	// orchestrator is an ordinary fleet instance (KindOrchestrator, headless
+	// worktree) that supervises the fleet via `cs2 ctl`. This is the manual,
+	// on-demand replacement for the old always-on "instance 0" bootstrap: the
+	// user spawns one when they want one, nothing is auto-spawned at startup.
+	KeySpawnOrchestrator
 )
 
 // GlobalKeyStringsMap is a global, immutable map string to keybinding.
@@ -61,6 +68,7 @@ var GlobalKeyStringsMap = map[string]KeyName{
 	"a":          KeyToggleAutoYes,
 	"N":          KeyPrompt,
 	"R":          KeyQuickSession,
+	"O":          KeySpawnOrchestrator,
 	"enter":      KeyEnter,
 	"o":          KeyEnter,
 	"n":          KeyNew,
@@ -153,6 +161,11 @@ var GlobalkeyBindings = map[KeyName]key.Binding{
 	KeyToggleAutoYes: key.NewBinding(
 		key.WithKeys("a"),
 		key.WithHelp("a", "toggle auto-yes"),
+	),
+
+	KeySpawnOrchestrator: key.NewBinding(
+		key.WithKeys("O"),
+		key.WithHelp("O", "spawn orchestrator"),
 	),
 
 	// -- Special keybindings --
