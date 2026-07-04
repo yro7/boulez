@@ -463,7 +463,16 @@ func (t *TmuxSession) Close() error {
 
 	cmd := exec.Command("tmux", "kill-session", "-t", t.sanitizedName)
 	if err := t.cmdExec.Run(cmd); err != nil {
-		errs = append(errs, fmt.Errorf("error killing tmux session: %w", err))
+		// Idempotent: a session that is already gone (e.g. the instance was
+		// reconciled to Dead after its tmux session crashed) is a no-op
+		// success, not an error. Without this, killing an already-dead
+		// instance fails the whole Kill and its record lingers in the fleet
+		// forever (the unkillable-zombie regression). Probe with has-session:
+		// if definitively gone, swallow the error; only a real kill failure on
+		// a live session is surfaced.
+		if t.DoesSessionExist() {
+			errs = append(errs, fmt.Errorf("error killing tmux session: %w", err))
+		}
 	}
 
 	if len(errs) == 0 {
