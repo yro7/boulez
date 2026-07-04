@@ -208,7 +208,7 @@ func newHome(ctx context.Context, program string, autoYes bool) *home {
 	h.list = ui.NewList(&h.spinner, autoYes)
 
 	// The TUI is a pure client of the kernel (C3.2): the fleet is loaded
-	// from the daemon's control socket, not from session.Storage. The kernel
+	// from the daemon's control socket, not from local storage. The kernel
 	// is the single writer; the TUI keeps a read-only cache reconciled on
 	// the poll cadence (see fleetTickMsg) and after every mutation ack.
 	//

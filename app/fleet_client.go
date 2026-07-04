@@ -14,8 +14,9 @@ import (
 // fleetClient is the TUI's seam over the daemon's control socket. The TUI is
 // a pure client of the kernel: it owns the VIEW (a read-only cache of the
 // fleet), not the TRUTH. Every fleet mutation goes through this seam, and the
-// daemon's kernel is the single writer. The TUI never calls
-// session.Storage.SaveInstances / LoadInstances.
+// daemon's kernel is the single writer. The TUI has no fleet persistence of
+// its own — storage write methods live unexported on kernel.Storage (C4.3), so
+// app/ cannot reach them even at compile time.
 //
 // Mirrors app/land_caller.go's shape: a thin adapter that speaks the wire
 // protocol so the TUI neither imports nor constructs a *kernel.Kernel. One

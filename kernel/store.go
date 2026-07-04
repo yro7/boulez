@@ -18,13 +18,13 @@ type instances struct {
 }
 
 // loadLocked populates the in-memory list from storage if not already loaded.
-// Caller must NOT hold the storage's lock; this calls Storage.LoadInstances.
-func (is *instances) loadLocked(storage *session.Storage) {
+// Caller must NOT hold the storage's lock; this calls Storage.loadInstances.
+func (is *instances) loadLocked(storage *Storage) {
 	if is.loaded || storage == nil {
 		is.loaded = true
 		return
 	}
-	loaded, err := storage.LoadInstances()
+	loaded, err := storage.loadInstances()
 	if err != nil {
 		log.ErrorLog.Printf("kernel: failed to load instances: %v", err)
 	}
@@ -131,11 +131,11 @@ func (k *Kernel) registerLocked(inst *session.Instance) {
 // persist writes the current fleet to storage. Best-effort: errors are
 // logged, not returned, because a save failure should not abort a successful
 // mutation. Called outside the kernel lock to avoid holding it during I/O.
-func (k *Kernel) persist(storage *session.Storage, _ *session.Instance) error {
+func (k *Kernel) persist(storage *Storage, _ *session.Instance) error {
 	k.mu.Lock()
 	all := k.instStore.all()
 	k.mu.Unlock()
-	if err := storage.SaveInstances(all); err != nil {
+	if err := storage.saveInstances(all); err != nil {
 		log.ErrorLog.Printf("kernel: failed to persist: %v", err)
 		return err
 	}

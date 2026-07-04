@@ -58,8 +58,7 @@ func newStorageKernel(t *testing.T) (*Kernel, *fakeSpawner, *memStorage) {
 	t.Helper()
 	spawner := &fakeSpawner{}
 	state := newMemStorage()
-	storage, err := session.NewStorage(state)
-	require.NoError(t, err)
+	storage := NewStorage(state)
 	k := New(storage,
 		WithSpawner(spawner),
 		WithMerger(&fakeMerger{}),

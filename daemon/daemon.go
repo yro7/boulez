@@ -6,7 +6,6 @@ import (
 	"claude-squad/log"
 	"claude-squad/program"
 	"claude-squad/protected"
-	"claude-squad/session"
 	"fmt"
 	"os"
 	"os/exec"
@@ -23,10 +22,7 @@ import (
 func RunDaemon(cfg *config.Config) error {
 	log.InfoLog.Printf("starting daemon")
 	state := config.LoadState()
-	storage, err := session.NewStorage(state)
-	if err != nil {
-		return fmt.Errorf("failed to initialize storage: %w", err)
-	}
+	storage := kernel.NewStorage(state)
 
 	// AutoYes is per-instance (persisted on InstanceData). The daemon respects
 	// the stored value rather than forcing it globally — this lets remote
