@@ -9,6 +9,7 @@ import (
 	"path/filepath"
 	"strconv"
 	"strings"
+	"time"
 )
 
 // ProbeSocket dials the kernel control socket to confirm a live daemon is
@@ -29,6 +30,43 @@ func probeSocket(socketPath string) error {
 		return fmt.Errorf("dial kernel socket %s: %w (is the daemon running?)", socketPath, err)
 	}
 	_ = conn.Close()
+	return nil
+}
+
+// EnsureRunning guarantees a live daemon is reachable on the control socket.
+// It is the TUI's boot contract (decision D2): the TUI is a viewer of the
+// kernel, and there is no degraded mode over a broken daemon.
+//
+// If the socket is already serving, EnsureRunning returns nil without
+// launching anything (the daemon is canonical and long-lived). Otherwise it
+// launches the daemon detached (LaunchDaemon is a no-op if another launcher
+// is mid-flight, thanks to the O_EXCL launch lock) and actively waits for the
+// socket to come up. On timeout it returns an error; the caller (the TUI)
+// must NOT proceed — it should surface the daemon log tail and exit non-zero.
+func EnsureRunning(timeout time.Duration) error {
+	socketPath, err := kernel.SocketPath()
+	if err != nil {
+		return fmt.Errorf("resolve socket path: %w", err)
+	}
+
+	// Already up? Nothing to do — the daemon is canonical, do not relaunch.
+	if err := probeSocket(socketPath); err == nil {
+		return nil
+	}
+
+	if err := LaunchDaemon(); err != nil {
+		return fmt.Errorf("launch daemon: %w", err)
+	}
+
+	// WaitForSocket polls for the socket file to appear. It is best-effort on
+	// its own (a stat-able socket is not necessarily a serving one), so we
+	// follow it with a real dial probe to catch a daemon that bound then died.
+	if err := WaitForSocket(socketPath, timeout); err != nil {
+		return fmt.Errorf("daemon socket did not come up within %s: %w", timeout, err)
+	}
+	if err := probeSocket(socketPath); err != nil {
+		return fmt.Errorf("daemon socket appeared but is not serving: %w", err)
+	}
 	return nil
 }
 

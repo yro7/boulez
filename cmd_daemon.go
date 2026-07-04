@@ -87,19 +87,32 @@ func runDaemon() error {
 	return err
 }
 
-// ensureDaemonRunning is the TUI's boot contract (decision D2): the TUI is a
-// viewer of the kernel, and there is no degraded mode over a broken daemon.
-// Implemented in C1.3; stubbed here so the TUI boot compiles during the
-// incremental commits.
+// ensureDaemonRunning is the TUI's boot contract (decision D2): the TUI is
+// a viewer of the kernel, and there is no degraded mode over a broken daemon.
+// If the daemon is already serving it is a no-op; otherwise it auto-starts the
+// daemon detached and waits (5s budget) for the socket to come up.
 func ensureDaemonRunning() error {
-	return nil
+	return daemon.EnsureRunning(5 * time.Second)
 }
 
-// printDaemonFailureHint is the TUI boot failure surface (decision D2). It
-// writes the tail of the daemon log + the path to `cs2 daemon log` to stderr
-// so the user can see why the daemon refused to come up. Implemented in C1.3.
+// printDaemonFailureHint is the TUI boot failure surface (decision D2): when
+// the daemon cannot come up, the TUI does not start. This writes the tail of
+// the daemon log and the path to `cs2 daemon log` to stderr so the user can
+// see why without grepping tmp dirs. The caller returns a non-nil error so
+// cobra exits non-zero.
 func printDaemonFailureHint() {
-	fmt.Println("cs2: the daemon could not come up; the TUI will not start.")
+	fmt.Fprintln(os.Stderr, "cs2: the daemon could not come up; the TUI will not start.")
+	fmt.Fprintln(os.Stderr, "Tail of the daemon log:")
+	if tail, err := readTail(log.LogFilePath(), 30); err == nil {
+		if tail == "" {
+			fmt.Fprintln(os.Stderr, "(log is empty)")
+		} else {
+			fmt.Fprintln(os.Stderr, tail)
+		}
+	} else {
+		fmt.Fprintf(os.Stderr, "(could not read log: %v)\n", err)
+	}
+	fmt.Fprintf(os.Stderr, "Full log: %s  (cs2 daemon log)\n", log.LogFilePath())
 }
 
 // newDaemonStartCmd launches the daemon detached in the background. Reuses
