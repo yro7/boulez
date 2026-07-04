@@ -26,6 +26,11 @@ const (
 	Loading
 	// Paused is if the instance is paused (worktree removed but branch preserved).
 	Paused
+	// Dead is set when the kernel detects the instance's tmux session is
+	// gone (e.g. after a daemon restart following a tmux crash). The instance
+	// is kept visible so the user can inspect/kill it, but it is not running
+	// and cannot be resumed or checked out — only killed. C4.4.
+	Dead
 )
 
 // String renders the Status for logging and for the wire (JSON consumers
@@ -40,6 +45,8 @@ func (s Status) String() string {
 		return "loading"
 	case Paused:
 		return "paused"
+	case Dead:
+		return "dead"
 	default:
 		return "unknown"
 	}
@@ -67,6 +74,8 @@ func (s *Status) UnmarshalJSON(data []byte) error {
 			*s = Loading
 		case "paused":
 			*s = Paused
+		case "dead":
+			*s = Dead
 		default:
 			return fmt.Errorf("invalid Status %q (want running|ready|loading|paused)", str)
 		}
@@ -78,7 +87,7 @@ func (s *Status) UnmarshalJSON(data []byte) error {
 	}
 	st := Status(n)
 	switch st {
-	case Running, Ready, Loading, Paused:
+	case Running, Ready, Loading, Paused, Dead:
 		*s = st
 		return nil
 	default:
@@ -411,6 +420,14 @@ func (i *Instance) SetStatus(status Status) {
 // SetSelectedBranch sets the branch to use when starting the instance.
 func (i *Instance) SetSelectedBranch(branch string) {
 	i.selectedBranch = branch
+}
+
+// SelectedBranch returns the existing branch the instance will start on, or
+// empty when a new branch from HEAD is to be created. It is the read twin of
+// SetSelectedBranch, used by the TUI to build kernel spawn options from a
+// draft instance (C3.3).
+func (i *Instance) SelectedBranch() string {
+	return i.selectedBranch
 }
 
 // SetAutoYes toggles the per-instance AutoYes flag. Persisted on InstanceData
