@@ -224,10 +224,16 @@ func (t *TmuxSession) Restore() error {
 type statusMonitor struct {
 	// Store hashes to save memory.
 	prevOutputHash []byte
+	// captureErrEvery throttles the "error capturing pane content" log in
+	// HasUpdated. The daemon poll loop calls HasUpdated every tick; a
+	// transiently-unreachable instance would otherwise spam once per tick.
+	// Best-effort: a real fix (removing dead instances from the fleet) lives
+	// in the kernel; this just keeps the log quiet in the meantime.
+	captureErrEvery *log.Every
 }
 
 func newStatusMonitor() *statusMonitor {
-	return &statusMonitor{}
+	return &statusMonitor{captureErrEvery: log.NewEvery(60 * time.Second)}
 }
 
 // hash hashes the string.
@@ -275,7 +281,9 @@ func (t *TmuxSession) SendKeys(keys string) error {
 func (t *TmuxSession) HasUpdated() (updated bool, status program.Status) {
 	content, err := t.CapturePaneContent()
 	if err != nil {
-		log.ErrorLog.Printf("error capturing pane content in status monitor: %v", err)
+		if t.monitor.captureErrEvery.ShouldLog() {
+			log.ErrorLog.Printf("error capturing pane content in status monitor: %v", err)
+		}
 		return false, program.StatusUnknown
 	}
 

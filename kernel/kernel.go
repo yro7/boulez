@@ -83,7 +83,7 @@ func (c CallerContext) IsWorker() bool {
 // syscalls go through the kernel so the guards are enforced in one place.
 type Kernel struct {
 	mu       sync.Mutex
-	storage  *session.Storage
+	storage  *Storage
 	spawner  Spawner
 	merger   git.Merger
 	autosave bool // if true, persist to storage after every mutation
@@ -94,12 +94,12 @@ type Kernel struct {
 
 	// protectedBranches is the kernel-level set of branch names a merge may
 	// never target, beyond the conventional main/master the Merger already
-	// refuses (defense in depth lives there). This carries the host repo's
-	// currently checked-out branch (spec decision 7): merging into the branch
-	// the user is actively standing on would clobber their working tree. The
-	// daemon resolves it once at startup and injects it here; tests inject
-	// directly. The Merger cannot know the host repo, so this guard lives in
-	// the kernel — the authority that applies guards no client can bypass.
+	// refuses (defense in depth lives there). It carries the protected store's
+	// union (spec decision 7): the daemon has no cwd, so protected branches
+	// are declared explicitly per repo in ~/.cs2/protected.json and fed here at
+	// boot; the daemon hot-swaps the set on SIGHUP via SetProtectedBranches.
+	// The Merger cannot know the host repo, so this guard lives in the kernel
+	// — the authority that applies guards no client can bypass.
 	protectedBranches []string
 
 	// sessions tracks authenticated control connections by session id. Each
@@ -133,18 +133,29 @@ func WithoutAutosave() Option {
 
 // WithProtectedBranches injects the kernel-level protected-branch set: branch
 // names a merge may never target, on top of the conventional main/master the
-// Merger already refuses. The daemon passes the host repo's current branch
-// here so an orchestrator cannot merge into the branch the user is standing
-// on (spec decision 7, non-contournable by the client).
+// Merger already refuses. The daemon passes the protected store's union here
+// so an orchestrator cannot merge into a declared-protected branch (spec
+// decision 7, non-contournable by the client).
 func WithProtectedBranches(branches []string) Option {
 	return func(k *Kernel) { k.protectedBranches = append([]string(nil), branches...) }
+}
+
+// SetProtectedBranches replaces the kernel-level protected-branch set at
+// runtime. It is the SIGHUP reload contract (C2.2): the daemon re-reads the
+// protected store on SIGHUP and pushes the new union here, without
+// reconstructing the kernel (the single-writer invariant holds). Safe for
+// concurrent use with Merge/Land, which snapshot the set under k.mu.
+func (k *Kernel) SetProtectedBranches(branches []string) {
+	k.mu.Lock()
+	defer k.mu.Unlock()
+	k.protectedBranches = append([]string(nil), branches...)
 }
 
 // New builds a Kernel over the given storage. The spawner defaults to a
 // no-op spawner that errors (production wires the real one via WithSpawner);
 // the merger defaults to git.NewMerger(nil) (local executor). Autosave is on
 // by default so production persists every mutation.
-func New(storage *session.Storage, opts ...Option) *Kernel {
+func New(storage *Storage, opts ...Option) *Kernel {
 	k := &Kernel{
 		storage:  storage,
 		merger:   git.NewMerger(nil),
@@ -182,6 +193,36 @@ func (k *Kernel) ListInstances(filter ListFilter) []InstanceSummary {
 			continue
 		}
 		out = append(out, s)
+	}
+	return out
+}
+
+// ListInstancesData returns a snapshot of the fleet as serializable
+// InstanceData records, optionally filtered. It is the TUI's read path: the
+// TUI is a pure client of the kernel and reconstructs read-only view handles
+// (session.FromInstanceData) from these records. Returning InstanceData (not
+// just InstanceSummary) lets the TUI rebuild worktree-backed handles for the
+// preview/diff/terminal panes and attach, without the TUI reading
+// session.Storage or writing fleet state. The kernel remains the single
+// writer; this is a read syscall, safe to call concurrently.
+//
+// This is Option B of the inversion plan: the TUI keeps a read-only cache of
+// *session.Instance view handles (refreshed from this syscall), while every
+// fleet mutation goes through the kernel. The wire alias is
+// `list_instances_full`; the lightweight `list_instances` (summaries) stays
+// for `cs2 ctl`'s human-facing output.
+func (k *Kernel) ListInstancesData(filter ListFilter) []session.InstanceData {
+	k.mu.Lock()
+	defer k.mu.Unlock()
+
+	instances := k.instancesLocked()
+	out := make([]session.InstanceData, 0, len(instances))
+	for _, inst := range instances {
+		s := summarize(inst)
+		if !filter.matches(s) {
+			continue
+		}
+		out = append(out, inst.ToInstanceData())
 	}
 	return out
 }
@@ -310,6 +351,15 @@ func (k *Kernel) Kill(id string) error {
 	if err := inst.Kill(); err != nil {
 		return err
 	}
+	// Remove from the in-memory fleet before persisting. Without this the
+	// just-killed instance is re-saved to storage and resurrected on the next
+	// daemon boot (Bug B: kill zombie). The kernel is the single writer, so
+	// the store is mutated only here, under the lock.
+	k.mu.Lock()
+	if k.instStore != nil {
+		k.instStore.remove(id)
+	}
+	k.mu.Unlock()
 	if autosave && storage != nil {
 		_ = k.persist(storage, inst)
 	}
@@ -323,17 +373,18 @@ func (k *Kernel) Kill(id string) error {
 // (an orchestrator, Shape B) decides to spawn a resolver. Mutating.
 func (k *Kernel) Merge(caller CallerContext, repoPath, targetBranch string, sourceBranches []string, strategy git.Strategy) (git.MergeResult, error) {
 	// Kernel-level guard (spec decision 7, non-contournable): refuse to merge
-	// into the host repo's current branch (and any extra protected branch the
-	// daemon injected). The Merger defends main/master in depth; this guard
-	// covers the host-current-branch case the Merger cannot see (it only knows
-	// the target repo, not which repo is the user's working repo).
-	if isKernelProtected(k.protectedBranches, targetBranch) {
+	// into any declared-protected branch (the protected store's union). The
+	// Merger defends main/master in depth separately; this guard covers the
+	// declared set the Merger cannot see. Snapshot under k.mu so a concurrent
+	// SIGHUP reload (SetProtectedBranches) cannot race the read.
+	k.mu.Lock()
+	protected := append([]string(nil), k.protectedBranches...)
+	merger := k.merger
+	k.mu.Unlock()
+	if isKernelProtected(protected, targetBranch) {
 		return git.MergeResult{Status: git.MergeConflict, Message: "protected branch"}, git.ErrProtectedBranch{Branch: targetBranch}
 	}
 
-	k.mu.Lock()
-	merger := k.merger
-	k.mu.Unlock()
 	if merger == nil {
 		return git.MergeResult{}, fmt.Errorf("kernel: no merger wired")
 	}
@@ -355,8 +406,8 @@ func (k *Kernel) Merge(caller CallerContext, repoPath, targetBranch string, sour
 // explicit authority to land onto a trunk (main/master). This is the "land to
 // main" syscall: it bypasses ONLY the conventional-trunk guard, and only for a
 // top-level caller. Workers and orchestrators cannot call it (they must use
-// Merge, which refuses trunks). The host-current-branch guard still applies:
-// you cannot land into the branch you're standing on.
+// Merge, which refuses trunks). The protected-branch guard still applies:
+// you cannot land into a declared-protected branch.
 //
 // v1 lands ONE source branch per call (the instance's own branch). On
 // conflict, MergeConflict is returned and the repo is left for resolution
@@ -370,18 +421,19 @@ func (k *Kernel) Land(caller CallerContext, repoPath, targetBranch, sourceBranch
 		return git.MergeResult{Status: git.MergeConflict, Message: "non-top-level land"}, ErrNonTopLevelLand{}
 	}
 
-	// Kernel-level guard (spec decision 7): refuse to land into the host repo's
-	// current branch. The Merger's trunk guard is intentionally lifted for
-	// this path (via MergeTrunk), but the host-current-branch guard is NOT —
-	// it would clobber the user's working tree. The Merger cannot know the
-	// host repo, so this guard lives here, non-contournable by the client.
-	if isKernelProtected(k.protectedBranches, targetBranch) {
+	// Kernel-level guard (spec decision 7): refuse to land into a
+	// declared-protected branch. The Merger's trunk guard is intentionally
+	// lifted for this path (via MergeTrunk), but the protected-branch guard
+	// is NOT — landing into a protected branch would clobber the user's working
+	// tree. Snapshot under k.mu so a concurrent SIGHUP reload cannot race.
+	k.mu.Lock()
+	protected := append([]string(nil), k.protectedBranches...)
+	merger := k.merger
+	k.mu.Unlock()
+	if isKernelProtected(protected, targetBranch) {
 		return git.MergeResult{Status: git.MergeConflict, Message: "protected branch"}, git.ErrProtectedBranch{Branch: targetBranch}
 	}
 
-	k.mu.Lock()
-	merger := k.merger
-	k.mu.Unlock()
 	if merger == nil {
 		return git.MergeResult{}, fmt.Errorf("kernel: no merger wired")
 	}

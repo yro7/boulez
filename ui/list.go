@@ -16,6 +16,7 @@ import (
 
 const readyIcon = "● "
 const pausedIcon = "⏸ "
+const deadIcon = "✝ "
 
 var readyStyle = lipgloss.NewStyle().
 	Foreground(lipgloss.AdaptiveColor{Light: "#51bd73", Dark: "#51bd73"})
@@ -28,6 +29,9 @@ var removedLinesStyle = lipgloss.NewStyle().
 
 var pausedStyle = lipgloss.NewStyle().
 	Foreground(lipgloss.AdaptiveColor{Light: "#888888", Dark: "#888888"})
+
+var deadStyle = lipgloss.NewStyle().
+	Foreground(lipgloss.AdaptiveColor{Light: "#b23b3b", Dark: "#c97070"})
 
 var titleStyle = lipgloss.NewStyle().
 	Padding(1, 1, 0, 1).
@@ -224,6 +228,8 @@ func (r *InstanceRenderer) Render(i *session.Instance, idx int, selected bool, h
 		join = readyStyle.Render(readyIcon)
 	case session.Paused:
 		join = pausedStyle.Render(pausedIcon)
+	case session.Dead:
+		join = deadStyle.Render(deadIcon)
 	default:
 	}
 
@@ -522,4 +528,79 @@ func (l *List) MoveDown() bool {
 // GetInstances returns all instances in the list
 func (l *List) GetInstances() []*session.Instance {
 	return l.items
+}
+
+// SetInstances replaces the list's items wholesale, re-derives the repo
+// counts, and preserves the selection by ID. It is the TUI's read-only
+// reconcile path (C3.2): the TUI keeps a read-only cache of the fleet
+// refreshed from the kernel's list_instances_full snapshot, and this method
+// applies a new snapshot to the view without losing the user's selection.
+//
+// The caller owns the reconstruction of the *session.Instance view handles
+// (via session.FromInstanceData); the list only owns the view ordering and
+// per-instance bookkeeping (repo counts, selection).
+func (l *List) SetInstances(items []*session.Instance) {
+	// Remember the selected instance's ID so we can restore it after replace.
+	var selectedID string
+	if len(l.items) > 0 && l.selectedIdx < len(l.items) {
+		selectedID = l.items[l.selectedIdx].GetID()
+	}
+
+	l.items = items
+
+	// Re-derive repo counts from the new set.
+	l.repos = make(map[string]int, len(items))
+	for _, inst := range items {
+		if inst.Started() {
+			if repoName, err := inst.RepoName(); err == nil && repoName != "" {
+				l.repos[repoName]++
+			}
+		}
+	}
+
+	// Restore selection by ID; fall back to 0 (or no selection) if absent.
+	l.selectedIdx = 0
+	if selectedID != "" {
+		for i, inst := range items {
+			if inst.GetID() == selectedID {
+				l.selectedIdx = i
+				break
+			}
+		}
+	}
+	if len(items) == 0 {
+		l.selectedIdx = 0
+	}
+}
+
+// FindInstance returns the instance with the given ID, or nil if absent.
+func (l *List) FindInstance(id string) *session.Instance {
+	for _, inst := range l.items {
+		if inst.GetID() == id {
+			return inst
+		}
+	}
+	return nil
+}
+
+// RemoveByID removes the instance with the given ID from the view. It is the
+// TUI's path to drop a local draft once the kernel owns the real instance
+// (C3.3): the TUI kept a draft in the list during name entry, and on the
+// spawn ack it removes the draft and lets the fleet refresh surface the
+// kernel's instance. No-op if the ID is absent. Selection is nudged to the
+// previous index when the removed item was selected.
+func (l *List) RemoveByID(id string) {
+	for i, inst := range l.items {
+		if inst.GetID() != id {
+			continue
+		}
+		l.items = append(l.items[:i], l.items[i+1:]...)
+		if l.selectedIdx >= len(l.items) {
+			l.selectedIdx = len(l.items) - 1
+		}
+		if l.selectedIdx < 0 {
+			l.selectedIdx = 0
+		}
+		return
+	}
 }

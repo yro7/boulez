@@ -1,7 +1,9 @@
 package daemon
 
 import (
+	"claude-squad/kernel"
 	"claude-squad/log"
+	"claude-squad/protected"
 	"os"
 	"path/filepath"
 	"sync"
@@ -126,3 +128,48 @@ func itoa(pid int) string {
 	return string(b[i:])
 }
 
+
+// TestReloadProtected_PushesNewSetIntoKernel proves the SIGHUP reload contract
+// (C2.2): reloadProtected reads the protected store and pushes the union into
+// the running kernel via SetProtectedBranches, without reconstructing it. A
+// branch declared protected after boot is refused immediately after a reload.
+// A bad store leaves the previous set in place (fail closed).
+func TestReloadProtected_PushesNewSetIntoKernel(t *testing.T) {
+	store := protected.NewAt(filepath.Join(t.TempDir(), "protected.json"))
+	k := kernel.New(nil, kernel.WithoutAutosave())
+
+	// Initially empty: kernel has no protected branches.
+	require.NoError(t, store.Add("/repo", "release"))
+	reloadProtected(store, k)
+
+	// After reload: a merge into "release" would be refused at the kernel
+	// (verified at the kernel level in kernel_test.go); here we assert the
+	// protected set was actually pushed by reading the kernel's state.
+	k.SetProtectedBranches(nil) // reset to verify reload repopulates
+	reloadProtected(store, k)
+
+	// The kernel now refuses "release" — drive it through Land to prove the
+	// reload took effect end-to-end. Land needs a merger; a nil merger is
+	// fine because the protected guard fires before the merger runs.
+	_, err := k.Land(kernel.CallerContext{}, "/repo", "release", "feat", 0)
+	require.Error(t, err, "protected branch must be refused after SIGHUP reload")
+}
+
+// TestReloadProtected_BadStoreKeepsPreviousSet proves a corrupt/missing store
+// does not empty protection on reload — the daemon keeps the previous set
+// (fail closed), so a transient disk error cannot open a protected branch.
+func TestReloadProtected_BadStoreKeepsPreviousSet(t *testing.T) {
+	dir := t.TempDir()
+	store := protected.NewAt(filepath.Join(dir, "protected.json"))
+	require.NoError(t, store.Add("/repo", "release"))
+	k := kernel.New(nil, kernel.WithoutAutosave())
+	reloadProtected(store, k)
+
+	// Corrupt the store so the next Flat() returns empty (self-heal).
+	require.NoError(t, os.WriteFile(store.Path(), []byte("not json"), 0o644))
+
+	// Reload must log and leave the previous set intact.
+	reloadProtected(store, k)
+	_, err := k.Land(kernel.CallerContext{}, "/repo", "release", "feat", 0)
+	require.Error(t, err, "previous protected set must remain after a bad reload")
+}
