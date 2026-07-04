@@ -18,6 +18,7 @@ import (
 	"os"
 
 	"claude-squad/config"
+	"claude-squad/host"
 	"claude-squad/session"
 	"claude-squad/session/git"
 )
@@ -143,6 +144,17 @@ func dispatch(k *Kernel, sess *ctlSession, req Request) Response {
 		}
 		summaries := k.ListInstances(p.toFilter())
 		return okResp(summaries)
+	case "list_instances_full":
+		// The TUI's read path (Option B): returns full InstanceData records so
+		// the TUI can reconstruct read-only view handles via
+		// session.FromInstanceData. The lightweight `list_instances` (summaries)
+		// remains for `cs2 ctl`'s human-facing output.
+		var p listParams
+		if err := json.Unmarshal(req.Params, &p); err != nil {
+			return errResp(CodeInternal, "bad params: "+err.Error())
+		}
+		data := k.ListInstancesData(p.toFilter())
+		return okResp(data)
 	case "get_instance":
 		var p struct{ ID string `json:"id"` }
 		if err := json.Unmarshal(req.Params, &p); err != nil {
@@ -269,6 +281,7 @@ type spawnParams struct {
 	Program         string         `json:"program,omitempty"`
 	Title           string         `json:"title,omitempty"`
 	Kind            session.Kind   `json:"kind,omitempty"`
+	Host            string         `json:"host,omitempty"`
 	Caller          callerParams   `json:"caller,omitempty"`
 }
 
@@ -281,6 +294,7 @@ func (p spawnParams) toOptions() SpawnOptions {
 		Program:         p.Program,
 		Title:           p.Title,
 		Kind:            p.Kind,
+		Host:            host.Lookup(p.Host),
 	}
 }
 
@@ -398,6 +412,14 @@ func Call(socketPath string, req Request) (Response, error) {
 // instance, and the subsequent request is attributed to that instance. A
 // one-shot `Call` can't do this because each Call is a fresh connection
 // (unauthenticated top-level). Used by `cs2 ctl as <id> ...` and by tests.
+//
+// Abort-on-error (C4.2, Bug C): if a response in the sequence is an error,
+// CallSession stops sending further requests and returns the responses
+// collected so far. This is what prevents `cs2 ctl as <bogus-id> spawn_worker`
+// from issuing the spawn after `authenticate` fails with UNKNOWN_INSTANCE —
+// the syscall is never written to the socket, so there is no spawn
+// side-effect. Earlier responses whose error is on the FINAL request are
+// unaffected (the loop simply ends).
 func CallSession(socketPath string, reqs []Request) ([]Response, error) {
 	conn, err := net.Dial("unix", socketPath)
 	if err != nil {
@@ -424,6 +446,13 @@ func CallSession(socketPath string, reqs []Request) ([]Response, error) {
 			return nil, fmt.Errorf("unmarshal response: %w", err)
 		}
 		resps = append(resps, resp)
+		// Abort: a failed request (e.g. authenticate → UNKNOWN_INSTANCE)
+		// must not be followed by further syscalls on the same session, or
+		// the client would issue a side-effecting syscall as an unauthenticated
+		// top-level caller. Return what we have; the caller surfaces the error.
+		if resp.Error != nil {
+			return resps, nil
+		}
 	}
 	return resps, nil
 }

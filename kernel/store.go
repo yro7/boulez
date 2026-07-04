@@ -18,13 +18,13 @@ type instances struct {
 }
 
 // loadLocked populates the in-memory list from storage if not already loaded.
-// Caller must NOT hold the storage's lock; this calls Storage.LoadInstances.
-func (is *instances) loadLocked(storage *session.Storage) {
+// Caller must NOT hold the storage's lock; this calls Storage.loadInstances.
+func (is *instances) loadLocked(storage *Storage) {
 	if is.loaded || storage == nil {
 		is.loaded = true
 		return
 	}
-	loaded, err := storage.LoadInstances()
+	loaded, err := storage.loadInstances()
 	if err != nil {
 		log.ErrorLog.Printf("kernel: failed to load instances: %v", err)
 	}
@@ -131,13 +131,62 @@ func (k *Kernel) registerLocked(inst *session.Instance) {
 // persist writes the current fleet to storage. Best-effort: errors are
 // logged, not returned, because a save failure should not abort a successful
 // mutation. Called outside the kernel lock to avoid holding it during I/O.
-func (k *Kernel) persist(storage *session.Storage, _ *session.Instance) error {
+func (k *Kernel) persist(storage *Storage, _ *session.Instance) error {
 	k.mu.Lock()
 	all := k.instStore.all()
 	k.mu.Unlock()
-	if err := storage.SaveInstances(all); err != nil {
+	if err := storage.saveInstances(all); err != nil {
 		log.ErrorLog.Printf("kernel: failed to persist: %v", err)
 		return err
 	}
 	return nil
+}
+
+// ReconcileLiveness probes the tmux liveness of every loaded instance and
+// demotes any whose tmux session is definitively gone to Dead. It is the
+// C4.4 boot reconciliation: after a daemon restart following a tmux crash,
+// instances persisted as Running would otherwise show as a ghost "running"
+// even though their tmux session no longer exists.
+//
+// Only a started, non-paused, non-dead instance is a candidate: a Paused
+// instance intentionally has no live tmux session (Pause kills it), and an
+// already-Dead instance is left alone. Demotion happens ONLY when tmux
+// definitively reports the session absent (DoesSessionExist == false) — a
+// timeout or tmux error must NOT demote, because a slow instance is not a
+// dead one (spec: never demote on a timeout).
+//
+// Safe to call with no tmux available (e.g. in-memory test kernels): an
+// instance with no tmuxSession handle is skipped, since there is nothing to
+// probe.
+func (k *Kernel) ReconcileLiveness() {
+	k.mu.Lock()
+	instances := k.instancesLocked()
+	// Snapshot the candidates under the lock so the probe loop releases it
+	// before shelling out to tmux (DoesSessionExist blocks on a subprocess).
+	candidates := make([]*session.Instance, 0, len(instances))
+	for _, inst := range instances {
+		if !inst.Started() || inst.Paused() || inst.Status == session.Dead {
+			continue
+		}
+		candidates = append(candidates, inst)
+	}
+	k.mu.Unlock()
+
+	demoted := false
+	for _, inst := range candidates {
+		if inst.TmuxAlive() {
+			continue
+		}
+		inst.SetStatus(session.Dead)
+		log.WarningLog.Printf("kernel: instance %s demoted to Dead (tmux session gone)", inst.GetID())
+		demoted = true
+	}
+
+	if demoted {
+		storage := k.storage
+		autosave := k.autosave
+		if autosave && storage != nil {
+			_ = k.persist(storage, nil)
+		}
+	}
 }
