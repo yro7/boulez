@@ -351,6 +351,15 @@ func (k *Kernel) Kill(id string) error {
 	if err := inst.Kill(); err != nil {
 		return err
 	}
+	// Remove from the in-memory fleet before persisting. Without this the
+	// just-killed instance is re-saved to storage and resurrected on the next
+	// daemon boot (Bug B: kill zombie). The kernel is the single writer, so
+	// the store is mutated only here, under the lock.
+	k.mu.Lock()
+	if k.instStore != nil {
+		k.instStore.remove(id)
+	}
+	k.mu.Unlock()
 	if autosave && storage != nil {
 		_ = k.persist(storage, inst)
 	}
