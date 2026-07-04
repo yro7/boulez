@@ -6,8 +6,10 @@ import (
 	"claude-squad/daemon"
 	"claude-squad/kernel"
 	"claude-squad/log"
+	"claude-squad/protected"
 	"fmt"
 	"os"
+	"sort"
 	"strings"
 	"time"
 
@@ -40,6 +42,11 @@ Subcommands:
   status  Report whether the daemon is running (socket + PID).
   log     Print the tail of the daemon log.
 
+  protect <repo> <branch>      Declare a branch protected for a repo (a
+                               merge into it is refused kernel-wide).
+  unprotect <repo> <branch>   Remove a protected-branch declaration.
+  list-protected               List declared protected branches per repo.
+
 The daemon is normally started automatically by the TUI (cs2 / cs2 tui) and
 by cs2 ctl when the socket is absent. These subcommands exist for explicit
 control and for service installation.`,
@@ -49,6 +56,9 @@ control and for service installation.`,
 	cmd.AddCommand(newDaemonStopCmd())
 	cmd.AddCommand(newDaemonStatusCmd())
 	cmd.AddCommand(newDaemonLogCmd())
+	cmd.AddCommand(newDaemonProtectCmd())
+	cmd.AddCommand(newDaemonUnprotectCmd())
+	cmd.AddCommand(newDaemonListProtectedCmd())
 	return cmd
 }
 
@@ -270,4 +280,110 @@ func readTail(path string, n int) (string, error) {
 		lines = lines[len(lines)-n:]
 	}
 	return strings.Join(lines, "\n"), nil
+}
+
+// newDaemonProtectCmd declares a branch protected for a repo (C2.1). The
+// declaration is per-repo on disk; the daemon picks it up at boot and on
+// SIGHUP. Protected branches are enforced kernel-wide (a branch protected
+// for any repo is refused for all repos) — see the protected package docs.
+func newDaemonProtectCmd() *cobra.Command {
+	return &cobra.Command{
+		Use:   "protect <repo> <branch>",
+		Short: "Declare a branch protected for a repo",
+		Long: `Declares a branch protected for the given repo. The daemon refuses any
+merge (or land) into a protected branch, kernel-wide, on top of the
+Merger's conventional main/master guard.
+
+The declaration is per-repo on disk. The daemon reads the protected store
+at boot and on SIGHUP, so a protect/unprotect takes effect after a SIGHUP
+(or a daemon restart).
+
+The repo path may be relative; it is resolved to absolute.`,
+		Args: cobra.ExactArgs(2),
+		RunE: func(cmd *cobra.Command, args []string) error {
+			log.Initialize(false)
+			log.SetPrintPathOnClose(false)
+			defer log.Close()
+
+			store, err := protected.New()
+			if err != nil {
+				return fmt.Errorf("open protected store: %w", err)
+			}
+			if err := store.Add(args[0], args[1]); err != nil {
+				return err
+			}
+			fmt.Printf("protected %q for %q (reload daemon: kill -HUP <daemon-pid>)\n", args[1], args[0])
+			return nil
+		},
+	}
+}
+
+// newDaemonUnprotectCmd removes a protected-branch declaration (C2.1).
+func newDaemonUnprotectCmd() *cobra.Command {
+	return &cobra.Command{
+		Use:   "unprotect <repo> <branch>",
+		Short: "Remove a protected-branch declaration",
+		Long: `Removes a protected-branch declaration for the given repo. Removing a
+branch that was not protected is a no-op.
+
+The change takes effect after a SIGHUP (or a daemon restart).`,
+		Args: cobra.ExactArgs(2),
+		RunE: func(cmd *cobra.Command, args []string) error {
+			log.Initialize(false)
+			log.SetPrintPathOnClose(false)
+			defer log.Close()
+
+			store, err := protected.New()
+			if err != nil {
+				return fmt.Errorf("open protected store: %w", err)
+			}
+			if err := store.Remove(args[0], args[1]); err != nil {
+				return err
+			}
+			fmt.Printf("unprotected %q for %q (reload daemon: kill -HUP <daemon-pid>)\n", args[1], args[0])
+			return nil
+		},
+	}
+}
+
+// newDaemonListProtectedCmd lists declared protected branches per repo (C2.1).
+func newDaemonListProtectedCmd() *cobra.Command {
+	return &cobra.Command{
+		Use:   "list-protected",
+		Short: "List declared protected branches per repo",
+		RunE: func(cmd *cobra.Command, args []string) error {
+			log.Initialize(false)
+			log.SetPrintPathOnClose(false)
+			defer log.Close()
+
+			store, err := protected.New()
+			if err != nil {
+				return fmt.Errorf("open protected store: %w", err)
+			}
+			all, err := store.Load()
+			if err != nil {
+				return err
+			}
+			repos := make([]string, 0, len(all))
+			for r := range all {
+				repos = append(repos, r)
+			}
+			sort.Strings(repos)
+			if len(repos) == 0 {
+				fmt.Println("(no protected branches declared)")
+				fmt.Printf("store: %s\n", store.Path())
+				return nil
+			}
+			for _, r := range repos {
+				branches := append([]string(nil), all[r]...)
+				sort.Strings(branches)
+				fmt.Printf("%s:\n", r)
+				for _, b := range branches {
+					fmt.Printf("  - %s\n", b)
+				}
+			}
+			fmt.Printf("store: %s\n", store.Path())
+			return nil
+		},
+	}
 }
