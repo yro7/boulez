@@ -68,9 +68,9 @@ control and for service installation.`,
 	return cmd
 }
 
-// newDaemonRunCmd runs the daemon in the foreground. Mirrors what the hidden
-// --daemon flag does (kept for back-compat for one release). This is the
-// canonical entrypoint the service unit and auto-start invoke.
+// newDaemonRunCmd runs the daemon in the foreground. This is the canonical
+// entrypoint the service unit and auto-start invoke (C4.6 removed the
+// `--daemon` back-compat alias that previously also reached here).
 func newDaemonRunCmd() *cobra.Command {
 	return &cobra.Command{
 		Use:   "run",
@@ -87,9 +87,10 @@ is visible directly.`,
 	}
 }
 
-// runDaemon is the single foreground-daemon entrypoint shared by `cs2 daemon
-// run` and the hidden `--daemon` back-compat flag. It owns logger setup so a
-// foreground daemon logs to the claudesquad log with the [DAEMON] prefix.
+// runDaemon is the single foreground-daemon entrypoint invoked by
+// `cs2 daemon run` (and, before C4.6, the now-removed `--daemon` alias).
+// It owns logger setup so a foreground daemon logs to the claudesquad log
+// with the [DAEMON] prefix.
 func runDaemon() error {
 	log.Initialize(true)
 	log.SetPrintPathOnClose(false) // daemon: silent, machine-facing
