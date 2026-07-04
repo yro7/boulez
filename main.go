@@ -5,7 +5,6 @@ import (
 	cmd2 "claude-squad/cmd"
 	"claude-squad/config"
 	"claude-squad/daemon"
-	"claude-squad/kernel"
 	"claude-squad/log"
 	"claude-squad/session"
 	"claude-squad/session/git"
@@ -15,7 +14,6 @@ import (
 	"fmt"
 	"os"
 	"path/filepath"
-	"time"
 
 	"github.com/spf13/cobra"
 )
@@ -51,28 +49,19 @@ var (
 			if autoYesFlag {
 				autoYes = true
 			}
-			// Launch the daemon (detached) so it is up during the TUI session. The
-			// daemon owns the kernel (control API) so `cs2 ctl` works. It is the
-			// single writer; the TUI is a console/observer. The daemon's
-			// single-instance lock makes a duplicate launch a no-op. We no longer
-			// stop a running daemon on TUI start — the daemon is now canonical and
-			// long-lived, not a throwaway auto-yes poller.
+			// Ensure the daemon (the kernel / control authority) is reachable.
+			// The TUI is a viewer of the kernel: no kernel, no viewer (decision
+			// D2). If the socket is absent we auto-start the daemon detached;
+			// if it does not come up within the timeout we fail loud — print the
+			// daemon log tail and the path to `cs2 daemon log` and exit
+			// non-zero. There is no degraded TUI mode over a broken daemon.
 			//
-			// NOTE: the daemon no longer spawns a global orchestrator at startup
-			// (the old "instance 0" always-on bootstrap is gone). Orchestrators
-			// are spawned on demand from the TUI via the O key.
-			if err := daemon.LaunchDaemon(); err != nil {
-				log.ErrorLog.Printf("failed to launch daemon: %v", err)
-			} else {
-				// Wait for the daemon's control socket before loading the fleet so
-				// a `cs2 ctl` call from the TUI/agents does not race a still-starting
-				// daemon. Best-effort: on timeout we proceed with whatever storage
-				// holds.
-				if socketPath, serr := kernel.SocketPath(); serr == nil {
-					if werr := daemon.WaitForSocket(socketPath, 5*time.Second); werr != nil {
-						log.WarningLog.Printf("daemon socket not ready at TUI start: %v", werr)
-					}
-				}
+			// The daemon's parent during the transition is this Setsid-detached
+			// child; after Phase 2 it is launchd/systemd. The TUI's job is to
+			// ensure the daemon is reachable, not to be its parent (C1.3/C1.4).
+			if err := ensureDaemonRunning(); err != nil {
+				printDaemonFailureHint()
+				return fmt.Errorf("daemon not reachable: %w", err)
 			}
 
 			return app.Run(ctx, program, autoYes)
