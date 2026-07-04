@@ -5,6 +5,7 @@ import (
 	"claude-squad/kernel"
 	"claude-squad/log"
 	"claude-squad/program"
+	"claude-squad/protected"
 	"claude-squad/session"
 	"fmt"
 	"os"
@@ -43,13 +44,19 @@ func RunDaemon(cfg *config.Config) error {
 	// and serves the control socket so `cs2 ctl` (and future LLM tools) can
 	// drive the fleet. The auto-yes loop below runs alongside.
 	//
-	// Inject the host repo's current branch as a kernel-level protected
-	// branch (spec decision 7): an orchestrator may never merge INTO the
-	// branch the user is actively standing on — that would clobber their
-	// working tree. The Merger cannot see the host repo, so this guard lives
-	// in the kernel (non-contournable by the client). Resolved once here, at
-	// daemon startup, from the cwd the user launched cs2 from.
-	protected := resolveHostProtectedBranches()
+	// Protected branches (spec decision 7): the daemon has no cwd and no repo
+	// of its own (it is a service, C2.2), so it cannot derive "the branch the
+	// user is standing on." Instead, protected branches are declared
+	// explicitly per repo in the protected store (~/.cs2/protected.json) and
+	// fed to the kernel as a flat, kernel-wide guard. The store is reloaded
+	// on SIGHUP (see reloadProtected below) without reconstructing the kernel.
+	// The conventional main/master guard in the Merger remains as defense in
+	// depth.
+	protectedStore, err := protected.New()
+	if err != nil {
+		return fmt.Errorf("failed to open protected store: %w", err)
+	}
+	protected, _ := protectedStore.Flat()
 	k := kernel.New(storage, kernel.WithSpawner(kernelSpawner{}), kernel.WithMerger(realMerger{}), kernel.WithProtectedBranches(protected))
 
 	// NOTE: the daemon no longer auto-spawns a global orchestrator. The old
@@ -114,11 +121,21 @@ func RunDaemon(cfg *config.Config) error {
 		}
 	}()
 
-	// Notify on SIGINT (Ctrl+C) and SIGTERM. Save instances before
+	// Notify on SIGINT (Ctrl+C) and SIGTERM for shutdown, and SIGHUP for
+	// reload (C2.2: reload the protected-branch set without restarting the
+	// daemon — the kernel's single-writer contract is preserved, only the
+	// protected set is hot-swapped via SetProtectedBranches).
 	sigChan := make(chan os.Signal, 1)
-	signal.Notify(sigChan, syscall.SIGINT, syscall.SIGTERM)
-	sig := <-sigChan
-	log.InfoLog.Printf("received signal %s", sig.String())
+	signal.Notify(sigChan, syscall.SIGINT, syscall.SIGTERM, syscall.SIGHUP)
+	for {
+		sig := <-sigChan
+		if sig == syscall.SIGHUP {
+			reloadProtected(protectedStore, k)
+			continue
+		}
+		log.InfoLog.Printf("received signal %s", sig.String())
+		break
+	}
 
 	// Stop the goroutine so we don't race.
 	close(stopCh)
@@ -238,30 +255,20 @@ func StopDaemon() error {
 	return nil
 }
 
-// resolveHostProtectedBranches returns the host repo's currently checked-out
-// branch, so the kernel can refuse merges into it (spec decision 7). It uses
-// the daemon process's cwd — which is the directory the user launched cs2
-// from (the daemon inherits the parent's cwd). On any error (not a git repo,
-// detached HEAD, git missing) it returns nil: the conventional main/master
-// guard still applies via the Merger, so failing open is safe.
-func resolveHostProtectedBranches() []string {
-	cwd, err := os.Getwd()
+// reloadProtected re-reads the protected-branch store and pushes the new
+// union into the running kernel (C2.2 SIGHUP contract). It is the daemon's
+// hot-reload path: the kernel is never reconstructed (the single-writer
+// invariant holds), only its protected set is swapped. Failures log and
+// leave the previous set in place — a bad store must not empty protection
+// (fail closed).
+func reloadProtected(store *protected.Store, k *kernel.Kernel) {
+	branches, err := store.Flat()
 	if err != nil {
-		log.WarningLog.Printf("could not resolve cwd for host-branch guard: %v", err)
-		return nil
+		log.WarningLog.Printf("SIGHUP: could not reload protected store (keeping previous set): %v", err)
+		return
 	}
-	out, err := exec.Command("git", "-C", cwd, "rev-parse", "--abbrev-ref", "HEAD").Output()
-	if err != nil {
-		// Not a git repo, or git unavailable — no host branch to protect.
-		return nil
-	}
-	branch := strings.TrimSpace(string(out))
-	if branch == "" || branch == "HEAD" {
-		// detached HEAD — no branch name to protect.
-		return nil
-	}
-	log.InfoLog.Printf("host repo %s is on branch %q; protecting it from merges", cwd, branch)
-	return []string{branch}
+	k.SetProtectedBranches(branches)
+	log.InfoLog.Printf("SIGHUP: reloaded protected set (%d branch(es))", len(branches))
 }
 
 // acquireLaunchLock tries to atomically create the launch lock file. Returns

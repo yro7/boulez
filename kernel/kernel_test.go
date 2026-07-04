@@ -242,12 +242,12 @@ func TestKernel_Merge_NoMergerWired(t *testing.T) {
 }
 
 // TestKernel_Merge_RefusesHostCurrentBranch proves the kernel-level guard
-// (spec decision 7): an injected protected branch (the host repo's current
-// branch) is refused at the kernel, BEFORE the merger runs. This is the case
-// that passed at fault in dogfooding — `merge --target-branch integration`
-// on a host repo checked out at integration succeeded. The guard is
-// non-contournable: a client cannot bypass it by lying, since the kernel
-// applies it from its injected config, not from request params.
+// (spec decision 7): an injected protected branch is refused at the kernel,
+// BEFORE the merger runs. This is the case that passed at fault in dogfooding
+// — `merge --target-branch integration` on a host repo checked out at
+// integration succeeded. The guard is non-contournable: a client cannot
+// bypass it by lying, since the kernel applies it from its injected config,
+// not from request params.
 func TestKernel_Merge_RefusesHostCurrentBranch(t *testing.T) {
 	merger := &fakeMerger{result: git.MergeResult{Status: git.MergeMerged}}
 	k := New(nil, WithMerger(merger), WithoutAutosave(), WithProtectedBranches([]string{"integration"}))
@@ -378,10 +378,10 @@ func TestKernel_Land_OrchestratorRefused(t *testing.T) {
 	assert.Empty(t, merger.calls)
 }
 
-// TestKernel_Land_HostCurrentBranchStillRefused proves the host-current-branch
-// guard is NOT lifted for Land: you cannot land into the branch you're
-// standing on, even as a top-level caller. Only the conventional-trunk guard
-// is lifted.
+// TestKernel_Land_HostCurrentBranchStillRefused proves the protected-branch
+// guard is NOT lifted for Land: you cannot land into a declared-protected
+// branch, even as a top-level caller. Only the conventional-trunk guard is
+// lifted.
 func TestKernel_Land_HostCurrentBranchStillRefused(t *testing.T) {
 	merger := &fakeMerger{result: git.MergeResult{Status: git.MergeMerged}}
 	k := New(nil, WithMerger(merger), WithoutAutosave(), WithProtectedBranches([]string{"integration"}))
@@ -391,7 +391,46 @@ func TestKernel_Land_HostCurrentBranchStillRefused(t *testing.T) {
 	var pbe git.ErrProtectedBranch
 	require.ErrorAs(t, err, &pbe)
 	assert.Equal(t, "integration", pbe.Branch)
-	assert.Empty(t, merger.calls, "host-current-branch guard fires before the merger")
+	assert.Empty(t, merger.calls, "protected-branch guard fires before the merger")
+}
+
+// TestKernel_SetProtectedBranches_ReloadsAtRuntime proves the SIGHUP reload
+// contract (C2.2): the daemon can hot-swap the protected set without
+// reconstructing the kernel, and the new set takes effect immediately for
+// subsequent Merge/Land calls. This is the seam that lets the daemon read
+// ~/.cs2/protected.json on SIGHUP and push the union into the running kernel.
+func TestKernel_SetProtectedBranches_ReloadsAtRuntime(t *testing.T) {
+	merger := &fakeMerger{result: git.MergeResult{Status: git.MergeMerged}}
+	k := New(nil, WithMerger(merger), WithoutAutosave())
+
+	// Before reload: merging into "release" is allowed (not protected).
+	_, err := k.Merge(CallerContext{}, "/repo", "release", []string{"feat"}, git.StrategyDefault)
+	require.NoError(t, err)
+
+	// SIGHUP-equivalent: the daemon pushes the new protected set.
+	k.SetProtectedBranches([]string{"release"})
+
+	// After reload: merging into "release" is refused, kernel-wide.
+	_, err = k.Merge(CallerContext{}, "/repo", "release", []string{"feat"}, git.StrategyDefault)
+	require.Error(t, err)
+	var pbe git.ErrProtectedBranch
+	require.ErrorAs(t, err, &pbe)
+	assert.Equal(t, "release", pbe.Branch)
+}
+
+// TestKernel_SetProtectedBranches_DoesNotMutateCallerSlice proves SetProtectedBranches
+// copies its input — the daemon's source slice can be reused/freed after the
+// call without aliasing the kernel's protected set.
+func TestKernel_SetProtectedBranches_DoesNotMutateCallerSlice(t *testing.T) {
+	k := New(nil, WithoutAutosave(), WithMerger(&fakeMerger{}))
+	src := []string{"main", "release"}
+	k.SetProtectedBranches(src)
+	src[0] = "tampered"
+
+	k.mu.Lock()
+	got := append([]string(nil), k.protectedBranches...)
+	k.mu.Unlock()
+	assert.Equal(t, []string{"main", "release"}, got, "kernel must not alias the caller's slice")
 }
 
 // TestKernel_Land_DelegatesToMergeTrunk pins the seam: Land routes through
