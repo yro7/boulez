@@ -446,3 +446,127 @@ func mrunOut(t *testing.T, dir string, args ...string) string {
 	require.NoErrorf(t, err, "git %v: %s", args, out)
 	return string(out)
 }
+
+// --- Land fallback: sync host on targetBranch when clean (lossless) ---
+
+// TestMerger_MergeTrunk_NonFF_HostOnTargetBranch_Clean_SyncsWorktree proves
+// the fallback (mergeInto via MergeTrunk) syncs the host worktree when the
+// host repo is on targetBranch with a CLEAN tree, even when the merge is
+// NON-fast-forward (the fast-path refuses non-ff). This is the case that
+// previously diverged the host repo: update-ref moved main without touching
+// the working tree, leaving every touched file reading as "modified" and
+// `git pull --ff-only` failing.
+//
+// Losslessness contract: the host working tree is CLEAN at guard time
+// (status --porcelain empty), so `git reset --hard` after update-ref loses
+// nothing (untracked files survive reset --hard). If the guard fails, the
+// fallback refuses and mutates NOTHING (no update-ref, no reset).
+//
+// Setup: main and feat diverged (non-ff). Host on main, clean tree.
+func TestMerger_MergeTrunk_NonFF_HostOnTargetBranch_Clean_SyncsWorktree(t *testing.T) {
+	repo := makeMergeRepo(t)
+	// Diverge: main and feat each get a distinct commit (non-ff).
+	mrun(t, repo, "checkout", "-b", "feat")
+	writeCommit(t, repo, "a.txt", "feat\n", "feat work")
+	mrun(t, repo, "checkout", "main")
+	writeCommit(t, repo, "b.txt", "main\n", "main work") // main moved independently
+
+	// Host is on main with a clean tree → fallback must sync, not diverge.
+	m := NewMerger(cmd2.MakeExecutor())
+	res, err := m.MergeTrunk(repo, "main", []string{"feat"}, StrategyDefault)
+	require.NoError(t, err, "clean host on targetBranch must sync, not refuse")
+	assert.Equal(t, MergeMerged, res.Status)
+
+	// main now points at the merge commit (a real merge, not ff). The merge
+	// commit's 2nd parent is feat (the throwaway was detached at main, then
+	// merged feat → parents [old-main, feat]).
+	mainHead := strings.TrimSpace(mrunOut(t, repo, "rev-parse", "main"))
+	featHead := strings.TrimSpace(mrunOut(t, repo, "rev-parse", "feat"))
+	mainParent2 := strings.TrimSpace(mrunOut(t, repo, "rev-parse", "main^2"))
+	assert.Equal(t, featHead, mainParent2, "main advanced to a merge commit with feat as 2nd parent")
+	assert.NotEqual(t, featHead, mainHead, "main is the merge commit, not feat itself")
+
+	// Host worktree is SYNCED: both diverged files present on disk, no
+	// "modified" status. This is the regression: before the fix, the worktree
+	// stayed at the pre-merge commit and git status showed every file as
+	// modified (HEAD ahead of worktree).
+	body, rerr := os.ReadFile(filepath.Join(repo, "a.txt"))
+	require.NoError(t, rerr, "host worktree synced: merged file present")
+	assert.Equal(t, "feat\n", string(body))
+	bodyB, rerr := os.ReadFile(filepath.Join(repo, "b.txt"))
+	require.NoError(t, rerr)
+	assert.Equal(t, "main\n", string(bodyB))
+
+	// git status must be clean (worktree == HEAD == index).
+	statusOut := mrunOut(t, repo, "status", "--porcelain")
+	assert.Empty(t, strings.TrimSpace(statusOut), "host worktree synced: no modified files")
+}
+
+// TestMerger_MergeTrunk_NonFF_HostOnTargetBranch_Dirty_RefusesNoMutation proves
+// the fallback REFUSES (and mutates nothing) when the host repo is on
+// targetBranch with a DIRTY tree. The fast-path already refused for the same
+// reason; the fallback must refuse too — `git reset --hard` on a dirty tree
+// would lose work. The throwaway worktree is cleaned up, and main is untouched.
+func TestMerger_MergeTrunk_NonFF_HostOnTargetBranch_Dirty_RefusesNoMutation(t *testing.T) {
+	repo := makeMergeRepo(t)
+	mrun(t, repo, "checkout", "-b", "feat")
+	writeCommit(t, repo, "a.txt", "feat\n", "feat work")
+	mrun(t, repo, "checkout", "main")
+	writeCommit(t, repo, "b.txt", "main\n", "main work") // non-ff
+	// Dirty the host working tree with UNCOMMITTED tracked work.
+	require.NoError(t, os.WriteFile(filepath.Join(repo, "uncommitted.txt"), []byte("x"), 0644))
+
+	mainBefore := strings.TrimSpace(mrunOut(t, repo, "rev-parse", "main"))
+
+	m := NewMerger(cmd2.MakeExecutor())
+	res, err := m.MergeTrunk(repo, "main", []string{"feat"}, StrategyDefault)
+	require.Error(t, err, "dirty host on targetBranch must refuse")
+	assert.Equal(t, MergeConflict, res.Status, "refusal reports conflict status")
+
+	// main is UNCHANGED — no update-ref ran.
+	mainAfter := strings.TrimSpace(mrunOut(t, repo, "rev-parse", "main"))
+	assert.Equal(t, mainBefore, mainAfter, "main must not move on a dirty-host refusal")
+
+	// The dirty file is preserved (no reset --hard ran).
+	_, statErr := os.Stat(filepath.Join(repo, "uncommitted.txt"))
+	assert.NoError(t, statErr, "dirty file preserved on refusal")
+
+	// No throwaway worktree leaked.
+	wtOut := mrunOut(t, repo, "worktree", "list")
+	assert.NotContains(t, wtOut, "boulez-merge-", "throwaway worktree cleaned up on refusal")
+}
+
+// TestMerger_MergeTrunk_NonFF_HostOnOtherBranch_UpdateRefNoSync proves the
+// fallback behavior is UNCHANGED when the host is on a branch OTHER than
+// targetBranch: the ref advances via update-ref and the host worktree is
+// left untouched (no reset --hard). The sync is only for the host-on-target
+// case; other-branch is the original throwaway contract.
+func TestMerger_MergeTrunk_NonFF_HostOnOtherBranch_UpdateRefNoSync(t *testing.T) {
+	repo := makeMergeRepo(t)
+	mrun(t, repo, "checkout", "-b", "feat")
+	writeCommit(t, repo, "a.txt", "feat\n", "feat work")
+	mrun(t, repo, "checkout", "main")
+	writeCommit(t, repo, "b.txt", "main\n", "main work") // non-ff
+	// Host on `other`, NOT main → update-ref is safe (no divergence possible).
+	mrun(t, repo, "checkout", "-b", "other", "main")
+	// Add an untracked file in `other` to prove the host worktree is preserved.
+	require.NoError(t, os.WriteFile(filepath.Join(repo, "other.txt"), []byte("o"), 0644))
+
+	mainBefore := strings.TrimSpace(mrunOut(t, repo, "rev-parse", "main"))
+
+	m := NewMerger(cmd2.MakeExecutor())
+	res, err := m.MergeTrunk(repo, "main", []string{"feat"}, StrategyDefault)
+	require.NoError(t, err, "host on other branch: fallback advances ref")
+	assert.Equal(t, MergeMerged, res.Status)
+
+	// main advanced (update-ref ran).
+	mainAfter := strings.TrimSpace(mrunOut(t, repo, "rev-parse", "main"))
+	assert.NotEqual(t, mainBefore, mainAfter, "main advanced via update-ref")
+
+	// Host worktree on `other` is UNCHANGED: the merged files are NOT checked
+	// out (we never switched branches), and the untracked file survives.
+	_, aErr := os.Stat(filepath.Join(repo, "a.txt"))
+	assert.Error(t, aErr, "merged file not checked out on other branch (no sync)")
+	_, oErr := os.Stat(filepath.Join(repo, "other.txt"))
+	assert.NoError(t, oErr, "host worktree on `other` preserved")
+}
