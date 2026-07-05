@@ -95,7 +95,7 @@ func RunDaemon(cfg *config.Config) error {
 			for _, instance := range k.LiveInstances() {
 				// We only store started instances, but check anyway.
 				if instance.Started() && !instance.Paused() {
-					if _, status := instance.HasUpdated(); status == program.StatusReady || status == program.StatusPermission {
+					if _, status, _ := instance.HasUpdated(); status == program.StatusReady || status == program.StatusPermission {
 						// Only resolve prompts the agent's adapter knows how to dismiss
 						// (permissions/trust). A bare "ready" prompt (agent waiting for free
 						// user input) is NOT auto-dismissed: tapping Enter there would

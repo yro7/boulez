@@ -357,10 +357,17 @@ func (m *home) Update(msg tea.Msg) (tea.Model, tea.Cmd) {
 				}
 			default:
 				// StatusWorking (or StatusUnknown for agents we don't detect):
-				// fall back to the content-change heuristic so unknown agents
-				// keep cycling Running/Loading like before.
+				// an authoritative adapter signal always wins. When the adapter is
+				// silent, fall back to pane-content stability: if the pane hasn't
+				// changed for longer than stableReadyThreshold, the agent is
+				// presumed idle (waiting on input or a permission, not streaming).
+				// This is the agent-agnostic net — boulez stays usable for any
+				// harness without a dedicated adapter. A transient false Ready
+				// (long silent tool run) self-corrects as soon as output resumes.
 				if r.updated {
 					r.instance.SetStatus(session.Running)
+				} else if r.stableFor >= stableReadyThreshold {
+					r.instance.SetStatus(session.Ready)
 				}
 			}
 			// Notify on the Ready transition when configured.
@@ -1089,6 +1096,7 @@ type instanceMetaResult struct {
 	instance  *session.Instance
 	updated   bool
 	status    program.Status
+	stableFor time.Duration
 	diffStats *git.DiffStats
 }
 
@@ -1096,6 +1104,17 @@ type instanceMetaResult struct {
 type metadataUpdateDoneMsg struct {
 	results []instanceMetaResult
 }
+
+// stableReadyThreshold is the agent-agnostic fallback: when an adapter
+// returns no authoritative ready signal (StatusUnknown, or StatusWorking
+// without a turn-boundary marker — e.g. an agent whose sentinel extension
+// isn't installed), the instance is presumed idle once its tmux pane has been
+// stable for this long. An adapter's explicit StatusReady/StatusPermission
+// always wins and is immediate; this is only the net that catches every
+// harness without a dedicated adapter. Tuned conservatively to avoid tripping
+// on long silent tool runs (build/test with no output); the false-positive
+// self-corrects the moment the tool emits a line.
+const stableReadyThreshold = 60 * time.Second
 
 // snapshotActiveInstances returns the currently active (started, not paused)
 // instances. Called on the main thread so the filtering doesn't race with
@@ -1135,7 +1154,7 @@ func tickUpdateMetadataCmd(active []*session.Instance, selected *session.Instanc
 				defer wg.Done()
 				r := &results[i]
 				r.instance = instance
-				r.updated, r.status = instance.HasUpdated()
+				r.updated, r.status, r.stableFor = instance.HasUpdated()
 				if instance == selected {
 					r.diffStats = instance.ComputeDiff()
 				} else {
