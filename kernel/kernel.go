@@ -22,6 +22,7 @@ import (
 	"github.com/yro7/boulez/session"
 	"github.com/yro7/boulez/session/git"
 	"sync"
+	"time"
 )
 
 // SpawnOptions mirrors app.SpawnOptions but lives in the kernel layer to
@@ -414,6 +415,13 @@ func (k *Kernel) Merge(caller CallerContext, repoPath, targetBranch string, sour
 	if err == nil && !caller.IsTopLevel() && caller.Kind == session.KindOrchestrator {
 		_ = recordMergeOutcome(caller.CallerID, res)
 	}
+	// Persist + propagate the landed state for the merged sources: every
+	// instance whose branch was a source of a successful merge is marked
+	// landed so `boulez ctl list_instances` / `get_instance` reflect it. A
+	// conflict does NOT mark landed (the branch did not actually land).
+	if err == nil && res.Status != git.MergeConflict {
+		k.markSourcesLanded(sourceBranches)
+	}
 	return res, err
 }
 
@@ -484,7 +492,11 @@ func (k *Kernel) Land(caller CallerContext, repoPath, targetBranch, sourceBranch
 			if err != nil {
 				return LandResult{Merge: res, HostSynced: false, HostSyncNote: "in-place ff-only merge failed"}, err
 			}
-			return LandResult{Merge: res, HostSynced: res.Status == git.MergeMerged, HostSyncNote: ""}, nil
+			result := LandResult{Merge: res, HostSynced: res.Status == git.MergeMerged, HostSyncNote: ""}
+			if res.Status != git.MergeConflict {
+				k.markSourcesLanded([]string{sourceBranch})
+			}
+			return result, nil
 		}
 		// handled=false: fast path did not apply (host on another branch /
 		// dirty / non-ff). Fall through to the throwaway merger and report a
@@ -497,5 +509,48 @@ func (k *Kernel) Land(caller CallerContext, repoPath, targetBranch, sourceBranch
 	// main still builds the old code.
 	merge, err := merger.MergeTrunk(repoPath, targetBranch, []string{sourceBranch}, strategy)
 	note := fmt.Sprintf("host not synced — run: git -C %s pull --ff-only", repoPath)
+	if err == nil && merge.Status != git.MergeConflict {
+		k.markSourcesLanded([]string{sourceBranch})
+	}
 	return LandResult{Merge: merge, HostSynced: false, HostSyncNote: note}, err
+}
+
+// markSourcesLanded marks every instance whose branch is in sourceBranches as
+// landed and refreshes its UpdatedAt, persisting the fleet if autosave is on.
+// Called by Merge/Land after a successful (non-conflict) merge so the fleet
+// reflects that the instance's branch has been merged into the target trunk —
+// the persisted, wire-visible state `boulez ctl list_instances` / `get_instance`
+// expose. The TUI's own SetLanded(true) on a landDoneMsg coexists with this:
+// the TUI operates on read-only view handles and is not the single writer, so
+// its calls do not persist; this kernel path is what makes the state survive
+// a daemon restart and reach non-TUI consumers.
+//
+// Caller must NOT hold k.mu.
+func (k *Kernel) markSourcesLanded(sourceBranches []string) {
+	if len(sourceBranches) == 0 {
+		return
+	}
+	k.mu.Lock()
+	instances := k.instancesLocked()
+	marked := false
+	now := time.Now()
+	for _, inst := range instances {
+		if !inst.Started() {
+			continue
+		}
+		for _, b := range sourceBranches {
+			if inst.Branch == b {
+				inst.SetLanded(true)
+				inst.UpdatedAt = now
+				marked = true
+				break
+			}
+		}
+	}
+	storage := k.storage
+	autosave := k.autosave
+	k.mu.Unlock()
+	if marked && autosave && storage != nil {
+		_ = k.persist(storage, nil)
+	}
 }

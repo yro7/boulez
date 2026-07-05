@@ -29,6 +29,18 @@ type InstanceData struct {
 	Host      string          `json:"host"`
 	Worktree  GitWorktreeData `json:"worktree"`
 	DiffStats DiffStatsData   `json:"diff_stats"`
+
+	// Landed is the persisted, wire-visible mirror of the TUI-only "landed"
+	// hint: it is set true by the kernel after a successful merge/land for
+	// every instance whose branch was a source of the merge. Unlike the
+	// TUI's view-only hint (which is cleared on Running→Ready and never
+	// crosses the wire), this field is what `boulez ctl list_instances` /
+	// `get_instance` expose so non-TUI consumers can see that an instance's
+	// branch has been merged into the target trunk. The TUI does NOT sync
+	// this field back into its view handles (reconcileFleet only refreshes
+	// Status/AutoYes), so the TUI's own Running→Ready clear is not fought by
+	// a fleet refresh.
+	Landed bool `json:"landed"`
 }
 
 // GitWorktreeData represents the serializable data of a GitWorktree

@@ -219,13 +219,17 @@ type Instance struct {
 
 	// started bool
 	started bool
-	// landed is a TUI-only hint that the instance's branch has been landed
-	// (merged) into the target trunk since its last Ready transition. It is NOT
-	// propagated to the kernel (not in InstanceData, not on the wire) — it is
-	// view state that survives fleet refresh (reconcileFleet reuses handles by
-	// ID and does not reset this field) but not a TUI restart. Set true on a
-	// successful land; cleared when the agent resumes work (Running→Ready)
-	// because the displayed version no longer matches what was landed.
+	// landed is a hint that the instance's branch has been landed (merged)
+	// into the target trunk. It is persisted in InstanceData.Landed and
+	// propagated by the kernel's Merge/Land syscalls (the single-writer path):
+	// after a successful merge, every instance whose branch was a source is
+	// marked landed so `boulez ctl list_instances` / `get_instance` reflect it.
+	// The TUI ALSO sets this field directly on its view handles (SetLanded on a
+	// landDoneMsg), which coexists with the kernel path — the TUI's view
+	// handles are reconstructed read-only and the TUI is not the single writer,
+	// so its SetLanded calls do not persist. Cleared when the agent resumes
+	// work (Running→Ready) on the TUI side; the kernel-side mark is NOT cleared
+	// by that transition (it records "this branch was merged").
 	landed bool
 	// landing is a TUI-only hint that a land is in flight for this instance.
 	// Drives the in-progress spinner in the list renderer. Like landed, it is
@@ -257,6 +261,7 @@ func (i *Instance) ToInstanceData() InstanceData {
 		Program:   i.Program,
 		Host:      i.host.Name(),
 		AutoYes:   i.AutoYes,
+		Landed:    i.landed,
 	}
 
 	// Only include worktree data if gitWorktree is initialized
@@ -309,6 +314,7 @@ func FromInstanceData(data InstanceData) (*Instance, error) {
 		UpdatedAt: data.UpdatedAt,
 		Program:   data.Program,
 		AutoYes:   data.AutoYes,
+		landed:    data.Landed,
 		host:      h,
 	}
 	wt, err := restoreWorktree(data.Kind, data.ID, data.Worktree, h)
@@ -455,17 +461,19 @@ func (i *Instance) SetStatus(status Status) {
 	i.Status = status
 }
 
-// Landed reports the TUI-only hint that this instance's branch has been
-// landed into the target trunk since its last Ready transition. It is view
-// state (not persisted, not propagated to the kernel) used by the list
-// renderer to dim the row and show a checkmark. See the field doc for the
-// lifecycle.
+// Landed reports whether this instance's branch has been landed (merged)
+// into the target trunk. Set by the kernel's Merge/Land syscalls after a
+// successful merge (persisted, wire-visible) and ALSO by the TUI on a
+// landDoneMsg (view handle, cleared on Running→Ready). See the field doc for
+// the lifecycle.
 func (i *Instance) Landed() bool { return i.landed }
 
-// SetLanded sets the TUI-only "landed" hint. Called by the TUI on a successful
-// land, and cleared on Running→Ready (the displayed version no longer matches
-// what was landed). Safe to call on a nil receiver (defensive: the renderer
-// calls this on view handles).
+// SetLanded sets the "landed" hint. Called by BOTH the kernel (after a
+// successful merge/land, on the live instance — persisted via ToInstanceData)
+// AND the TUI (on a landDoneMsg, on a read-only view handle — not persisted,
+// since the TUI is not the single writer). Cleared on Running→Ready by the
+// TUI (the displayed version no longer matches what was landed). Safe to call
+// on a nil receiver (defensive: the renderer calls this on view handles).
 func (i *Instance) SetLanded(on bool) { i.landed = on }
 
 // Landing reports the TUI-only hint that a land is in flight for this
