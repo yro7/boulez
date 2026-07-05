@@ -215,16 +215,6 @@ func (w *TabbedWindow) ExitInsertMode() {
 	w.preview.ExitInsertMode()
 }
 
-// HandleInsertKey forwards a rune to the preview pane's insert buffer.
-func (w *TabbedWindow) HandleInsertKey(r rune) {
-	w.preview.HandleInsertKey(r)
-}
-
-// CommitInsert returns the preview pane's buffered insert text and clears it.
-func (w *TabbedWindow) CommitInsert() string {
-	return w.preview.CommitInsert()
-}
-
 // IsPreviewInInsertMode returns true if the preview pane is in insert mode.
 func (w *TabbedWindow) IsPreviewInInsertMode() bool {
 	return w.preview.IsInInsertMode()

@@ -298,6 +298,22 @@ func (t *TmuxSession) SendKeys(keys string) error {
 	return nil
 }
 
+// SendKey sends a single named tmux key to the pane via `tmux send-keys`
+// (without -l). This is the named-key counterpart to SendKeys' literal text:
+// `Enter`, `BSpace`, `Delete`, `Up`, `C-c`, `M-b`, ... — any key tmux's key
+// parser knows by name. Used by the TUI's insert mode to forward special keys
+// (backspace, arrows, Ctrl+C, Tab, ...) so the agent's own readline/editor
+// stays the authority over editing, history, and completion. Same
+// host-executor channel as SendKeys, so it works over SSH and without an
+// attached PTY.
+func (t *TmuxSession) SendKey(name string) error {
+	cmd := exec.Command("tmux", "send-keys", "-t", t.sanitizedName, name)
+	if err := t.cmdExec.Run(cmd); err != nil {
+		return fmt.Errorf("error sending key %q to tmux pane: %w", name, err)
+	}
+	return nil
+}
+
 // HasUpdated checks if the tmux pane content has changed since the last
 // tick, and returns the agent's perceived status from the program.Adapter
 // plus how long the pane has been stable (stableFor).

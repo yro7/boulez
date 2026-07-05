@@ -22,12 +22,12 @@ import (
 )
 
 // recordingCmdExec is a MockCmdExec that records every Run command's argv, so
-// a test can assert that SendKeys/SendEnter translated into `tmux send-keys`
+// a test can assert that SendKey/SendKeys translated into `tmux send-keys`
 // invocations via the host executor (the channel that also works over SSH).
 type recordingCmdExec struct {
-	mu       sync.Mutex
-	ranCmds  []string
-	hasSess  bool // whether has-session reports the session as existing
+	mu      sync.Mutex
+	ranCmds []string
+	hasSess bool // whether has-session reports the session as existing
 }
 
 func (r *recordingCmdExec) RunFunc() func(*exec.Cmd) error {
@@ -87,7 +87,7 @@ func (m *mockPtyFactoryForApp) Close() {}
 // newStartedMockInstance builds an instance that reports as started with the
 // given status, wired to a real *tmux.TmuxSession whose commands are captured
 // by a recordingCmdExec. Uses MarkStartedForTest to avoid the full git-
-// worktree Start path — SendKeys/SendEnter only need started=true and a
+// worktree Start path — SendKey/SendKeys only need started=true and a
 // tmux session, not a real worktree. This mirrors how kernel package tests
 // construct an in-memory instance (see Instance.MarkStartedForTest).
 func newStartedMockInstance(t *testing.T, status session.Status) (*session.Instance, *recordingCmdExec) {
@@ -152,8 +152,7 @@ func newInsertTestHome(t *testing.T, inst *session.Instance) *home {
 }
 
 // TestInsertMode_EnterAndExit verifies: `i` enters insert mode on the Preview
-// tab with a started instance; Esc returns to stateDefault and clears the
-// buffer.
+// tab with a started instance; Esc returns to stateDefault.
 func TestInsertMode_EnterAndExit(t *testing.T) {
 	inst, _ := newStartedMockInstance(t, session.Ready)
 	h := newInsertTestHome(t, inst)
@@ -167,7 +166,7 @@ func TestInsertMode_EnterAndExit(t *testing.T) {
 	_, _ = h.handleInsertState(tea.KeyMsg{Type: tea.KeyRunes, Runes: []rune("hi")})
 	require.Equal(t, stateInsert, h.state, "still in insert mode after typing")
 
-	// Esc exits and clears the buffer
+	// Esc exits
 	_, _ = h.handleInsertState(tea.KeyMsg{Type: tea.KeyEscape})
 	require.Equal(t, stateDefault, h.state, "Esc exits insert mode")
 	require.False(t, h.tabbedWindow.IsPreviewInInsertMode(), "preview pane left insert mode")
@@ -187,7 +186,7 @@ func TestInsertMode_RefusedOnPausedInstance(t *testing.T) {
 
 // TestInsertMode_RefusedOnDiffTab verifies insert mode is Preview-only: with
 // the Diff tab active, `i` is a no-op (the Terminal tab has its own attach
-// flow; duplicating the buffer there is premature per AGENTS.md).
+// flow; duplicating the forwarding there is premature per AGENTS.md).
 func TestInsertMode_RefusedOnDiffTab(t *testing.T) {
 	inst, _ := newStartedMockInstance(t, session.Ready)
 	h := newInsertTestHome(t, inst)
@@ -201,10 +200,14 @@ func TestInsertMode_RefusedOnDiffTab(t *testing.T) {
 	require.False(t, h.tabbedWindow.IsPreviewInInsertMode())
 }
 
-// TestInsertMode_EnterSendsKeysAndStaysInMode verifies that typing + Enter
-// forwards the buffered text via `tmux send-keys -l` and submits it via a
-// separate `tmux send-keys Enter`, then stays in insert mode for the next line.
-func TestInsertMode_EnterSendsKeysAndStaysInMode(t *testing.T) {
+// TestInsertMode_PureInjection_ForwardsEachKeyImmediately is the pin for the
+// refactor's core guarantee: there is NO local text buffer. Each keystroke is
+// translated to a `tmux send-keys` argv and dispatched immediately, so the
+// agent's own readline/editor (backspace, arrows, history, completion, Ctrl-C)
+// is the authority over editing. This is what distinguishes "pure injection"
+// from the previous chat-style buffer-then-commit design, which could only
+// grow and could not delete.
+func TestInsertMode_PureInjection_ForwardsEachKeyImmediately(t *testing.T) {
 	inst, rec := newStartedMockInstance(t, session.Ready)
 	h := newInsertTestHome(t, inst)
 	h.keySent = true
@@ -212,27 +215,112 @@ func TestInsertMode_EnterSendsKeysAndStaysInMode(t *testing.T) {
 	_, _ = h.handleKeyPress(tea.KeyMsg{Type: tea.KeyRunes, Runes: []rune("i")})
 	require.Equal(t, stateInsert, h.state)
 
-	// type "hello"
-	_, _ = h.handleInsertState(tea.KeyMsg{Type: tea.KeyRunes, Runes: []rune("hello")})
-	// commit with Enter
-	_, _ = h.handleInsertState(tea.KeyMsg{Type: tea.KeyEnter})
+	cases := []struct {
+		name   string
+		msg    tea.KeyMsg
+		wantSub string // substring expected in the recorded send-keys argv
+		wantLiteral bool // true => argv uses -l (literal); false => named key
+	}{
+		{"printable runes forwarded literally",
+			tea.KeyMsg{Type: tea.KeyRunes, Runes: []rune("hello")},
+			"hello", true},
+		{"backspace forwarded as BSpace (the deletion case the buffer design could not handle)",
+			tea.KeyMsg{Type: tea.KeyBackspace},
+			"BSpace", false},
+		{"delete forwarded as Delete",
+			tea.KeyMsg{Type: tea.KeyDelete},
+			"Delete", false},
+		{"enter forwarded as the Enter named key (no separate commit step)",
+			tea.KeyMsg{Type: tea.KeyEnter},
+			"Enter", false},
+		{"tab forwarded as Tab",
+			tea.KeyMsg{Type: tea.KeyTab},
+			"Tab", false},
+		{"up arrow forwarded as Up (history navigation in the agent)",
+			tea.KeyMsg{Type: tea.KeyUp},
+			"Up", false},
+		{"down arrow forwarded as Down",
+			tea.KeyMsg{Type: tea.KeyDown},
+			"Down", false},
+		{"left arrow forwarded as Left (cursor movement)",
+			tea.KeyMsg{Type: tea.KeyLeft},
+			"Left", false},
+		{"right arrow forwarded as Right",
+			tea.KeyMsg{Type: tea.KeyRight},
+			"Right", false},
+		{"home forwarded as Home",
+			tea.KeyMsg{Type: tea.KeyHome},
+			"Home", false},
+		{"end forwarded as End",
+			tea.KeyMsg{Type: tea.KeyEnd},
+			"End", false},
+		{"ctrl-u forwarded as C-u (unix line kill — the agent's readline handles it)",
+			tea.KeyMsg{Type: tea.KeyCtrlU},
+			"C-u", false},
+		{"ctrl-w forwarded as C-w (word delete)",
+			tea.KeyMsg{Type: tea.KeyCtrlW},
+			"C-w", false},
+		{"ctrl-c forwarded as C-c (interrupt the agent without leaving insert mode)",
+			tea.KeyMsg{Type: tea.KeyCtrlC},
+			"C-c", false},
+		{"ctrl-r forwarded as C-r (reverse history search)",
+			tea.KeyMsg{Type: tea.KeyCtrlR},
+			"C-r", false},
+		{"alt+b forwarded as M-b (emacs backward-word)",
+			tea.KeyMsg{Type: tea.KeyRunes, Runes: []rune("b"), Alt: true},
+			"M-b", false},
+	}
 
-	sendCmds := rec.sendKeysCmds()
-	require.NotEmpty(t, sendCmds, "Enter must forward the buffer to tmux send-keys")
-	assert.Contains(t, sendCmds[0], "send-keys", "first send is a send-keys")
-	assert.Contains(t, sendCmds[0], "-l", "SendKeys uses literal -l flag")
-	assert.Contains(t, sendCmds[0], "hello", "buffered text forwarded literally")
-	require.Len(t, sendCmds, 2, "SendKeys + SendEnter (two send-keys calls)")
-	assert.Contains(t, sendCmds[1], "Enter", "SendEnter submits via the Enter key name")
+	for i, c := range cases {
+		before := len(rec.sendKeysCmds())
+		_, _ = h.handleInsertState(c.msg)
+		after := rec.sendKeysCmds()
+		require.Greater(t, len(after), before,
+			"%s (%d): key must produce a send-keys call", c.name, i)
+		last := after[len(after)-1]
+		assert.Contains(t, last, c.wantSub,
+			"%s (%d): argv %q must contain %q", c.name, i, last, c.wantSub)
+		if c.wantLiteral {
+			assert.Contains(t, last, "-l",
+				"%s (%d): literal runes must use -l flag, got %q", c.name, i, last)
+		} else {
+			assert.NotContains(t, last, " -l",
+				"%s (%d): named key must NOT use -l flag, got %q", c.name, i, last)
+		}
+		require.Equal(t, stateInsert, h.state, "%s: stays in insert mode", c.name)
+	}
 
-	require.Equal(t, stateInsert, h.state, "Enter stays in insert mode (Esc exits)")
+	// No buffer means typing, deleting, then typing again just produces three
+	// independent send-keys calls — the agent's readline composes them. This
+	// is the regression guard against ever reintroducing a TUI-side buffer.
+	cmds := rec.sendKeysCmds()
+	require.GreaterOrEqual(t, len(cmds), len(cases),
+		"every key produced its own send-keys call (no batching/commit step)")
+}
+
+// TestInsertMode_EscNotForwarded verifies Esc is intercepted by the TUI to
+// exit insert mode and is NEVER forwarded to the agent (vim contract: Esc is
+// the modal exit, not a character).
+func TestInsertMode_EscNotForwarded(t *testing.T) {
+	inst, rec := newStartedMockInstance(t, session.Ready)
+	h := newInsertTestHome(t, inst)
+	h.keySent = true
+
+	_, _ = h.handleKeyPress(tea.KeyMsg{Type: tea.KeyRunes, Runes: []rune("i")})
+	require.Equal(t, stateInsert, h.state)
+
+	before := len(rec.sendKeysCmds())
+	_, _ = h.handleInsertState(tea.KeyMsg{Type: tea.KeyEscape})
+	require.Equal(t, stateDefault, h.state, "Esc exits insert mode")
+	require.Len(t, rec.sendKeysCmds(), before, "Esc must not be forwarded to the agent")
 }
 
 // TestInsertMode_QDoesNotQuitWhileInserting verifies the modal collision fix:
-// `q` is a literal character in insert mode (so a user typing "quit" into the
-// agent does not quit the TUI), but still quits from stateDefault.
+// `q` is forwarded to the agent as a literal character in insert mode (so a
+// user typing "quit" into the agent does not quit the TUI), but still quits
+// from stateDefault.
 func TestInsertMode_QDoesNotQuitWhileInserting(t *testing.T) {
-	inst, _ := newStartedMockInstance(t, session.Ready)
+	inst, rec := newStartedMockInstance(t, session.Ready)
 	h := newInsertTestHome(t, inst)
 
 	// Enter insert mode
@@ -240,18 +328,20 @@ func TestInsertMode_QDoesNotQuitWhileInserting(t *testing.T) {
 	_, _ = h.handleKeyPress(tea.KeyMsg{Type: tea.KeyRunes, Runes: []rune("i")})
 	require.Equal(t, stateInsert, h.state)
 
-	// 'q' in insert mode must accumulate, not quit: the handleQuit guard is
-	// `(q || ctrl+c) && state != stateInsert`.
+	// 'q' in insert mode must be forwarded to the agent, not quit the TUI.
 	_, cmd := h.handleInsertState(tea.KeyMsg{Type: tea.KeyRunes, Runes: []rune("q")})
 	require.Equal(t, stateInsert, h.state, "q does not quit while inserting")
 	require.Nil(t, cmd, "no quit command issued while inserting")
+	cmds := rec.sendKeysCmds()
+	require.NotEmpty(t, cmds, "q must be forwarded to the agent")
+	assert.Contains(t, cmds[len(cmds)-1], " -l q", "q is forwarded as a literal character")
 }
 
 // TestInsertMode_AutoExitWhenInstancePauses verifies the safety net: if the
 // instance becomes unsendable mid-insert (paused/killed), the next key drops
-// back to stateDefault instead of buffering undeliverable input.
+// back to stateDefault instead of forwarding undeliverable input.
 func TestInsertMode_AutoExitWhenInstancePauses(t *testing.T) {
-	inst, _ := newStartedMockInstance(t, session.Ready)
+	inst, rec := newStartedMockInstance(t, session.Ready)
 	h := newInsertTestHome(t, inst)
 	h.keySent = true
 
@@ -263,7 +353,9 @@ func TestInsertMode_AutoExitWhenInstancePauses(t *testing.T) {
 	inst.SetStatus(session.Paused)
 
 	// Any key in insert mode now triggers the safety net.
+	before := len(rec.sendKeysCmds())
 	_, _ = h.handleInsertState(tea.KeyMsg{Type: tea.KeyRunes, Runes: []rune("x")})
 	require.Equal(t, stateDefault, h.state, "auto-exit insert mode when instance becomes unsendable")
 	require.False(t, h.tabbedWindow.IsPreviewInInsertMode())
+	require.Len(t, rec.sendKeysCmds(), before, "no key forwarded after the instance became unsendable")
 }

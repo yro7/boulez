@@ -48,10 +48,12 @@ const (
 	KeyToggleAutoYes
 
 	// KeyInsert enters insert mode in the preview pane: keystrokes are
-	// forwarded to the selected instance's tmux pane (via SendKeys) instead of
-	// being interpreted as fleet keybindings. Exited with Esc. Vim-style modal
-	// separation so fleet bindings (q, c, r, ...) never collide with text the
-	// user types into the agent.
+	// forwarded directly to the selected instance's tmux pane (pure injection
+	// via Instance.SendKey/SendKeys) instead of being interpreted as fleet
+	// keybindings. Exited with Esc. Vim-style modal separation so fleet
+	// bindings (q, c, r, ...) never collide with text the user types into the
+	// agent. Backspace, arrows, history, Ctrl-C, etc. all work because the
+	// agent's own readline is the authority — the TUI holds no text buffer.
 	KeyInsert
 	// KeySpawnOrchestrator spawns a new orchestrator instance (Shift+O). The
 	// orchestrator is an ordinary fleet instance (KindOrchestrator, headless

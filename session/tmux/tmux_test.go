@@ -189,6 +189,33 @@ func TestSendKeys_TapEnter_TapDAndEnter_PinSendKeysArgv(t *testing.T) {
 	}, ran, "SendKeys/TapEnter/TapDAndEnter must use tmux send-keys via cmdExec")
 }
 
+// TestSendKey_PinSendKeyArgv pins that SendKey routes a single named key
+// through `tmux send-keys` (without -l) via the host executor. This is the
+// named-key counterpart to SendKeys' literal text and the channel the TUI's
+// insert mode uses to forward backspace, arrows, Ctrl-C, etc. so the agent's
+// own readline stays the authority over editing.
+func TestSendKey_PinSendKeyArgv(t *testing.T) {
+	var ran []string
+	exec := cmd_test.MockCmdExec{
+		RunFunc: func(c *exec.Cmd) error {
+			ran = append(ran, cmd2.ToString(c))
+			return nil
+		},
+		OutputFunc: func(c *exec.Cmd) ([]byte, error) { return []byte{}, nil },
+	}
+	sess := newTmuxSession("keys-test", "bash", NewMockPtyFactory(t), exec)
+
+	require.NoError(t, sess.SendKey("BSpace"))
+	require.NoError(t, sess.SendKey("C-c"))
+	require.NoError(t, sess.SendKey("M-b"))
+
+	require.Equal(t, []string{
+		"tmux send-keys -t boulez_keys-test BSpace",
+		"tmux send-keys -t boulez_keys-test C-c",
+		"tmux send-keys -t boulez_keys-test M-b",
+	}, ran, "SendKey must route a single named key via tmux send-keys (no -l)")
+}
+
 // TestSessionExists_and_KillSession proves the package-level helpers used by
 // the orchestrator's orphan-reclamation: SessionExists detects a real session
 // and KillSession removes it. Uses a real tmux server (these are thin
