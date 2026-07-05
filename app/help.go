@@ -48,7 +48,13 @@ func (h helpTypeGeneral) toContent() string {
 		keyStyle.Render("↑/j, ↓/k")+descStyle.Render("  - Navigate between sessions"),
 		keyStyle.Render("J/K")+descStyle.Render("       - Reorder sessions"),
 		keyStyle.Render("↵/o")+descStyle.Render("       - Attach to the selected session"),
+		keyStyle.Render("i")+descStyle.Render("         - Enter insert mode (Preview tab): type to send to the agent"),
 		keyStyle.Render("ctrl-q")+descStyle.Render("    - Detach from session"),
+		"",
+		headerStyle.Render("Insert mode:"),
+		keyStyle.Render("(in insert)")+descStyle.Render(" - Keystrokes go to the agent's pane; fleet bindings are suspended"),
+		keyStyle.Render("Esc")+descStyle.Render("       - Exit insert mode"),
+		keyStyle.Render("↵")+descStyle.Render("       - Send the typed line to the agent (stay in insert mode)"),
 		"",
 		headerStyle.Render("Handoff:"),
 		keyStyle.Render("p")+descStyle.Render("         - Commit and push branch to github"),
@@ -90,6 +96,10 @@ func (h helpTypeInstanceAttach) toContent() string {
 		titleStyle.Render("Attaching to Instance"),
 		"",
 		descStyle.Render("To detach from a session, press ")+keyStyle.Render("ctrl-q"),
+		"",
+		descStyle.Render("This is the full-screen fallback for TUIs that don't render well in"),
+		descStyle.Render("the preview pane (vim, less, ...). For chat-style input, prefer insert"),
+		descStyle.Render("mode (press ")+keyStyle.Render("i")+descStyle.Render(" on the Preview tab) — it keeps the dashboard visible."),
 	)
 	return content
 }

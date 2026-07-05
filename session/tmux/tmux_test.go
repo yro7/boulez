@@ -157,6 +157,38 @@ func TestSessionName_Deterministic(t *testing.T) {
 		SessionName("a sd f. asdf"))
 }
 
+// TestSendKeys_TapEnter_TapDAndEnter_PinSendKeysArgv pins that SendKeys,
+// TapEnter, and TapDAndEnter route through `tmux send-keys` via the host
+// executor (cmdExec) rather than writing raw bytes to an attached PTY. This
+// is what lets the TUI send input to an instance with no PTY open and what
+// makes remote (SSH) hosts work for free — the same channel
+// CapturePaneContent uses for reading. The literal flag (-l) on SendKeys
+// ensures a user typing the word "Enter" is sent as letters, not the
+// Enter key.
+func TestSendKeys_TapEnter_TapDAndEnter_PinSendKeysArgv(t *testing.T) {
+	var ran []string
+	exec := cmd_test.MockCmdExec{
+		RunFunc: func(c *exec.Cmd) error {
+			ran = append(ran, cmd2.ToString(c))
+			return nil
+		},
+		OutputFunc: func(c *exec.Cmd) ([]byte, error) { return []byte{}, nil },
+	}
+	sess := newTmuxSession("keys-test", "bash", NewMockPtyFactory(t), exec)
+
+	require.NoError(t, sess.SendKeys("hello world"))
+	require.NoError(t, sess.SendKeys("Enter")) // literal: the word, not the key
+	require.NoError(t, sess.TapEnter())
+	require.NoError(t, sess.TapDAndEnter())
+
+	require.Equal(t, []string{
+		"tmux send-keys -t boulez_keys-test -l hello world",
+		"tmux send-keys -t boulez_keys-test -l Enter",
+		"tmux send-keys -t boulez_keys-test Enter",
+		"tmux send-keys -t boulez_keys-test D Enter",
+	}, ran, "SendKeys/TapEnter/TapDAndEnter must use tmux send-keys via cmdExec")
+}
+
 // TestSessionExists_and_KillSession proves the package-level helpers used by
 // the orchestrator's orphan-reclamation: SessionExists detects a real session
 // and KillSession removes it. Uses a real tmux server (these are thin

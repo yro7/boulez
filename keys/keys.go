@@ -47,6 +47,12 @@ const (
 	// KeyToggleAutoYes toggles the per-instance AutoYes flag.
 	KeyToggleAutoYes
 
+	// KeyInsert enters insert mode in the preview pane: keystrokes are
+	// forwarded to the selected instance's tmux pane (via SendKeys) instead of
+	// being interpreted as fleet keybindings. Exited with Esc. Vim-style modal
+	// separation so fleet bindings (q, c, r, ...) never collide with text the
+	// user types into the agent.
+	KeyInsert
 	// KeySpawnOrchestrator spawns a new orchestrator instance (Shift+O). The
 	// orchestrator is an ordinary fleet instance (KindOrchestrator, headless
 	// worktree) that supervises the fleet via `boulez ctl`. This is the manual,
@@ -69,6 +75,7 @@ var GlobalKeyStringsMap = map[string]KeyName{
 	"N":          KeyPrompt,
 	"R":          KeyQuickSession,
 	"O":          KeySpawnOrchestrator,
+	"i":          KeyInsert,
 	"enter":      KeyEnter,
 	"o":          KeyEnter,
 	"n":          KeyNew,
@@ -166,6 +173,10 @@ var GlobalkeyBindings = map[KeyName]key.Binding{
 	KeySpawnOrchestrator: key.NewBinding(
 		key.WithKeys("O"),
 		key.WithHelp("O", "spawn orchestrator"),
+	),
+	KeyInsert: key.NewBinding(
+		key.WithKeys("i"),
+		key.WithHelp("i", "insert mode"),
 	),
 
 	// -- Special keybindings --
