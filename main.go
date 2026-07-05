@@ -25,41 +25,13 @@ var (
 	rootCmd     = &cobra.Command{
 		Use:   "boulez",
 		Short: "Boulez - Orchestrate multiple AI coding agents (Claude Code, Codex, Pi, Aider, …) in isolated git worktrees.",
-		RunE: func(cmd *cobra.Command, args []string) error {
-			ctx := context.Background()
-			log.Initialize(false)
-			log.SetPrintPathOnClose(true) // interactive: surface log path on exit
-			defer log.Close()
+		RunE:  runTUI,
+	}
 
-			cfg := config.LoadConfig()
-
-			// Program flag overrides config
-			program := cfg.GetProgram()
-			if programFlag != "" {
-				program = programFlag
-			}
-			// AutoYes flag overrides config
-			autoYes := cfg.AutoYes
-			if autoYesFlag {
-				autoYes = true
-			}
-			// Ensure the daemon (the kernel / control authority) is reachable.
-			// The TUI is a viewer of the kernel: no kernel, no viewer (decision
-			// D2). If the socket is absent we auto-start the daemon detached;
-			// if it does not come up within the timeout we fail loud — print the
-			// daemon log tail and the path to `boulez daemon log` and exit
-			// non-zero. There is no degraded TUI mode over a broken daemon.
-			//
-			// The daemon's parent during the transition is this Setsid-detached
-			// child; after Phase 2 it is launchd/systemd. The TUI's job is to
-			// ensure the daemon is reachable, not to be its parent (C1.3/C1.4).
-			if err := ensureDaemonRunning(); err != nil {
-				printDaemonFailureHint()
-				return fmt.Errorf("daemon not reachable: %w", err)
-			}
-
-			return app.Run(ctx, program, autoYes)
-		},
+	tuiCmd = &cobra.Command{
+		Use:   "tui",
+		Short: "Launch the Boulez TUI (default)",
+		RunE:  runTUI,
 	}
 
 	resetCmd = &cobra.Command{
@@ -134,11 +106,51 @@ func init() {
 	rootCmd.Flags().BoolVarP(&autoYesFlag, "autoyes", "y", false,
 		"[experimental] If enabled, all instances will automatically accept prompts")
 
+	rootCmd.AddCommand(tuiCmd)
 	rootCmd.AddCommand(debugCmd)
 	rootCmd.AddCommand(versionCmd)
 	rootCmd.AddCommand(resetCmd)
 	rootCmd.AddCommand(newCtlCmd())
 	rootCmd.AddCommand(newDaemonCmd())
+}
+
+// runTUI is the entrypoint for both the bare `boulez` invocation and the
+// explicit `boulez tui` subcommand. It ensures the daemon (the kernel / control
+// authority) is reachable, then starts the TUI as a viewer of it.
+func runTUI(cmd *cobra.Command, args []string) error {
+	ctx := context.Background()
+	log.Initialize(false)
+	log.SetPrintPathOnClose(true) // interactive: surface log path on exit
+	defer log.Close()
+
+	cfg := config.LoadConfig()
+
+	// Program flag overrides config
+	program := cfg.GetProgram()
+	if programFlag != "" {
+		program = programFlag
+	}
+	// AutoYes flag overrides config
+	autoYes := cfg.AutoYes
+	if autoYesFlag {
+		autoYes = true
+	}
+	// Ensure the daemon (the kernel / control authority) is reachable.
+	// The TUI is a viewer of the kernel: no kernel, no viewer (decision
+	// D2). If the socket is absent we auto-start the daemon detached;
+	// if it does not come up within the timeout we fail loud — print the
+	// daemon log tail and the path to `boulez daemon log` and exit
+	// non-zero. There is no degraded TUI mode over a broken daemon.
+	//
+	// The daemon's parent during the transition is this Setsid-detached
+	// child; after Phase 2 it is launchd/systemd. The TUI's job is to
+	// ensure the daemon is reachable, not to be its parent (C1.3/C1.4).
+	if err := ensureDaemonRunning(); err != nil {
+		printDaemonFailureHint()
+		return fmt.Errorf("daemon not reachable: %w", err)
+	}
+
+	return app.Run(ctx, program, autoYes)
 }
 
 func main() {
