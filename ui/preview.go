@@ -19,6 +19,13 @@ type PreviewPane struct {
 	previewState previewState
 	isScrolling  bool
 	viewport     viewport.Model
+
+	// frame advances once per fallback render so the Boulez logo's color
+	// gradient flows. It is only read in fallback state (via LogoFrame),
+	// and only advances there, so an actively-running instance (which never
+	// hits setFallbackState) simply freezes the logo — which is never shown
+	// anyway. The animation reuses the existing previewTickMsg cadence.
+	frame int
 }
 
 type previewState struct {
@@ -41,11 +48,14 @@ func (p *PreviewPane) SetSize(width, maxHeight int) {
 	p.viewport.Height = maxHeight
 }
 
-// setFallbackState sets the preview state with fallback text and a message
+// setFallbackState sets the preview state with fallback text and a message.
+// It advances the animation frame so the Boulez logo's gradient flows on each
+// redraw (previewTickMsg drives this at ~10 fps).
 func (p *PreviewPane) setFallbackState(message string) {
+	p.frame++
 	p.previewState = previewState{
 		fallback: true,
-		text:     lipgloss.JoinVertical(lipgloss.Center, FallBackText, "", message),
+		text:     lipgloss.JoinVertical(lipgloss.Center, LogoFrame(p.frame), "", message),
 	}
 }
 
