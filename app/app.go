@@ -176,6 +176,13 @@ type home struct {
 	// bare &home{} test construct still works.
 	landCaller session.LandCaller
 
+	// landInFlight tracks instance IDs with a land Cmd currently running. It
+	// backs the anti-double-land guard (a second L press while a land is in
+	// flight is refused with a message instead of a silent no-op) and is
+	// cleared on landDoneMsg (success, conflict, or error). Per-instance, not
+	// global, so landin two different instances concurrently is allowed.
+	landInFlight map[string]struct{}
+
 	// fleet is the TUI's seam over the daemon's control socket (C3.1). The
 	// TUI is a pure client of the kernel: it owns the VIEW (a read-only cache
 	// of the fleet), not the TRUTH. Every fleet mutation goes through this
@@ -214,6 +221,7 @@ func newHome(ctx context.Context, program string, autoYes bool) *home {
 		state:           stateDefault,
 		appState:        appState,
 		pendingDraftIDs: make(map[string]struct{}),
+		landInFlight:     make(map[string]struct{}),
 	}
 	h.list = ui.NewList(&h.spinner, autoYes)
 
@@ -372,6 +380,12 @@ func (m *home) Update(msg tea.Msg) (tea.Model, tea.Cmd) {
 			}
 			// Notify on the Ready transition when configured.
 			if prevStatus != session.Ready && r.instance.Status == session.Ready {
+				// The agent finished a turn after having resumed work (Running →
+				// Ready): the displayed version no longer matches what was last
+				// landed, so clear the TUI-only landed hint. The dimmed row +
+				// checkmark disappears, signalling the work has moved past the
+				// merged snapshot.
+				r.instance.SetLanded(false)
 				if m.appConfig.NotifyOnReady {
 					m.notifyReady(r.instance)
 				}
@@ -437,6 +451,8 @@ func (m *home) Update(msg tea.Msg) (tea.Model, tea.Cmd) {
 	case instanceChangedMsg:
 		// Handle instance changed after confirmation action
 		return m, m.instanceChanged()
+	case landDoneMsg:
+		return m, m.handleLandDone(msg)
 	case spawnDoneMsg:
 		// C3.3: spawn routed through the kernel. On success the kernel created
 		// and started the instance; the TUI re-reads the fleet (C3.2) to pick it
@@ -880,27 +896,22 @@ func (m *home) handleKeyPress(msg tea.KeyMsg) (mod tea.Model, cmd tea.Cmd) {
 		if caller == nil {
 			caller = newSocketLandCaller()
 		}
-		landAction := func() tea.Msg {
-			res, err := session.LandInstance(inst, caller, targetBranch, commitMsg)
-			if err != nil {
-				if res.Merge.Status == git.MergeConflict {
-					// Conflict is an expected, recoverable outcome: the repo is
-					// left in the merging state for resolution. Surface the
-					// conflicted files clearly rather than as a generic error.
-					files := make([]string, 0, len(res.Merge.Conflicts))
-					for _, c := range res.Merge.Conflicts {
-						files = append(files, c.File)
-					}
-					return fmt.Errorf("merge conflict on %s — repo left in merging state. Resolve and `git commit`: %s",
-						targetBranch, strings.Join(files, ", "))
-				}
-				return err
-			}
-			return nil
+		// Anti-double-land: if a land is already in flight for this instance,
+		// refuse so the user gets feedback instead of a silent no-op (the kernel
+		// would re-merge, but the TUI gave no indication either way before).
+		if m.landInFlight == nil {
+			m.landInFlight = make(map[string]struct{})
 		}
+		if _, busy := m.landInFlight[inst.GetID()]; busy {
+			return m, m.handleError(fmt.Errorf("land already in progress for '%s'", inst.Title))
+		}
+		// Mark landing on the view handle so the renderer shows a spinner while
+		// the (commit+push+merge) syscall runs in the background. The landInFlight
+		// guard above ensures only one land runs per instance at a time.
+		inst.SetLanding(true)
 		message := fmt.Sprintf("[!] Land '%s' into '%s'?\n(commit + push '%s' then merge into %s)",
 			inst.Title, targetBranch, inst.Title, targetBranch)
-		return m, m.confirmAction(message, landAction)
+		return m, m.confirmAction(message, m.runLandCmd(inst, caller, targetBranch, commitMsg))
 	case keys.KeyCheckout:
 		selected := m.list.GetSelectedInstance()
 		if selected == nil || selected.Status == session.Loading || selected.Status == session.Dead {
@@ -1291,6 +1302,97 @@ func (m *home) confirmAction(message string, action tea.Cmd) tea.Cmd {
 
 	return nil
 }
+
+// landDoneMsg is the outcome of an async land (commit+push+merge via the
+// kernel). It carries the instance ID (to clear landInFlight and the
+// Landing hint), the result, and any error. A conflict is reported as a
+// non-nil error with res.Merge.Status == MergeConflict, exactly as
+// session.LandInstance returns it; handleLandDone surfaces the conflict files
+// rather than a generic error. HostSynced/HostSyncNote come from the kernel
+// (added in a follow-up); when the kernel does not populate them they default
+// to false/"" and the message degrades gracefully to "Landed".
+type landDoneMsg struct {
+	instanceID string
+	title      string
+	target     string
+	result     session.LandResult
+	err        error
+}
+
+// runLandCmd issues session.LandInstance in a background goroutine and returns
+// landDoneMsg. It is the async replacement for the old synchronous landAction:
+// the (commit+push+merge) syscall no longer blocks the TUI loop, and its
+// outcome reaches Update as a dedicated msg so the user gets visible feedback
+// (success / conflict / error) instead of nothing. The instance's Landing hint
+// is set by the caller (KeyLand) before dispatching; cleared here on completion.
+func (m *home) runLandCmd(inst *session.Instance, caller session.LandCaller, target, commitMsg string) tea.Cmd {
+	return func() tea.Msg {
+		res, err := session.LandInstance(inst, caller, target, commitMsg)
+		return landDoneMsg{
+			instanceID: inst.GetID(),
+			title:      inst.Title,
+			target:     target,
+			result:     res,
+			err:        err,
+		}
+	}
+}
+
+// handleLandDone processes a landDoneMsg: clears the in-flight + Landing
+// hints, surfaces the outcome in the error box, and marks the instance Landed
+// on success. On conflict it lists the conflicted files and the throwaway
+// worktree path (left in the merging state for resolution). On any outcome it
+// refreshes the fleet so the view reflects the merged main (or the conflict).
+func (m *home) handleLandDone(msg landDoneMsg) tea.Cmd {
+	delete(m.landInFlight, msg.instanceID)
+	if inst := m.list.FindInstance(msg.instanceID); inst != nil {
+		inst.SetLanding(false)
+	}
+
+	if msg.err != nil {
+		if msg.result.Merge.Status == git.MergeConflict {
+			files := make([]string, 0, len(msg.result.Merge.Conflicts))
+			for _, c := range msg.result.Merge.Conflicts {
+				files = append(files, c.File)
+			}
+			extra := ""
+			if msg.result.Merge.WorktreePath != "" {
+				extra = fmt.Sprintf(" — repo left in merging state at %s; resolve and `git commit`", msg.result.Merge.WorktreePath)
+			}
+			return tea.Batch(
+				m.handleError(fmt.Errorf("merge conflict on %s%s: %s",
+					msg.target, extra, strings.Join(files, ", "))),
+				m.refreshFleetAfterMutation(),
+			)
+		}
+		return tea.Batch(m.handleError(msg.err), m.refreshFleetAfterMutation())
+	}
+
+	// Success: surface a clear message (green-tinted via the host-sync note,
+	// if present) and mark the instance as landed so the renderer dims it +
+	// shows the checkmark until the agent resumes work (Running→Ready clears it).
+	if inst := m.list.FindInstance(msg.instanceID); inst != nil {
+		inst.SetLanded(true)
+	}
+	note := strings.TrimSpace(msg.result.HostSyncNote)
+	var success error
+	if msg.result.HostSynced {
+		success = successMsg(fmt.Sprintf("Landed '%s' into %s (host synced)", msg.title, msg.target))
+	} else if note != "" {
+		success = successMsg(fmt.Sprintf("Landed '%s' into %s; %s", msg.title, msg.target, note))
+	} else {
+		success = successMsg(fmt.Sprintf("Landed '%s' into %s", msg.title, msg.target))
+	}
+	return tea.Batch(m.handleError(success), m.refreshFleetAfterMutation())
+}
+
+// successMsg is a non-error tea.Msg that handleError still surfaces in the error
+// box, so a successful land reads as a positive (green) line rather than red.
+// It implements error only to ride the existing case error: path in Update;
+// handleError special-cases successMsg to render without the error styling.
+type successMsg string
+
+func (s successMsg) Error() string { return string(s) }
 
 // openHostSelector opens the host selector overlay first, before the repo
 // selector. promptFlow controls whether the prompt+branch overlay follows name
