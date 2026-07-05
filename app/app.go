@@ -106,11 +106,6 @@ type home struct {
 	// here when the draft leaves the list: on spawn ack (success or error)
 	// or when the user cancels name entry.
 	pendingDraftIDs map[string]struct{}
-	// startingInstance is retained for back-compat with callers that used to
-	// pass it to runInstanceStartCmd; it is now unused (spawn goes through the
-	// kernel) but kept here so a bare &home{} test construct that sets it
-	// still compiles. Phase 4 removes it.
-	startingInstance *session.Instance
 
 	// -- UI Components --
 
