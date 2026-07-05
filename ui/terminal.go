@@ -36,6 +36,10 @@ type TerminalPane struct {
 	fallback      bool
 	fallbackText  string
 
+	// frame advances once per fallback render so the Boulez logo's color
+	// gradient flows. Guarded by mu (like fallbackText). See PreviewPane.frame.
+	frame int
+
 	isScrolling bool
 	viewport    viewport.Model
 }
@@ -62,10 +66,13 @@ func (t *TerminalPane) SetSize(width, height int) {
 }
 
 // setFallbackState sets the terminal pane to display a fallback message.
+// It advances the animation frame so the Boulez logo's gradient flows on each
+// redraw (previewTickMsg drives this at ~10 fps).
 // Caller must hold t.mu.
 func (t *TerminalPane) setFallbackState(message string) {
 	t.fallback = true
-	t.fallbackText = lipgloss.JoinVertical(lipgloss.Center, FallBackText, "", message)
+	t.frame++
+	t.fallbackText = lipgloss.JoinVertical(lipgloss.Center, LogoFrame(t.frame), "", message)
 	t.content = ""
 }
 
