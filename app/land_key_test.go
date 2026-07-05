@@ -2,6 +2,7 @@ package app
 
 import (
 	"context"
+	"fmt"
 	"testing"
 
 	"github.com/charmbracelet/bubbles/spinner"
@@ -20,11 +21,11 @@ type fakeLandCaller struct {
 	repo   string
 	target string
 	source string
-	result git.MergeResult
+	result session.LandOutcome
 	err    error
 }
 
-func (f *fakeLandCaller) Land(repoPath, targetBranch, sourceBranch string, strategy git.Strategy) (git.MergeResult, error) {
+func (f *fakeLandCaller) Land(repoPath, targetBranch, sourceBranch string, strategy git.Strategy) (session.LandOutcome, error) {
 	f.called = true
 	f.repo = repoPath
 	f.target = targetBranch
@@ -47,12 +48,14 @@ func newLandTestHome(t *testing.T, inst *session.Instance, caller session.LandCa
 	_ = list.AddInstance(inst)
 	list.SetSelectedInstance(0)
 	return &home{
-		ctx:        context.Background(),
-		state:      stateDefault,
-		appConfig:  config.DefaultConfig(),
-		list:       list,
-		menu:       ui.NewMenu(),
-		landCaller: caller,
+		ctx:           context.Background(),
+		state:         stateDefault,
+		appConfig:     config.DefaultConfig(),
+		list:          list,
+		menu:          ui.NewMenu(),
+		tabbedWindow:  ui.NewTabbedWindow(ui.NewPreviewPane(), ui.NewDiffPane(), ui.NewTerminalPane()),
+		landCaller:    caller,
+		landInFlight:  make(map[string]struct{}),
 	}
 }
 
@@ -65,7 +68,7 @@ func TestKeyLand_ReadyOpensModal(t *testing.T) {
 	require.NoError(t, err)
 	inst.SetStatus(session.Ready)
 
-	caller := &fakeLandCaller{result: git.MergeResult{Status: git.MergeMerged}}
+	caller := &fakeLandCaller{result: session.LandOutcome{Merge: git.MergeResult{Status: git.MergeMerged}}}
 	h := newLandTestHome(t, inst, caller)
 	h.keySent = true // bypass menu-highlight early-return so handleKeyPress reaches the switch
 	_, _ = h.handleKeyPress(tea.KeyMsg{Type: tea.KeyRunes, Runes: []rune("L")})
@@ -92,7 +95,7 @@ func TestKeyLand_ConfirmRunsLand(t *testing.T) {
 	t.Cleanup(func() { _ = inst.Kill() })
 	inst.SetStatus(session.Ready)
 
-	caller := &fakeLandCaller{result: git.MergeResult{Status: git.MergeMerged}}
+	caller := &fakeLandCaller{result: session.LandOutcome{Merge: git.MergeResult{Status: git.MergeMerged}}}
 	h := newLandTestHome(t, inst, caller)
 	h.keySent = true // bypass menu-highlight early-return so handleKeyPress reaches the switch
 	_, _ = h.handleKeyPress(tea.KeyMsg{Type: tea.KeyRunes, Runes: []rune("L")})
@@ -128,4 +131,113 @@ func TestKeyLand_RunningIsNoop(t *testing.T) {
 	assert.NotEqual(t, stateConfirm, h.state, "L on Running must not open the modal")
 	assert.Nil(t, h.confirmationOverlay)
 	assert.False(t, caller.called)
+}
+
+// TestLandDoneMsg_SuccessShowsLanded proves the async land outcome reaches
+// Update and surfaces a positive message + sets the Landed hint (dimmed row +
+// checkmark). This is the core UX fix: before the async refactor, confirming
+// the modal discarded the returned Cmd and nothing was ever shown.
+func TestLandDoneMsg_SuccessShowsLanded(t *testing.T) {
+	repoPath := makeTempGitRepoApp(t)
+	inst, err := session.NewInstance(session.InstanceOptions{
+		Title: "feat-x", Path: repoPath, Program: "claude",
+	})
+	require.NoError(t, err)
+	require.NoError(t, inst.Start(true))
+	t.Cleanup(func() { _ = inst.Kill() })
+	inst.SetStatus(session.Ready)
+
+	caller := &fakeLandCaller{result: session.LandOutcome{
+		Merge:      git.MergeResult{Status: git.MergeMerged},
+		HostSynced: true,
+	}}
+	h := newLandTestHome(t, inst, caller)
+	h.errBox = ui.NewErrBox()
+	h.landInFlight = map[string]struct{}{inst.GetID(): {}}
+	inst.SetLanding(true)
+
+	_, _ = h.Update(landDoneMsg{
+		instanceID: inst.GetID(),
+		title:      inst.Title,
+		target:     "main",
+		result:     session.LandResult{Merge: caller.result.Merge, HostSynced: caller.result.HostSynced, HostSyncNote: caller.result.HostSyncNote},
+	})
+
+	assert.False(t, inst.Landing(), "landing hint cleared on success")
+	assert.True(t, inst.Landed(), "landed hint set on success")
+	_, inFlight := h.landInFlight[inst.GetID()]
+	assert.False(t, inFlight, "landInFlight cleared on success")
+	require.NotNil(t, h.errBox.Err())
+	assert.Contains(t, h.errBox.Err().Error(), "Landed")
+	assert.Contains(t, h.errBox.Err().Error(), "host synced")
+}
+
+// TestLandDoneMsg_ConflictShowsFiles proves a conflicting land surfaces the
+// conflicted files and the throwaway worktree path, not a generic error.
+func TestLandDoneMsg_ConflictShowsFiles(t *testing.T) {
+	repoPath := makeTempGitRepoApp(t)
+	inst, err := session.NewInstance(session.InstanceOptions{
+		Title: "feat-x", Path: repoPath, Program: "claude",
+	})
+	require.NoError(t, err)
+	require.NoError(t, inst.Start(true))
+	t.Cleanup(func() { _ = inst.Kill() })
+	inst.SetStatus(session.Ready)
+
+	caller := &fakeLandCaller{}
+	h := newLandTestHome(t, inst, caller)
+	h.errBox = ui.NewErrBox()
+	h.landInFlight = map[string]struct{}{inst.GetID(): {}}
+	inst.SetLanding(true)
+
+	conflict := session.LandOutcome{
+		Merge: git.MergeResult{
+			Status:       git.MergeConflict,
+			Conflicts:    []git.Conflict{{File: "a.go"}, {File: "b.go"}},
+			WorktreePath: "/tmp/boulez-merge-xyz",
+		},
+	}
+	_, _ = h.Update(landDoneMsg{
+		instanceID: inst.GetID(),
+		title:      inst.Title,
+		target:     "main",
+		result:     session.LandResult{Merge: conflict.Merge},
+		err:        fmt.Errorf("merge: git merge failed"),
+	})
+
+	assert.False(t, inst.Landing(), "landing hint cleared on conflict")
+	assert.False(t, inst.Landed(), "landed hint NOT set on conflict")
+	require.NotNil(t, h.errBox.Err())
+	assert.Contains(t, h.errBox.Err().Error(), "a.go")
+	assert.Contains(t, h.errBox.Err().Error(), "b.go")
+	assert.Contains(t, h.errBox.Err().Error(), "/tmp/boulez-merge-xyz")
+}
+
+// TestKeyLand_DoublePressIsNoop proves the anti-double-land guard: pressing L
+// while a land is in flight for the same instance is refused with a message
+// instead of a silent no-op or a second concurrent land.
+func TestKeyLand_DoublePressIsNoop(t *testing.T) {
+	repoPath := makeTempGitRepoApp(t)
+	inst, err := session.NewInstance(session.InstanceOptions{
+		Title: "feat-x", Path: repoPath, Program: "claude",
+	})
+	require.NoError(t, err)
+	require.NoError(t, inst.Start(true))
+	t.Cleanup(func() { _ = inst.Kill() })
+	inst.SetStatus(session.Ready)
+
+	caller := &fakeLandCaller{result: session.LandOutcome{Merge: git.MergeResult{Status: git.MergeMerged}}}
+	h := newLandTestHome(t, inst, caller)
+	h.keySent = true // bypass menu-highlight early-return so handleKeyPress reaches the switch
+	h.errBox = ui.NewErrBox()
+	h.landInFlight = map[string]struct{}{inst.GetID(): {}} // a land is in flight
+	inst.SetLanding(true)
+
+	_, _ = h.handleKeyPress(tea.KeyMsg{Type: tea.KeyRunes, Runes: []rune("L")})
+
+	assert.NotEqual(t, stateConfirm, h.state, "second L must not open a modal")
+	assert.Nil(t, h.confirmationOverlay, "second L must not open a modal")
+	assert.False(t, caller.called, "the in-flight land must not be re-invoked")
+	require.NotNil(t, h.errBox.Err())
+	assert.Contains(t, h.errBox.Err().Error(), "already in progress")
 }
