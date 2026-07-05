@@ -63,7 +63,7 @@ func socketPath() (string, error) {
 	return p, nil
 }
 
-func callFleet(method string, params map[string]interface{}) (kernel.Response, error) {
+func callFleet(method string, params any) (kernel.Response, error) {
 	p, err := socketPath()
 	if err != nil {
 		return kernel.Response{}, err
@@ -99,24 +99,24 @@ func (socketFleetClient) ListInstances() ([]session.InstanceData, error) {
 // Spawn issues a `spawn_worker` syscall mirroring app.SpawnOptions. The kernel
 // creates+starts the instance and returns its ID. Host is carried by alias
 // (host.Lookup resolves it on the daemon side).
+//
+// The wire payload is a kernel.SpawnParams built from app.SpawnOptions, so the
+// JSON field names (and their omitempty rules) live in exactly one place —
+// the SpawnParams struct tags in kernel/transport.go. The app no longer
+// hand-writes a map[string]interface{} for spawn, which was silently
+// drop-prone on any field rename.
 func (socketFleetClient) Spawn(opts SpawnOptions) (string, error) {
-	params := map[string]interface{}{
-		"repo":    opts.Repo,
-		"prompt":  opts.Prompt,
-		"program": opts.Program,
-		"title":   opts.Title,
-	}
-	if opts.Branch != "" {
-		params["branch"] = opts.Branch
-	}
-	if opts.BranchMustExist {
-		params["branch_must_exist"] = true
-	}
-	if opts.Kind != session.KindWorker {
-		params["kind"] = opts.Kind
+	params := kernel.SpawnParams{
+		Repo:            opts.Repo,
+		Branch:          opts.Branch,
+		BranchMustExist: opts.BranchMustExist,
+		Prompt:          opts.Prompt,
+		Program:         opts.Program,
+		Title:           opts.Title,
+		Kind:            opts.Kind,
 	}
 	if opts.Host != nil {
-		params["host"] = opts.Host.Name()
+		params.Host = opts.Host.Name()
 	}
 	resp, err := callFleet("spawn_worker", params)
 	if err != nil {
