@@ -17,8 +17,15 @@ import (
 const readyIcon = "● "
 const pausedIcon = "⏸ "
 const deadIcon = "✝ "
+const landedIcon = "✓ "
 
 var readyStyle = lipgloss.NewStyle().
+	Foreground(lipgloss.AdaptiveColor{Light: "#51bd73", Dark: "#51bd73"})
+
+// landedStyle renders the landed checkmark in the same green as the ready
+// dot, signalling a successful merge. Distinct from readyStyle (which marks
+// "agent idle") so the two states remain visually separable.
+var landedStyle = lipgloss.NewStyle().
 	Foreground(lipgloss.AdaptiveColor{Light: "#51bd73", Dark: "#51bd73"})
 
 var addedLinesStyle = lipgloss.NewStyle().
@@ -218,19 +225,37 @@ func (r *InstanceRenderer) Render(i *session.Instance, idx int, selected bool, h
 		titleS = titleStyle
 		descS = listDescStyle
 	}
+	// Dim the title when the instance has been landed: the row reads as
+	// "done / merged" at a glance, without changing the kernel-owned Status
+	// (the agent may still be Ready or Paused). The background is preserved so
+	// the selected-row highlight is unchanged.
+	if i.Landed() {
+		titleS = titleS.Foreground(pausedStyle.GetForeground())
+	}
 
-	// add spinner next to title if it's running
+	// Status icon next to the title. A land in flight shows a spinner over the
+	// status icon; a landed instance shows a green checkmark (the status icon
+	// stays, but the title is dimmed below). Landing takes priority over Landed
+	// so the spinner is visible while the land runs, even on an already-landed
+	// re-land.
 	var join string
-	switch i.Status {
-	case session.Running, session.Loading:
+	switch {
+	case i.Landing():
 		join = fmt.Sprintf("%s ", r.spinner.View())
-	case session.Ready:
-		join = readyStyle.Render(readyIcon)
-	case session.Paused:
-		join = pausedStyle.Render(pausedIcon)
-	case session.Dead:
-		join = deadStyle.Render(deadIcon)
+	case i.Landed():
+		join = landedStyle.Render(landedIcon)
 	default:
+		switch i.Status {
+		case session.Running, session.Loading:
+			join = fmt.Sprintf("%s ", r.spinner.View())
+		case session.Ready:
+			join = readyStyle.Render(readyIcon)
+		case session.Paused:
+			join = pausedStyle.Render(pausedIcon)
+		case session.Dead:
+			join = deadStyle.Render(deadIcon)
+		default:
+		}
 	}
 
 	// Cut the title if it's too long
