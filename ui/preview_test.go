@@ -387,3 +387,78 @@ func max(a, b int) int {
 	}
 	return b
 }
+
+// --- Insert mode tests ---
+
+// TestInsertMode_BufferAndCommit verifies the Enter/Handle/Commit cycle: a
+// freshly entered insert mode accumulates runes, Commit returns them and
+// clears the buffer, and the pane stays in insert mode after commit
+// (chat-style multi-line; Esc is the dedicated exit).
+func TestInsertMode_BufferAndCommit(t *testing.T) {
+	p := NewPreviewPane()
+	p.SetSize(80, 30)
+
+	p.EnterInsertMode()
+	require.True(t, p.IsInInsertMode(), "should be in insert mode after Enter")
+
+	p.HandleInsertKey('h')
+	p.HandleInsertKey('i')
+	p.HandleInsertKey('!')
+	require.Equal(t, "hi!", p.insertBufText(), "buffer should hold typed runes")
+
+	commit1 := p.CommitInsert()
+	require.Equal(t, "hi!", commit1, "Commit returns buffered text")
+	require.Empty(t, p.insertBufText(), "buffer cleared after commit")
+	require.True(t, p.IsInInsertMode(), "stays in insert mode after commit (Esc exits)")
+
+	p.HandleInsertKey('x')
+	require.Equal(t, "x", p.insertBufText(), "buffer restarts after commit")
+}
+
+// TestInsertMode_ExitClearsBuffer verifies Esc's counterpart: ExitInsertMode
+// discards any pending text.
+func TestInsertMode_ExitClearsBuffer(t *testing.T) {
+	p := NewPreviewPane()
+	p.SetSize(80, 30)
+
+	p.EnterInsertMode()
+	p.HandleInsertKey('n')
+	p.HandleInsertKey('o')
+	p.ExitInsertMode()
+
+	require.False(t, p.IsInInsertMode(), "exited after Exit")
+	require.Empty(t, p.insertBufText(), "buffer cleared on exit")
+}
+
+// TestInsertMode_StringShowsBannerAndPrompt verifies the rendered String()
+// reserves space for the -- INSERT -- banner and the `> ` prompt line, so the
+// user sees what they type below the agent output.
+func TestInsertMode_StringShowsBannerAndPrompt(t *testing.T) {
+	p := NewPreviewPane()
+	p.SetSize(80, 30)
+	p.previewState = previewState{fallback: false, text: "agent output line"}
+
+	p.EnterInsertMode()
+	p.HandleInsertKey('h')
+	p.HandleInsertKey('i')
+
+	rendered := p.String()
+	require.Contains(t, rendered, "INSERT", "banner visible in insert mode")
+	require.Contains(t, rendered, "> hi", "prompt line shows typed buffer")
+	require.Contains(t, rendered, "agent output line", "agent output still visible above the prompt")
+}
+
+// TestInsertMode_HandleKeyNoOpWhenNotInMode verifies that HandleInsertKey is a
+// no-op outside insert mode (e.g. in stateDefault the app never calls it, but
+// the pane must stay robust).
+func TestInsertMode_HandleKeyNoOpWhenNotInMode(t *testing.T) {
+	p := NewPreviewPane()
+	p.SetSize(80, 30)
+
+	p.HandleInsertKey('x')
+	require.False(t, p.IsInInsertMode(), "never entered")
+	require.Empty(t, p.insertBufText(), "no buffer accumulated outside insert mode")
+}
+
+// insertBufText is a test helper exposing the rune buffer as a string.
+func (p *PreviewPane) insertBufText() string { return string(p.insertBuf) }

@@ -20,6 +20,13 @@ type PreviewPane struct {
 	isScrolling  bool
 	viewport     viewport.Model
 
+	// insertMode is the vim-style insert state: keystrokes are accumulated
+	// into insertBuf and committed (via SendKeys) on Enter, rather than
+	// being interpreted as fleet keybindings. The buffer is rendered as a
+	// prompt line at the bottom of the pane so the user sees what they type.
+	insertMode bool
+	insertBuf  []rune
+
 	// frame advances once per fallback render so the Boulez logo's color
 	// gradient flows. It is only read in fallback state (via LogoFrame),
 	// and only advances there, so an actively-running instance (which never
@@ -125,6 +132,56 @@ func (p *PreviewPane) UpdateContent(instance *session.Instance) error {
 	return nil
 }
 
+// EnterInsertMode resets the insert buffer and activates insert mode. The
+// caller is responsible for gating on instance readiness (started, not
+// paused) and on the Preview tab being active.
+func (p *PreviewPane) EnterInsertMode() {
+	p.insertMode = true
+	p.insertBuf = p.insertBuf[:0]
+}
+
+// ExitInsertMode leaves insert mode and discards the pending buffer.
+func (p *PreviewPane) ExitInsertMode() {
+	p.insertMode = false
+	p.insertBuf = p.insertBuf[:0]
+}
+
+// HandleInsertKey appends a rune to the insert buffer. Used by the app's
+// handleInsertState to forward printable keystrokes.
+func (p *PreviewPane) HandleInsertKey(r rune) {
+	if p.insertMode {
+		p.insertBuf = append(p.insertBuf, r)
+	}
+}
+
+// CommitInsert returns the buffered text and clears the buffer. The pane
+// stays in insert mode (chat-style multi-line); the caller exits explicitly
+// with ExitInsertMode (Esc) or via the safety net in handleInsertState.
+func (p *PreviewPane) CommitInsert() string {
+	text := string(p.insertBuf)
+	p.insertBuf = p.insertBuf[:0]
+	return text
+}
+
+// IsInInsertMode reports whether the pane is currently in insert mode.
+func (p *PreviewPane) IsInInsertMode() bool { return p.insertMode }
+
+// insertPromptStyle renders the `> ` prompt prefix and -- INSERT -- banner.
+var insertBannerStyle = lipgloss.NewStyle().
+		Foreground(lipgloss.AdaptiveColor{Light: "#FFCC00", Dark: "#FFCC00"}).
+		Bold(true)
+
+// insertPromptText returns the rendered insert-mode footer: a `-- INSERT --`
+// banner line plus the `> ` prompt line with the current buffer. Two lines
+// total, matching the space reserved by String() (insertFooterLines).
+const insertFooterLines = 2
+
+func (p *PreviewPane) insertPromptText() string {
+	banner := insertBannerStyle.Render("-- INSERT -- (Esc to exit, Enter to send)")
+	prompt := "> " + string(p.insertBuf)
+	return lipgloss.JoinVertical(lipgloss.Left, banner, prompt)
+}
+
 // Returns the preview pane content as a string.
 func (p *PreviewPane) String() string {
 	if p.width == 0 || p.height == 0 {
@@ -173,6 +230,13 @@ func (p *PreviewPane) String() string {
 	// Calculate available height accounting for border and margin
 	availableHeight := p.height - 1 //  1 for ellipsis
 
+	// In insert mode, reserve space at the bottom for the -- INSERT -- banner
+	// and the `> ` prompt line, so the typed text is visible below the agent
+	// output.
+	if p.insertMode {
+		availableHeight -= insertFooterLines
+	}
+
 	lines := strings.Split(p.previewState.text, "\n")
 
 	// Truncate if we have more lines than available height
@@ -188,6 +252,9 @@ func (p *PreviewPane) String() string {
 	}
 
 	content := strings.Join(lines, "\n")
+	if p.insertMode {
+		content = lipgloss.JoinVertical(lipgloss.Left, content, p.insertPromptText())
+	}
 	rendered := previewPaneStyle.Width(p.width).Render(content)
 	return rendered
 }

@@ -61,6 +61,15 @@ const (
 	// (Ctrl+R) to start a quick session. On submit the host/repo/prompt
 	// selectors are skipped entirely: only the instance name remains to type.
 	statePresetSelect
+	// stateInsert is the vim-style insert mode: keystrokes are forwarded to
+	// the selected instance's tmux pane (via Instance.SendKeys) instead of
+	// being interpreted as fleet keybindings. Entered from stateDefault with
+	// `i` (only on the Preview tab, with a started, non-paused instance),
+	// exited with Esc. The modal separation is what stops fleet bindings
+	// (q, c, r, p, ...) from colliding with text the user types into the
+	// agent. The PreviewPane owns the in-progress text buffer; this state
+	// only routes keys to it.
+	stateInsert
 )
 
 type home struct {
@@ -491,7 +500,7 @@ func (m *home) handleMenuHighlighting(msg tea.KeyMsg) (cmd tea.Cmd, returnEarly 
 		m.keySent = false
 		return nil, false
 	}
-	if m.state == statePrompt || m.state == stateHelp || m.state == stateConfirm || m.state == stateRepoSelect || m.state == stateHostSelect || m.state == statePresetSelect {
+	if m.state == statePrompt || m.state == stateHelp || m.state == stateConfirm || m.state == stateRepoSelect || m.state == stateHostSelect || m.state == statePresetSelect || m.state == stateInsert {
 		return nil, false
 	}
 	// If it's in the global keymap, we should try to highlight it.
@@ -544,6 +553,8 @@ func (m *home) handleKeyPress(msg tea.KeyMsg) (mod tea.Model, cmd tea.Cmd) {
 		return m.handleNewState(msg)
 	} else if m.state == statePrompt {
 		return m.handlePromptState(msg)
+	} else if m.state == stateInsert {
+		return m.handleInsertState(msg)
 	}
 
 	// Handle confirmation state
@@ -566,25 +577,31 @@ func (m *home) handleKeyPress(msg tea.KeyMsg) (mod tea.Model, cmd tea.Cmd) {
 	// Check if Escape key was pressed and we're not in the diff tab (meaning we're in preview tab)
 	// Always check for escape key first to ensure it doesn't get intercepted elsewhere
 	if msg.Type == tea.KeyEsc {
-		// If in preview tab and in scroll mode, exit scroll mode
-		if m.tabbedWindow.IsInPreviewTab() && m.tabbedWindow.IsPreviewInScrollMode() {
-			// Use the selected instance from the list
-			selected := m.list.GetSelectedInstance()
-			err := m.tabbedWindow.ResetPreviewToNormalMode(selected)
-			if err != nil {
-				return m, m.handleError(err)
+		// Insert mode owns Esc as its exit key and must not be intercepted by
+		// scroll-mode handling below; it is dispatched in handleInsertState.
+		if m.state != stateInsert {
+			// If in preview tab and in scroll mode, exit scroll mode
+			if m.tabbedWindow.IsInPreviewTab() && m.tabbedWindow.IsPreviewInScrollMode() {
+				// Use the selected instance from the list
+				selected := m.list.GetSelectedInstance()
+				err := m.tabbedWindow.ResetPreviewToNormalMode(selected)
+				if err != nil {
+					return m, m.handleError(err)
+				}
+				return m, m.instanceChanged()
 			}
-			return m, m.instanceChanged()
-		}
-		// If in terminal tab and in scroll mode, exit scroll mode
-		if m.tabbedWindow.IsInTerminalTab() && m.tabbedWindow.IsTerminalInScrollMode() {
-			m.tabbedWindow.ResetTerminalToNormalMode()
-			return m, m.instanceChanged()
+			// If in terminal tab and in scroll mode, exit scroll mode
+			if m.tabbedWindow.IsInTerminalTab() && m.tabbedWindow.IsTerminalInScrollMode() {
+				m.tabbedWindow.ResetTerminalToNormalMode()
+				return m, m.instanceChanged()
+			}
 		}
 	}
 
-	// Handle quit commands first
-	if msg.String() == "ctrl+c" || msg.String() == "q" {
+	// Handle quit commands first. Insert mode is excluded: it owns `q` as
+	// a literal character (a user typing "quit" into the agent must not quit
+	// the TUI). Esc is the dedicated exit from insert mode.
+	if (msg.String() == "ctrl+c" || msg.String() == "q") && m.state != stateInsert {
 		return m.handleQuit()
 	}
 
@@ -604,6 +621,8 @@ func (m *home) handleKeyPress(msg tea.KeyMsg) (mod tea.Model, cmd tea.Cmd) {
 		return m, m.openPresetSelector()
 	case keys.KeySpawnOrchestrator:
 		return m, m.spawnOrchestrator()
+	case keys.KeyInsert:
+		return m.enterInsertMode()
 	case keys.KeyUp:
 		m.list.Up()
 		return m, m.instanceChanged()
@@ -808,6 +827,73 @@ func (m *home) handleKeyPress(msg tea.KeyMsg) (mod tea.Model, cmd tea.Cmd) {
 		})
 		return m, nil
 	default:
+		return m, nil
+	}
+}
+
+// enterInsertMode transitions from stateDefault to stateInsert, provided the
+// selected instance can receive input (started, not paused, not loading) and
+// the Preview tab is active. Insert mode is intentionally Preview-only for
+// now: the Terminal tab already has its own attach flow, and duplicating the
+// buffer/forwarding there is premature until a second site justifies the seam
+// (per AGENTS.md: one adapter is a hypothetical seam, two make a real one).
+func (m *home) enterInsertMode() (tea.Model, tea.Cmd) {
+	if !m.tabbedWindow.IsInPreviewTab() {
+		return m, nil
+	}
+	selected := m.list.GetSelectedInstance()
+	if selected == nil || selected.Status == session.Loading || selected.Status == session.Paused || !selected.Started() {
+		return m, nil
+	}
+	m.tabbedWindow.EnterInsertMode()
+	m.state = stateInsert
+	return m, nil
+}
+
+// handleInsertState routes keystrokes to the selected instance's tmux pane via
+// SendKeys, while keeping the dashboard visible. Esc exits insert mode (it is
+// intercepted here and never forwarded to the agent — same contract as vim's
+// insert mode). Enter sends the buffered line to the agent and stays in
+// insert mode (chat-style multi-line). The PreviewPane owns the in-progress
+// text buffer; this handler only forwards events to it and dispatches the
+// SendKeys on commit. The next previewTick (~10fps) re-captures the pane, so
+// the typed text is reflected in the preview without a forced refresh.
+func (m *home) handleInsertState(msg tea.KeyMsg) (tea.Model, tea.Cmd) {
+	selected := m.list.GetSelectedInstance()
+	// Safety net: if the instance becomes unsendable mid-insert (killed,
+	// paused, deselected), drop back to the default state rather than buffering
+	// keystrokes that can never be delivered.
+	if selected == nil || selected.Status == session.Paused || !selected.Started() {
+		m.tabbedWindow.ExitInsertMode()
+		m.state = stateDefault
+		return m, nil
+	}
+	switch msg.String() {
+	case "esc":
+		m.tabbedWindow.ExitInsertMode()
+		m.state = stateDefault
+		return m, nil
+	case "enter":
+		text := m.tabbedWindow.CommitInsert()
+		if text != "" {
+			if err := selected.SendKeys(text); err != nil {
+				return m, m.handleError(err)
+			}
+			// Send the Enter key separately: SendKeys uses -l (literal), so it
+			// cannot itself submit the line. SendEnter routes through the same
+			// host executor as SendKeys.
+			if err := selected.SendEnter(); err != nil {
+				return m, m.handleError(err)
+			}
+		}
+		return m, nil
+	default:
+		// Accumulate printable runes into the PreviewPane's insert buffer.
+		if len(msg.Runes) > 0 {
+			for _, r := range msg.Runes {
+				m.tabbedWindow.HandleInsertKey(r)
+			}
+		}
 		return m, nil
 	}
 }
