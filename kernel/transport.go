@@ -168,7 +168,7 @@ func dispatch(k *Kernel, sess *ctlSession, req Request) Response {
 		}
 		return okResp(d)
 	case "spawn_worker":
-		var p spawnParams
+		var p SpawnParams
 		if err := json.Unmarshal(req.Params, &p); err != nil {
 			return errResp(CodeInternal, "bad params: "+err.Error())
 		}
@@ -277,7 +277,14 @@ func composeStatusFilter(f ListFilter, s session.Status) ListFilter {
 	return f
 }
 
-type spawnParams struct {
+// SpawnParams is the wire payload of the spawn_worker syscall. It is the
+// single source of truth for the spawn wire contract: the JSON tags here
+// define the field names both the client (app/fleet_client.go, which builds
+// a SpawnParams and marshals it) and the daemon (here, via toOptions) agree on.
+// Exporting it lets the TUI marshal the struct directly instead of hand-
+// writing a map[string]interface{}, which was silently drop-prone on any
+// field rename.
+type SpawnParams struct {
 	Repo            string       `json:"repo"`
 	Branch          string       `json:"branch,omitempty"`
 	BranchMustExist bool         `json:"branch_must_exist,omitempty"`
@@ -289,7 +296,7 @@ type spawnParams struct {
 	Caller          callerParams `json:"caller,omitempty"`
 }
 
-func (p spawnParams) toOptions() SpawnOptions {
+func (p SpawnParams) toOptions() SpawnOptions {
 	return SpawnOptions{
 		Repo:            p.Repo,
 		Branch:          p.Branch,
