@@ -17,9 +17,9 @@
 package presets
 
 import (
-	"github.com/yro7/boulez/config"
 	"encoding/json"
 	"fmt"
+	"github.com/yro7/boulez/config"
 	"os"
 	"path/filepath"
 	"sort"

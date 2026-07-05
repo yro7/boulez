@@ -51,7 +51,7 @@ func (m *memStorage) DeleteAllInstances() error {
 	return nil
 }
 
-func (m *memStorage) GetHelpScreensSeen() uint32      { return m.helpSeen }
+func (m *memStorage) GetHelpScreensSeen() uint32 { return m.helpSeen }
 func (m *memStorage) SetHelpScreensSeen(seen uint32) error {
 	m.helpSeen = seen
 	return nil

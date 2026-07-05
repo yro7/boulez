@@ -1,12 +1,12 @@
 package ui
 
 import (
+	"errors"
+	"fmt"
 	"github.com/yro7/boulez/host"
 	"github.com/yro7/boulez/log"
 	"github.com/yro7/boulez/program"
 	"github.com/yro7/boulez/session"
-	"errors"
-	"fmt"
 	"strings"
 
 	"github.com/charmbracelet/bubbles/spinner"

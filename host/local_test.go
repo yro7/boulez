@@ -5,10 +5,10 @@ import (
 	"path/filepath"
 	"testing"
 
-	"github.com/yro7/boulez/cmd"
-	"github.com/yro7/boulez/session/fs"
 	"github.com/stretchr/testify/assert"
 	"github.com/stretchr/testify/require"
+	"github.com/yro7/boulez/cmd"
+	"github.com/yro7/boulez/session/fs"
 )
 
 // TestLocalHost_WorktreeDir_MatchesOldPath verifies that LocalHost.WorktreeDir

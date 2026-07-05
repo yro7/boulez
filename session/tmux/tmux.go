@@ -2,14 +2,14 @@ package tmux
 
 import (
 	"bytes"
-	"github.com/yro7/boulez/cmd"
-	"github.com/yro7/boulez/host"
-	"github.com/yro7/boulez/log"
-	"github.com/yro7/boulez/program"
 	"context"
 	"crypto/sha256"
 	"errors"
 	"fmt"
+	"github.com/yro7/boulez/cmd"
+	"github.com/yro7/boulez/host"
+	"github.com/yro7/boulez/log"
+	"github.com/yro7/boulez/program"
 	"io"
 	"os"
 	"os/exec"
@@ -58,7 +58,7 @@ type TmuxSession struct {
 	wg     *sync.WaitGroup
 }
 
-const TmuxPrefix = "claudesquad_"
+const TmuxPrefix = "boulez_"
 
 // Compile-time guarantee that *TmuxSession satisfies program.Responder, so the
 // adapter's Resolve callbacks (TapEnter/TapDAndEnter/SendKeys) can act on a
@@ -67,7 +67,7 @@ var _ program.Responder = (*TmuxSession)(nil)
 
 var whiteSpaceRegex = regexp.MustCompile(`\s+`)
 
-func toClaudeSquadTmuxName(str string) string {
+func toBoulezTmuxName(str string) string {
 	// PII: str is the instance Title only — the host alias is never passed in
 	// — so a remote host never appears in tmux session names (decision 5).
 	// The host lives only in InstanceData.Host (local bookkeeping).
@@ -82,7 +82,7 @@ func toClaudeSquadTmuxName(str string) string {
 // bootstrap, which must reason about a session by name without constructing
 // a TmuxSession) cannot drift from the sanitization logic above.
 func SessionName(title string) string {
-	return toClaudeSquadTmuxName(title)
+	return toBoulezTmuxName(title)
 }
 
 // SessionExists reports whether a tmux session with the exact given name
@@ -112,7 +112,7 @@ func NewTmuxSessionWithDeps(name string, program string, ptyFactory host.PtyFact
 
 func newTmuxSession(name string, programCmd string, ptyFactory host.PtyFactory, cmdExec cmd.Executor) *TmuxSession {
 	return &TmuxSession{
-		sanitizedName: toClaudeSquadTmuxName(name),
+		sanitizedName: toBoulezTmuxName(name),
 		program:       programCmd,
 		adapter:       program.Lookup(programCmd),
 		ptyFactory:    ptyFactory,

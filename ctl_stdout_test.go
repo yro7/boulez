@@ -19,7 +19,7 @@ import (
 // binary, starts a daemon, runs `boulez ctl list_instances`, and asserts the
 // stdout is a single parseable JSON document with no trailing log line.
 //
-// Before the fix, log.Close() printed "wrote logs to /tmp/.../claudesquad.log"
+// Before the fix, log.Close() printed "wrote logs to /tmp/.../boulez.log"
 // to stdout AFTER the JSON, so json.Unmarshal failed with "Extra data".
 func TestCtl_StdoutIsPureJSON(t *testing.T) {
 	if testing.Short() {

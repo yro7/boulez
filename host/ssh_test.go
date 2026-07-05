@@ -140,7 +140,7 @@ func TestSSHHost_ResolveRepoPath_Passthrough(t *testing.T) {
 	h := NewSSHHost("dev-machine")
 	cases := []string{
 		"/home/freebox/testgit", // absolute
-		"testgit",                // relative — must reach the remote shell as-is
+		"testgit",               // relative — must reach the remote shell as-is
 		"~/repos/proj",          // ~-relative — expanded remotely, not here
 		"./foo/../bar",          // dirty relative — remote shell cleans it
 	}

@@ -1,11 +1,11 @@
 package app
 
 import (
+	"fmt"
 	"github.com/yro7/boulez/host"
 	"github.com/yro7/boulez/session"
 	"github.com/yro7/boulez/session/git"
 	"github.com/yro7/boulez/session/tmux"
-	"fmt"
 	"time"
 )
 

@@ -1,11 +1,11 @@
 package app
 
 import (
+	"context"
 	"github.com/yro7/boulez/config"
 	"github.com/yro7/boulez/host"
 	"github.com/yro7/boulez/presets"
 	"github.com/yro7/boulez/ui"
-	"context"
 	"path/filepath"
 	"testing"
 

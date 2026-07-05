@@ -4,12 +4,12 @@ import (
 	"context"
 	"testing"
 
-	"github.com/yro7/boulez/config"
-	"github.com/yro7/boulez/session"
-	"github.com/yro7/boulez/ui"
 	"github.com/charmbracelet/bubbles/spinner"
 	"github.com/stretchr/testify/assert"
 	"github.com/stretchr/testify/require"
+	"github.com/yro7/boulez/config"
+	"github.com/yro7/boulez/session"
+	"github.com/yro7/boulez/ui"
 )
 
 // fakeFleetClient is an app-package test double for fleetClient. It serves a
@@ -17,10 +17,10 @@ import (
 // tested without a real socket or tmux. Spawn/Pause/Resume/Kill record their
 // calls so tests can assert the TUI routes mutations through the seam (C3.3).
 type fakeFleetClient struct {
-	list   []session.InstanceData
+	list    []session.InstanceData
 	listErr error
 
-	spawned []SpawnOptions
+	spawned  []SpawnOptions
 	spawnID  string
 	spawnErr error
 

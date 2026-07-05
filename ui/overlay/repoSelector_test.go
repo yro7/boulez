@@ -3,8 +3,8 @@ package overlay
 import (
 	"testing"
 
-	"github.com/stretchr/testify/assert"
 	tea "github.com/charmbracelet/bubbletea"
+	"github.com/stretchr/testify/assert"
 )
 
 func TestRepoSelectorSelectsFirstRepoByDefault(t *testing.T) {

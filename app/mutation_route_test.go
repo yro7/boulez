@@ -4,13 +4,13 @@ import (
 	"context"
 	"testing"
 
-	"github.com/yro7/boulez/config"
-	"github.com/yro7/boulez/session"
-	"github.com/yro7/boulez/ui"
 	"github.com/charmbracelet/bubbles/spinner"
 	tea "github.com/charmbracelet/bubbletea"
 	"github.com/stretchr/testify/assert"
 	"github.com/stretchr/testify/require"
+	"github.com/yro7/boulez/config"
+	"github.com/yro7/boulez/session"
+	"github.com/yro7/boulez/ui"
 )
 
 // allHelpScreensSeen is a bitmask with every help screen's bit set, so

@@ -7,10 +7,10 @@ import (
 	"strings"
 	"time"
 
+	"github.com/spf13/cobra"
 	"github.com/yro7/boulez/daemon"
 	"github.com/yro7/boulez/kernel"
 	"github.com/yro7/boulez/log"
-	"github.com/spf13/cobra"
 )
 
 // newCtlCmd builds the `boulez ctl` subcommand: a thin client that sends one
@@ -80,7 +80,7 @@ Example:
 		// they belong to the wrapped syscall (e.g. --repo). Without this,
 		// cobra eats --repo on the 'as' command and the subcommand never sees it.
 		DisableFlagParsing: true,
-		RunE: runCtlAs,
+		RunE:               runCtlAs,
 	}
 	return cmd
 }
@@ -386,7 +386,7 @@ Example:
 			params := map[string]interface{}{
 				"target_repo":   targetRepo,
 				"target_branch": targetBranch,
-				"source":       source,
+				"source":        source,
 			}
 			return rawCtl(kernel.Request{Method: "land", Params: mustJSON(params)})
 		},

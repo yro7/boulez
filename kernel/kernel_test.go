@@ -1,9 +1,9 @@
 package kernel
 
 import (
+	"errors"
 	"github.com/yro7/boulez/session"
 	"github.com/yro7/boulez/session/git"
-	"errors"
 	"sync"
 	"testing"
 
@@ -58,11 +58,11 @@ type fakeMerger struct {
 }
 
 type mergeCall struct {
-	repoPath   string
-	target     string
-	sources    []string
-	strategy   git.Strategy
-	trunk      bool // true if called via MergeTrunk (Land path)
+	repoPath string
+	target   string
+	sources  []string
+	strategy git.Strategy
+	trunk    bool // true if called via MergeTrunk (Land path)
 }
 
 func (f *fakeMerger) Merge(repoPath, targetBranch string, sourceBranches []string, strategy git.Strategy) (git.MergeResult, error) {

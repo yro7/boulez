@@ -144,6 +144,6 @@ la décision 8 : la dette est persistée au fur et à mesure.)*
    au restore) + `pendingHost` (flow de création). Il n'apparaît **jamais**
    dans : les commit messages (`pausedCommitMessage(title, t)` — signature
    sans host), les noms de branche (`boulez/` + `sanitizeBranchName(title)`),
-   ni les noms de session tmux (`toClaudeSquadTmuxName(title)`). Invariant
+   ni les noms de session tmux (`toBoulezTmuxName(title)`). Invariant
    structurel, piné par `TestInstance_PII_HostAliasNotInArtifacts`. Pas une
    dette — un audit clôturé, consigné ici pour traçabilité.

@@ -107,7 +107,7 @@ client.
 - **C1.2 — `boulez daemon start|stop|status|log`.** `start` launches the daemon detached
   (reuse `LaunchDaemon` + the existing O_EXCL lock). `stop` reuses `StopDaemon`.
   `status` probes the socket + reads `daemon.pid`. `log` prints the tail of the
-  claudesquad log.
+  boulez log.
 - **C1.3 — `boulez` / `boulez tui` auto-start contract.** At TUI boot, probe the socket; if
   absent, call `LaunchDaemon` then `WaitForSocket` (exists already). On timeout, **do
   not start the TUI**: print the daemon log tail and exit non-zero. Remove the current

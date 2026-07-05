@@ -15,15 +15,15 @@ import (
 // implementations (the instance's Start is not exercised here — only
 // ResolveRepoPath is observed).
 type fakeHost struct {
-	alias          string
-	resolvedPath   string
+	alias         string
+	resolvedPath  string
 	resolveCalled bool
 }
 
-func (f *fakeHost) Name() string             { return f.alias }
-func (f *fakeHost) AutoYesDefault() bool     { return false }
-func (f *fakeHost) Executor() cmd.Executor   { return cmd.MakeExecutor() }
-func (f *fakeHost) FS() fs.FS                { return fs.LocalFS{} }
+func (f *fakeHost) Name() string           { return f.alias }
+func (f *fakeHost) AutoYesDefault() bool   { return false }
+func (f *fakeHost) Executor() cmd.Executor { return cmd.MakeExecutor() }
+func (f *fakeHost) FS() fs.FS              { return fs.LocalFS{} }
 func (f *fakeHost) PtyFactory() host.PtyFactory {
 	return host.LocalPtyFactory()
 }

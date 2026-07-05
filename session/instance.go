@@ -1,16 +1,16 @@
 package session
 
 import (
-	"github.com/yro7/boulez/host"
-	"github.com/yro7/boulez/log"
-	"github.com/yro7/boulez/program"
-	"github.com/yro7/boulez/session/git"
-	"github.com/yro7/boulez/session/tmux"
 	"crypto/rand"
 	"crypto/sha256"
 	"encoding/hex"
 	"encoding/json"
 	"fmt"
+	"github.com/yro7/boulez/host"
+	"github.com/yro7/boulez/log"
+	"github.com/yro7/boulez/program"
+	"github.com/yro7/boulez/session/git"
+	"github.com/yro7/boulez/session/tmux"
 	"regexp"
 	"strings"
 	"time"
@@ -468,7 +468,7 @@ func (i *Instance) SetAutoYes(on bool) {
 // no host can be threaded in, so a remote host's alias can never leak into git
 // history via the pause commit. Tested by TestInstance_PII_HostAliasNotInArtifacts.
 func pausedCommitMessage(title string, t time.Time) string {
-	return fmt.Sprintf("[claudesquad] update from '%s' on %s (paused)", title, t.Format(time.RFC822))
+	return fmt.Sprintf("[boulez] update from '%s' on %s (paused)", title, t.Format(time.RFC822))
 }
 
 // buildWorktree is the SINGLE factory point that branches on Kind to pick
@@ -544,7 +544,7 @@ func (i *Instance) Start(firstTimeSetup bool) error {
 		// Use existing tmux session (useful for testing)
 		tmuxSession = i.tmuxSession
 	} else {
-	// Create new tmux session bound to this instance's host (local today;
+		// Create new tmux session bound to this instance's host (local today;
 		// v2 SSHHost swaps in ssh-backed deps here). The session name is derived
 		// from i.Title — never the host alias — so a remote host never
 		// appears in tmux session names (PII discipline, decision 5).

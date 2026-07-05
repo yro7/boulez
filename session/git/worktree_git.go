@@ -1,8 +1,8 @@
 package git
 
 import (
-	"github.com/yro7/boulez/log"
 	"fmt"
+	"github.com/yro7/boulez/log"
 	"os"
 	"os/exec"
 	"path/filepath"

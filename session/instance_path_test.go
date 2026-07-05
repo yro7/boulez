@@ -4,9 +4,9 @@ import (
 	"path/filepath"
 	"testing"
 
-	"github.com/yro7/boulez/session/git"
 	"github.com/stretchr/testify/assert"
 	"github.com/stretchr/testify/require"
+	"github.com/yro7/boulez/session/git"
 )
 
 // TestInstance_BuildWorktree_ResolvesPathViaHost proves the transport-specific

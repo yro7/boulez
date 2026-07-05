@@ -11,9 +11,9 @@ import (
 	"testing"
 	"time"
 
-	"github.com/yro7/boulez/session/git"
 	"github.com/stretchr/testify/assert"
 	"github.com/stretchr/testify/require"
+	"github.com/yro7/boulez/session/git"
 )
 
 // realGitMerger wraps the production git.Merger (local executor) for tests
@@ -180,7 +180,7 @@ func TestTransport_Land_TopLevel_Delegates(t *testing.T) {
 	params, _ := json.Marshal(map[string]interface{}{
 		"target_repo":   "/r",
 		"target_branch": "main",
-		"source":       "feat",
+		"source":        "feat",
 	})
 	resp, err := Call(socketPath, Request{Method: "land", Params: params})
 	require.NoError(t, err)
@@ -202,7 +202,9 @@ func TestTransport_Land_WorkerRefused_ErrCode(t *testing.T) {
 	// Spawn a worker (top-level) and authenticate as it.
 	spawnParams, _ := json.Marshal(map[string]string{"repo": "/r", "title": "w", "program": "bash"})
 	resp, _ := Call(socketPath, Request{Method: "spawn_worker", Params: spawnParams})
-	var got struct{ ID string `json:"id"` }
+	var got struct {
+		ID string `json:"id"`
+	}
 	require.NoError(t, json.Unmarshal(resp.Result, &got))
 	workerID := got.ID
 
@@ -210,7 +212,7 @@ func TestTransport_Land_WorkerRefused_ErrCode(t *testing.T) {
 	landParams, _ := json.Marshal(map[string]interface{}{
 		"target_repo":   "/r",
 		"target_branch": "main",
-		"source":       "feat",
+		"source":        "feat",
 	})
 	resps, err := CallSession(socketPath, []Request{
 		{Method: "authenticate", Params: authParams},
@@ -253,7 +255,9 @@ func TestTransport_WorkerCannotSpawn_ErrCode(t *testing.T) {
 	resp, err := Call(socketPath, Request{Method: "spawn_worker", Params: spawnParams})
 	require.NoError(t, err)
 	require.Nil(t, resp.Error, "top-level spawn should succeed: %+v", resp.Error)
-	var got struct{ ID string `json:"id"` }
+	var got struct {
+		ID string `json:"id"`
+	}
 	require.NoError(t, json.Unmarshal(resp.Result, &got))
 	workerID := got.ID
 
@@ -372,7 +376,9 @@ func TestTransport_AuthenticateAsWorker_BarSpawning(t *testing.T) {
 	// Spawn a worker (top-level).
 	spawnParams, _ := json.Marshal(map[string]string{"repo": "/r", "title": "w", "program": "bash"})
 	resp, _ := Call(socketPath, Request{Method: "spawn_worker", Params: spawnParams})
-	var got struct{ ID string `json:"id"` }
+	var got struct {
+		ID string `json:"id"`
+	}
 	require.NoError(t, json.Unmarshal(resp.Result, &got))
 	workerID := got.ID
 
@@ -381,7 +387,7 @@ func TestTransport_AuthenticateAsWorker_BarSpawning(t *testing.T) {
 	// must be IGNORED; the session (worker) is authoritative.
 	authParams, _ := json.Marshal(map[string]interface{}{"instance_id": workerID, "kind": "worker"})
 	forgedSpawnParams, _ := json.Marshal(map[string]interface{}{
-		"repo": "/r",
+		"repo":   "/r",
 		"caller": map[string]interface{}{"id": workerID, "kind": "orchestrator"}, // lie
 	})
 	resps, err := CallSession(socketPath, []Request{
@@ -405,7 +411,9 @@ func TestTransport_AuthenticateAsOrchestrator_RecordsPlan(t *testing.T) {
 	// Spawn an orchestrator (top-level).
 	orchParams, _ := json.Marshal(map[string]interface{}{"repo": "/r", "title": "orch", "program": "bash", "kind": "orchestrator"})
 	resp, _ := Call(socketPath, Request{Method: "spawn_worker", Params: orchParams})
-	var got struct{ ID string `json:"id"` }
+	var got struct {
+		ID string `json:"id"`
+	}
 	require.NoError(t, json.Unmarshal(resp.Result, &got))
 	orchID := got.ID
 
@@ -432,7 +440,9 @@ func TestTransport_AuthenticateAsOrchestrator_RecordsPlan(t *testing.T) {
 
 // resultID extracts the `id` field from a Response's result (test helper).
 func (r Response) resultID() string {
-	var got struct{ ID string `json:"id"` }
+	var got struct {
+		ID string `json:"id"`
+	}
 	_ = json.Unmarshal(r.Result, &got)
 	return got.ID
 }

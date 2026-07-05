@@ -52,7 +52,7 @@ les orchestrators Shape B).
    `--target-branch integration` est aussi valide : `Land` ne refuse que si
    la cible est la branche courante du repo hôte (garde kernel inchangée).
 6. **Commit message configurable** mais avec un défaut sensé (réutilise le
-   pattern `[claudesquad] update from '<title>' on <date>`). v1 ne propose
+   pattern `[boulez] update from '<title>' on <date>`). v1 ne propose
    pas d'éditeur ; v1.1 pourrait ouvrir une modale de saisie.
 7. **Une seule instance à la fois en v1.** Pas de « land all ready » dans ce
    plan — c'est l'étape 6 (optionnelle, différée) car le merge séquentiel de

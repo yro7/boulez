@@ -1,9 +1,9 @@
 package ideimport
 
 import (
-	"github.com/yro7/boulez/session/git"
 	"encoding/json"
 	"fmt"
+	"github.com/yro7/boulez/session/git"
 	"os"
 	"path/filepath"
 	"runtime"

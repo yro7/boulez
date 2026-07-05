@@ -4,9 +4,9 @@ import (
 	"os"
 	"testing"
 
-	"github.com/yro7/boulez/session"
 	"github.com/stretchr/testify/assert"
 	"github.com/stretchr/testify/require"
+	"github.com/yro7/boulez/session"
 )
 
 // withTempHome isolates HOME so plan files land under a temp dir.
@@ -32,10 +32,10 @@ func TestPlan_SaveLoad_RoundTrip(t *testing.T) {
 	defer restore()
 
 	p := &OrchestratorPlan{
-		ID:        "orch-1",
-		WorkerIDs: []string{"w-1", "w-2"},
+		ID:           "orch-1",
+		WorkerIDs:    []string{"w-1", "w-2"},
 		MergeTargets: []MergeTarget{{Repo: "/r", Branch: "integration", Sources: []string{"feat-a"}}},
-		State:     PlanRunning,
+		State:        PlanRunning,
 	}
 	require.NoError(t, SavePlan(p))
 

@@ -12,8 +12,8 @@
 package repo
 
 import (
-	"github.com/yro7/boulez/config"
 	"encoding/json"
+	"github.com/yro7/boulez/config"
 	"os"
 	"path/filepath"
 )

@@ -4,9 +4,9 @@ import (
 	"encoding/json"
 	"testing"
 
-	"github.com/yro7/boulez/kernel"
 	"github.com/stretchr/testify/assert"
 	"github.com/stretchr/testify/require"
+	"github.com/yro7/boulez/kernel"
 )
 
 // TestCtl_Land_BuildsCorrectRequest verifies `boulez ctl land` constructs the

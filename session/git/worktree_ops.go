@@ -1,10 +1,10 @@
 package git
 
 import (
+	"fmt"
 	"github.com/yro7/boulez/cmd"
 	"github.com/yro7/boulez/log"
 	"github.com/yro7/boulez/session/fs"
-	"fmt"
 	"os"
 	"os/exec"
 	"path/filepath"

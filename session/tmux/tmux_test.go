@@ -1,8 +1,8 @@
 package tmux
 
 import (
-	cmd2 "github.com/yro7/boulez/cmd"
 	"fmt"
+	cmd2 "github.com/yro7/boulez/cmd"
 	"math/rand"
 	"os"
 	"os/exec"
@@ -73,9 +73,9 @@ func TestStartTmuxSession(t *testing.T) {
 	err := session.Start(workdir)
 	require.NoError(t, err)
 	require.Equal(t, 2, len(ptyFactory.cmds))
-	require.Equal(t, fmt.Sprintf("tmux new-session -d -s claudesquad_test-session -c %s claude", workdir),
+	require.Equal(t, fmt.Sprintf("tmux new-session -d -s boulez_test-session -c %s claude", workdir),
 		cmd2.ToString(ptyFactory.cmds[0]))
-	require.Equal(t, "tmux attach-session -t claudesquad_test-session",
+	require.Equal(t, "tmux attach-session -t boulez_test-session",
 		cmd2.ToString(ptyFactory.cmds[1]))
 
 	require.Equal(t, 2, len(ptyFactory.files))
@@ -148,8 +148,8 @@ func TestClose_SurfacesErrorOnLiveSession(t *testing.T) {
 // bootstrap) rely on this to reason about a session by name without
 // constructing a TmuxSession, so the two must agree.
 func TestSessionName_Deterministic(t *testing.T) {
-	require.Equal(t, "claudesquad_orchestrator", SessionName("orchestrator"))
-	require.Equal(t, "claudesquad_orchestrator", SessionName("orchestrator"),
+	require.Equal(t, "boulez_orchestrator", SessionName("orchestrator"))
+	require.Equal(t, "boulez_orchestrator", SessionName("orchestrator"),
 		"stable across calls")
 	// Sanitization parity with NewTmuxSession.
 	require.Equal(t,
@@ -168,7 +168,7 @@ func TestSessionName_Deterministic(t *testing.T) {
 // test-harness quirk, not behaviour of the helpers under test.
 func TestSessionExists_and_KillSession(t *testing.T) {
 	c := cmd2.MakeExecutor()
-	name := "claudesquad_test_exists_kill"
+	name := "boulez_test_exists_kill"
 	// Clean slate.
 	_ = KillSession(c, name)
 	require.False(t, SessionExists(c, name), "session must not exist before creation")

@@ -48,7 +48,7 @@ sécurité > robustesse > ergonomie).
 
 **Décision :** 1.
 
-**Problème :** `log.Close()` imprime `wrote logs to /tmp/.../claudesquad.log`
+**Problème :** `log.Close()` imprime `wrote logs to /tmp/.../boulez.log`
 sur **stdout** via `fmt.Println` à chaque appel `boulez ctl`. La ligne est collée
 après le JSON de réponse → tout parseur JSON stricte casse
 (`Extra data: line 14 column 1`). Reproduit : `boulez ctl get_instance | python3

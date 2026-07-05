@@ -1,6 +1,8 @@
 package app
 
 import (
+	"context"
+	"fmt"
 	"github.com/yro7/boulez/config"
 	"github.com/yro7/boulez/host"
 	"github.com/yro7/boulez/keys"
@@ -14,8 +16,6 @@ import (
 	"github.com/yro7/boulez/session/git"
 	"github.com/yro7/boulez/ui"
 	"github.com/yro7/boulez/ui/overlay"
-	"context"
-	"fmt"
 	"os"
 	"os/exec"
 	"runtime"
@@ -199,21 +199,21 @@ func newHome(ctx context.Context, program string, autoYes bool) *home {
 	presetStore, _ := presets.NewStore()
 
 	h := &home{
-		ctx:          ctx,
-		spinner:      spinner.New(spinner.WithSpinner(spinner.MiniDot)),
-		menu:         ui.NewMenu(),
-		tabbedWindow: ui.NewTabbedWindow(ui.NewPreviewPane(), ui.NewDiffPane(), ui.NewTerminalPane()),
-		errBox:       ui.NewErrBox(),
-		appConfig:    appConfig,
-		repoRegistry: repoRegistry,
-		hostRegistry: hostRegistry,
-		prefs:        prefStore,
-		presetStore:  presetStore,
-		program:          program,
-		autoYes:          autoYes,
-		state:            stateDefault,
-		appState:         appState,
-		pendingDraftIDs:  make(map[string]struct{}),
+		ctx:             ctx,
+		spinner:         spinner.New(spinner.WithSpinner(spinner.MiniDot)),
+		menu:            ui.NewMenu(),
+		tabbedWindow:    ui.NewTabbedWindow(ui.NewPreviewPane(), ui.NewDiffPane(), ui.NewTerminalPane()),
+		errBox:          ui.NewErrBox(),
+		appConfig:       appConfig,
+		repoRegistry:    repoRegistry,
+		hostRegistry:    hostRegistry,
+		prefs:           prefStore,
+		presetStore:     presetStore,
+		program:         program,
+		autoYes:         autoYes,
+		state:           stateDefault,
+		appState:        appState,
+		pendingDraftIDs: make(map[string]struct{}),
 	}
 	h.list = ui.NewList(&h.spinner, autoYes)
 
@@ -838,7 +838,7 @@ func (m *home) handleKeyPress(msg tea.KeyMsg) (mod tea.Model, cmd tea.Cmd) {
 		// Create the push action as a tea.Cmd
 		pushAction := func() tea.Msg {
 			// Default commit message with timestamp
-			commitMsg := fmt.Sprintf("[claudesquad] update from '%s' on %s", selected.Title, time.Now().Format(time.RFC822))
+			commitMsg := fmt.Sprintf("[boulez] update from '%s' on %s", selected.Title, time.Now().Format(time.RFC822))
 			worktree, err := selected.GetGitWorktree()
 			if err != nil {
 				return err
@@ -863,7 +863,7 @@ func (m *home) handleKeyPress(msg tea.KeyMsg) (mod tea.Model, cmd tea.Cmd) {
 		targetBranch := "main"
 		// Default commit message mirrors the push action's pattern so the two
 		// gestures stay consistent.
-		commitMsg := fmt.Sprintf("[claudesquad] update from '%s' on %s", inst.Title, time.Now().Format(time.RFC822))
+		commitMsg := fmt.Sprintf("[boulez] update from '%s' on %s", inst.Title, time.Now().Format(time.RFC822))
 		caller := m.landCaller
 		if caller == nil {
 			caller = newSocketLandCaller()
@@ -880,7 +880,7 @@ func (m *home) handleKeyPress(msg tea.KeyMsg) (mod tea.Model, cmd tea.Cmd) {
 						files = append(files, c.File)
 					}
 					return fmt.Errorf("merge conflict on %s — repo left in merging state. Resolve and `git commit`: %s",
-							targetBranch, strings.Join(files, ", "))
+						targetBranch, strings.Join(files, ", "))
 				}
 				return err
 			}
@@ -1026,7 +1026,6 @@ type hideErrMsg struct{}
 type previewTickMsg struct{}
 
 type instanceChangedMsg struct{}
-
 
 // branchSearchDebounceMsg fires after the debounce interval to trigger a search.
 type branchSearchDebounceMsg struct {

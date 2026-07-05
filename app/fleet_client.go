@@ -5,10 +5,10 @@ import (
 	"fmt"
 	"time"
 
+	tea "github.com/charmbracelet/bubbletea"
 	"github.com/yro7/boulez/kernel"
 	"github.com/yro7/boulez/log"
 	"github.com/yro7/boulez/session"
-	tea "github.com/charmbracelet/bubbletea"
 )
 
 // fleetClient is the TUI's seam over the daemon's control socket. The TUI is

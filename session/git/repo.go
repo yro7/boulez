@@ -1,8 +1,8 @@
 package git
 
 import (
-	"github.com/yro7/boulez/cmd"
 	"fmt"
+	"github.com/yro7/boulez/cmd"
 	"os/exec"
 	"strings"
 	"sync"

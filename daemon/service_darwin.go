@@ -27,7 +27,7 @@ func launchAgentPath() (string, error) {
 // KeepAlive restarts it if it exits (crash, OOM, reboot). ProgramArguments
 // invokes `boulez daemon run` (the canonical foreground entrypoint, D2/C1.1).
 // Standard{Out,Error}Path capture the daemon's stdout/stderr so a crash is
-// diagnosable without `boulez daemon log` (which tails the claudesquad log).
+// diagnosable without `boulez daemon log` (which tails the boulez log).
 const plistTpl = `<?xml version="1.0" encoding="UTF-8"?>
 <!DOCTYPE plist PUBLIC "-//Apple//DTD PLIST 1.0//EN" "http://www.apple.com/DTDs/PropertyList-1.0.dtd">
 <plist version="1.0">

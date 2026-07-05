@@ -16,8 +16,8 @@ type stubAdapter struct {
 	status program.Status
 }
 
-func (s stubAdapter) Name() string                                { return "stub" }
-func (s stubAdapter) Matches(string) bool                         { return true }
+func (s stubAdapter) Name() string        { return "stub" }
+func (s stubAdapter) Matches(string) bool { return true }
 func (s stubAdapter) Detect(string) (program.Status, *program.Prompt) {
 	return s.status, nil
 }

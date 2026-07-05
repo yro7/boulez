@@ -20,8 +20,8 @@
 package orchestrator
 
 import (
-	"github.com/yro7/boulez/config"
 	"fmt"
+	"github.com/yro7/boulez/config"
 	"os"
 	"path/filepath"
 	"strings"

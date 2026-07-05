@@ -2,12 +2,12 @@ package main
 
 import (
 	"bufio"
+	"fmt"
 	"github.com/yro7/boulez/config"
 	"github.com/yro7/boulez/daemon"
 	"github.com/yro7/boulez/kernel"
 	"github.com/yro7/boulez/log"
 	"github.com/yro7/boulez/protected"
-	"fmt"
 	"os"
 	"sort"
 	"strings"
@@ -89,7 +89,7 @@ is visible directly.`,
 
 // runDaemon is the single foreground-daemon entrypoint invoked by
 // `boulez daemon run` (and, before C4.6, the now-removed `--daemon` alias).
-// It owns logger setup so a foreground daemon logs to the claudesquad log
+// It owns logger setup so a foreground daemon logs to the boulez log
 // with the [DAEMON] prefix.
 func runDaemon() error {
 	log.Initialize(true)
@@ -231,7 +231,7 @@ func newDaemonStatusCmd() *cobra.Command {
 	}
 }
 
-// newDaemonLogCmd prints the tail of the daemon (claudesquad) log. The log is
+// newDaemonLogCmd prints the tail of the daemon (boulez) log. The log is
 // shared by the daemon and clients; the tail is the fastest way to see why a
 // daemon refused to come up.
 func newDaemonLogCmd() *cobra.Command {
@@ -265,7 +265,7 @@ func newDaemonLogCmd() *cobra.Command {
 
 // readTail returns the last n lines of the file at path. Used by `boulez daemon
 // log` and by printDaemonFailureHint (TUI boot failure, C1.3). Reads the
-// whole file and slices; the claudesquad log is small and this is a
+// whole file and slices; the boulez log is small and this is a
 // human-facing path, not a hot one.
 func readTail(path string, n int) (string, error) {
 	f, err := os.Open(path)

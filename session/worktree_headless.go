@@ -91,7 +91,7 @@ func (h *headlessWorktree) PushChanges(string, bool) error { return nil }
 // Diff / DiffNumstat return nil: no git repo, no diff. Callers already
 // nil-check the result.
 func (h *headlessWorktree) Diff() *git.DiffStats        { return nil }
-func (h *headlessWorktree) DiffNumstat() *git.DiffStats  { return nil }
+func (h *headlessWorktree) DiffNumstat() *git.DiffStats { return nil }
 
 func (h *headlessWorktree) GetWorktreePath() string { return h.controlDir }
 func (h *headlessWorktree) GetBranchName() string   { return "" }

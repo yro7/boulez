@@ -8,23 +8,23 @@ import (
 // InstanceSummary is the list-view projection of an instance: enough to
 // identify and triage it, without the heavy diff/log payload.
 type InstanceSummary struct {
-	ID       string
-	Kind     session.Kind
-	Status   session.Status
-	Title    string
-	Repo     string
-	Branch   string
-	Program  string
-	Host     string
-	Updated  string // RFC3339 of the instance's UpdatedAt
+	ID      string
+	Kind    session.Kind
+	Status  session.Status
+	Title   string
+	Repo    string
+	Branch  string
+	Program string
+	Host    string
+	Updated string // RFC3339 of the instance's UpdatedAt
 }
 
 // InstanceDetail is the full projection an orchestrator uses to decide: the
 // summary plus the diff stats and the tmux scrollback (best-effort).
 type InstanceDetail struct {
 	InstanceSummary
-	Diff    *git.DiffStats
-	Log     string // tmux scrollback; empty when unavailable
+	Diff *git.DiffStats
+	Log  string // tmux scrollback; empty when unavailable
 }
 
 // ListFilter narrows ListInstances. Zero-value filter = return everything.
@@ -34,10 +34,10 @@ type InstanceDetail struct {
 // "Set" bool. The helpers (FilterByKind, FilterByStatus) construct these
 // correctly.
 type ListFilter struct {
-	kind    session.Kind
-	status  session.Status
-	repo    string
-	kindSet bool
+	kind      session.Kind
+	status    session.Status
+	repo      string
+	kindSet   bool
 	statusSet bool
 }
 

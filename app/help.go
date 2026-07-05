@@ -1,11 +1,11 @@
 package app
 
 import (
+	"fmt"
 	"github.com/yro7/boulez/log"
 	"github.com/yro7/boulez/session"
 	"github.com/yro7/boulez/ui"
 	"github.com/yro7/boulez/ui/overlay"
-	"fmt"
 
 	tea "github.com/charmbracelet/bubbletea"
 	"github.com/charmbracelet/lipgloss"

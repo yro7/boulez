@@ -1,10 +1,10 @@
 package main
 
 import (
+	"fmt"
 	"github.com/yro7/boulez/ideimport"
 	"github.com/yro7/boulez/log"
 	"github.com/yro7/boulez/repo"
-	"fmt"
 	"strings"
 
 	"github.com/spf13/cobra"

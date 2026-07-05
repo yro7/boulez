@@ -6,9 +6,9 @@ import (
 	"path/filepath"
 	"testing"
 
-	cmdtest "github.com/yro7/boulez/cmd/cmd_test"
 	"github.com/stretchr/testify/assert"
 	"github.com/stretchr/testify/require"
+	cmdtest "github.com/yro7/boulez/cmd/cmd_test"
 )
 
 // TestGitWorktree_RunGitCommand_RoutesViaExecutor proves the seam:

@@ -33,8 +33,8 @@ func encodeLandParams(repoPath, targetBranch, sourceBranch string, strategy git.
 	return json.Marshal(map[string]interface{}{
 		"target_repo":   repoPath,
 		"target_branch": targetBranch,
-		"source":       sourceBranch,
-		"strategy":     int(strategy),
+		"source":        sourceBranch,
+		"strategy":      int(strategy),
 	})
 }
 

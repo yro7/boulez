@@ -1,9 +1,9 @@
 package daemon
 
 import (
+	"fmt"
 	"github.com/yro7/boulez/config"
 	"github.com/yro7/boulez/kernel"
-	"fmt"
 	"net"
 	"os"
 	"path/filepath"

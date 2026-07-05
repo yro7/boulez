@@ -78,8 +78,8 @@ type Adapter interface {
 // (StatusUnknown, no prompt), so it gets no "Ready" badge and no auto-yes.
 type NoOpAdapter struct{}
 
-func (NoOpAdapter) Name() string            { return "noop" }
-func (NoOpAdapter) Matches(string) bool     { return false } // never matches by default
+func (NoOpAdapter) Name() string        { return "noop" }
+func (NoOpAdapter) Matches(string) bool { return false } // never matches by default
 func (NoOpAdapter) Detect(string) (Status, *Prompt) {
 	return StatusUnknown, nil
 }

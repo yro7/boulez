@@ -7,13 +7,13 @@ import (
 	"testing"
 	"time"
 
+	"github.com/stretchr/testify/assert"
+	"github.com/stretchr/testify/require"
 	"github.com/yro7/boulez/cmd"
 	"github.com/yro7/boulez/config"
 	"github.com/yro7/boulez/host"
 	"github.com/yro7/boulez/session/fs"
 	"github.com/yro7/boulez/session/git"
-	"github.com/stretchr/testify/assert"
-	"github.com/stretchr/testify/require"
 )
 
 // TestInstance_DefaultsToLocalHost verifies that a freshly created Instance

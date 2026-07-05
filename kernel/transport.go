@@ -65,7 +65,7 @@ const (
 	CodeNestedOrchestrator = "NESTED_ORCHESTRATOR"
 	CodeProtectedBranch    = "PROTECTED_BRANCH"
 	CodeNonTopLevelLand    = "NON_TOP_LEVEL_LAND"
-	CodeBranchNotFound    = "BRANCH_NOT_FOUND"
+	CodeBranchNotFound     = "BRANCH_NOT_FOUND"
 	CodeInternal           = "INTERNAL"
 )
 
@@ -127,8 +127,8 @@ func dispatch(k *Kernel, sess *ctlSession, req Request) Response {
 	switch req.Method {
 	case "authenticate":
 		var p struct {
-			ID   string        `json:"instance_id"`
-			Kind session.Kind  `json:"kind"`
+			ID   string       `json:"instance_id"`
+			Kind session.Kind `json:"kind"`
 		}
 		if err := json.Unmarshal(req.Params, &p); err != nil {
 			return errResp(CodeInternal, "bad params: "+err.Error())
@@ -156,7 +156,9 @@ func dispatch(k *Kernel, sess *ctlSession, req Request) Response {
 		data := k.ListInstancesData(p.toFilter())
 		return okResp(data)
 	case "get_instance":
-		var p struct{ ID string `json:"id"` }
+		var p struct {
+			ID string `json:"id"`
+		}
 		if err := json.Unmarshal(req.Params, &p); err != nil {
 			return errResp(CodeInternal, "bad params: "+err.Error())
 		}
@@ -229,7 +231,9 @@ func dispatch(k *Kernel, sess *ctlSession, req Request) Response {
 
 // simpleByID handles the {id}-only mutations (pause/resume/kill).
 func simpleByID(k *Kernel, _ string, fn func(id string) error, raw json.RawMessage) Response {
-	var p struct{ ID string `json:"id"` }
+	var p struct {
+		ID string `json:"id"`
+	}
 	if err := json.Unmarshal(raw, &p); err != nil {
 		return errResp(CodeInternal, "bad params: "+err.Error())
 	}
@@ -242,9 +246,9 @@ func simpleByID(k *Kernel, _ string, fn func(id string) error, raw json.RawMessa
 // --- wire param structs ---
 
 type listParams struct {
-	Kind   *session.Kind `json:"kind,omitempty"`
+	Kind   *session.Kind   `json:"kind,omitempty"`
 	Status *session.Status `json:"status,omitempty"`
-	Repo   string        `json:"repo,omitempty"`
+	Repo   string          `json:"repo,omitempty"`
 }
 
 func (p listParams) toFilter() ListFilter {
@@ -274,15 +278,15 @@ func composeStatusFilter(f ListFilter, s session.Status) ListFilter {
 }
 
 type spawnParams struct {
-	Repo            string         `json:"repo"`
-	Branch          string         `json:"branch,omitempty"`
-	BranchMustExist bool           `json:"branch_must_exist,omitempty"`
-	Prompt          string         `json:"prompt,omitempty"`
-	Program         string         `json:"program,omitempty"`
-	Title           string         `json:"title,omitempty"`
-	Kind            session.Kind   `json:"kind,omitempty"`
-	Host            string         `json:"host,omitempty"`
-	Caller          callerParams   `json:"caller,omitempty"`
+	Repo            string       `json:"repo"`
+	Branch          string       `json:"branch,omitempty"`
+	BranchMustExist bool         `json:"branch_must_exist,omitempty"`
+	Prompt          string       `json:"prompt,omitempty"`
+	Program         string       `json:"program,omitempty"`
+	Title           string       `json:"title,omitempty"`
+	Kind            session.Kind `json:"kind,omitempty"`
+	Host            string       `json:"host,omitempty"`
+	Caller          callerParams `json:"caller,omitempty"`
 }
 
 func (p spawnParams) toOptions() SpawnOptions {
@@ -305,7 +309,7 @@ func (p spawnParams) toOptions() SpawnOptions {
 // recursion guard. Kept here so an old client sending `caller` doesn't
 // break the JSON unmarshal.
 type callerParams struct {
-	ID   string        `json:"id,omitempty"`
+	ID   string       `json:"id,omitempty"`
 	Kind session.Kind `json:"kind,omitempty"`
 }
 

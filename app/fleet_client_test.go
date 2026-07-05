@@ -7,10 +7,10 @@ import (
 	"testing"
 	"time"
 
-	"github.com/yro7/boulez/kernel"
-	"github.com/yro7/boulez/session"
 	"github.com/stretchr/testify/assert"
 	"github.com/stretchr/testify/require"
+	"github.com/yro7/boulez/kernel"
+	"github.com/yro7/boulez/session"
 )
 
 // fakeFleetSpawner is an app-package test double for kernel.Spawner. It
@@ -73,7 +73,9 @@ func TestSocketFleetClient_SpawnAndList(t *testing.T) {
 	})
 	require.NoError(t, err)
 	require.Nil(t, resp.Error, "spawn should succeed: %+v", resp.Error)
-	var sr struct{ ID string `json:"id"` }
+	var sr struct {
+		ID string `json:"id"`
+	}
 	require.NoError(t, json.Unmarshal(resp.Result, &sr))
 	require.NotEmpty(t, sr.ID)
 
@@ -140,7 +142,9 @@ func spawnViaSocket(t *testing.T, socketPath, title string) string {
 	})
 	require.NoError(t, err)
 	require.Nil(t, resp.Error)
-	var sr struct{ ID string `json:"id"` }
+	var sr struct {
+		ID string `json:"id"`
+	}
 	require.NoError(t, json.Unmarshal(resp.Result, &sr))
 	require.NotEmpty(t, sr.ID)
 	return sr.ID

@@ -225,7 +225,7 @@ Toggle flip la valeur persistée.
   backtick ; assert pas d'injection).
 - Audit PII : hostnames n'apparaissent dans aucun commit message (`instance.go`
   Pause/Resume), nom de branche (`sanitizeBranchName` déjà safe), nom de
-  session tmux (`toClaudeSquadTmuxName` — vérifier).
+  session tmux (`toBoulezTmuxName` — vérifier).
 - `roadmap_and_ideas.md` — persister ControlMaster (dette v2.x) et le
   registre per-host (dette v2.x).
 

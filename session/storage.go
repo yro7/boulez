@@ -23,7 +23,7 @@ type InstanceData struct {
 	// Kind is the instance role (worker vs orchestrator). Persisted so the
 	// role survives a restart. Defaults to KindWorker for legacy data (zero
 	// value), which is the only role that existed before this field.
-	Kind      Kind      `json:"kind"`
+	Kind Kind `json:"kind"`
 
 	Program   string          `json:"program"`
 	Host      string          `json:"host"`

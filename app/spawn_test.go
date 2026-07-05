@@ -7,10 +7,10 @@ import (
 	"strings"
 	"testing"
 
-	"github.com/yro7/boulez/config"
-	"github.com/yro7/boulez/session"
 	"github.com/stretchr/testify/assert"
 	"github.com/stretchr/testify/require"
+	"github.com/yro7/boulez/config"
+	"github.com/yro7/boulez/session"
 )
 
 // makeTempGitRepoApp creates a real git repository and returns its absolute path.

@@ -128,7 +128,6 @@ func itoa(pid int) string {
 	return string(b[i:])
 }
 
-
 // TestReloadProtected_PushesNewSetIntoKernel proves the SIGHUP reload contract
 // (C2.2): reloadProtected reads the protected store and pushes the union into
 // the running kernel via SetProtectedBranches, without reconstructing it. A

@@ -1,12 +1,12 @@
 package daemon
 
 import (
+	"fmt"
 	"github.com/yro7/boulez/config"
 	"github.com/yro7/boulez/kernel"
 	"github.com/yro7/boulez/log"
 	"github.com/yro7/boulez/program"
 	"github.com/yro7/boulez/protected"
-	"fmt"
 	"os"
 	"os/exec"
 	"os/signal"

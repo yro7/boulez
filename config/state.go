@@ -1,9 +1,9 @@
 package config
 
 import (
-	"github.com/yro7/boulez/log"
 	"encoding/json"
 	"fmt"
+	"github.com/yro7/boulez/log"
 	"os"
 	"path/filepath"
 )

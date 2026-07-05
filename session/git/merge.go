@@ -1,8 +1,8 @@
 package git
 
 import (
-	"github.com/yro7/boulez/cmd"
 	"fmt"
+	"github.com/yro7/boulez/cmd"
 	"os"
 	"os/exec"
 	"strings"
@@ -28,8 +28,8 @@ type Strategy int
 
 const (
 	StrategyDefault Strategy = iota
-	StrategyOurs   // reserved
-	StrategyTheirs  // reserved
+	StrategyOurs             // reserved
+	StrategyTheirs           // reserved
 )
 
 // Conflict describes one conflicted file in a failed merge.

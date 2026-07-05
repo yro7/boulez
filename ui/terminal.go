@@ -1,10 +1,10 @@
 package ui
 
 import (
+	"fmt"
 	"github.com/yro7/boulez/log"
 	"github.com/yro7/boulez/session"
 	"github.com/yro7/boulez/session/tmux"
-	"fmt"
 	"os"
 	"strings"
 	"sync"

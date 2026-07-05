@@ -1,9 +1,9 @@
 package kernel
 
 import (
-	"github.com/yro7/boulez/config"
 	"encoding/json"
 	"fmt"
+	"github.com/yro7/boulez/config"
 	"os"
 	"path/filepath"
 	"sort"
@@ -16,18 +16,18 @@ import (
 type PlanState string
 
 const (
-	PlanRunning  PlanState = "running"  // workers spawned, not all done
-	PlanMerging  PlanState = "merging"  // merge in progress
-	PlanDone     PlanState = "done"     // all workers done + merged
-	PlanFailed   PlanState = "failed"   // a step failed irrecoverably
+	PlanRunning PlanState = "running" // workers spawned, not all done
+	PlanMerging PlanState = "merging" // merge in progress
+	PlanDone    PlanState = "done"    // all workers done + merged
+	PlanFailed  PlanState = "failed"  // a step failed irrecoverably
 )
 
 // MergeTarget is one merge an orchestrator will perform once its workers are
 // done. An orchestrator may have several (merge worker-branches into repo A's
 // integration, others into repo B).
 type MergeTarget struct {
-	Repo   string   `json:"repo"`
-	Branch string   `json:"branch"`
+	Repo    string   `json:"repo"`
+	Branch  string   `json:"branch"`
 	Sources []string `json:"sources"`
 }
 
@@ -40,10 +40,10 @@ type MergeTarget struct {
 // substrate: on restart, the kernel reloads plans in Running/Merging state
 // and re-exposes them so the orchestrator can pick up where it left off.
 type OrchestratorPlan struct {
-	ID           string       `json:"id"`
-	WorkerIDs    []string     `json:"worker_ids"`
+	ID           string        `json:"id"`
+	WorkerIDs    []string      `json:"worker_ids"`
 	MergeTargets []MergeTarget `json:"merge_targets"`
-	State        PlanState    `json:"state"`
+	State        PlanState     `json:"state"`
 }
 
 // planStore persists OrchestratorPlans to disk. It is the kernel's

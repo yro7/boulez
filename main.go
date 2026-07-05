@@ -1,6 +1,9 @@
 package main
 
 import (
+	"context"
+	"encoding/json"
+	"fmt"
 	"github.com/yro7/boulez/app"
 	cmd2 "github.com/yro7/boulez/cmd"
 	"github.com/yro7/boulez/config"
@@ -8,9 +11,6 @@ import (
 	"github.com/yro7/boulez/log"
 	"github.com/yro7/boulez/session/git"
 	"github.com/yro7/boulez/session/tmux"
-	"context"
-	"encoding/json"
-	"fmt"
 	"os"
 	"path/filepath"
 
@@ -129,7 +129,7 @@ var (
 )
 
 func init() {
-	rootCmd.Flags().StringVarP(&programFlag, "program", "p", "", 
+	rootCmd.Flags().StringVarP(&programFlag, "program", "p", "",
 		"Program to run in new instances (e.g. 'aider --model ollama_chat/gemma3:1b')")
 	rootCmd.Flags().BoolVarP(&autoYesFlag, "autoyes", "y", false,
 		"[experimental] If enabled, all instances will automatically accept prompts")
