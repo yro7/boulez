@@ -1,37 +1,168 @@
-# Boulez
+<p align="center">
+  <h1 align="center">🎼 Boulez</h1>
+  <p align="center"><strong>One conductor for all your coding agents.</strong></p>
+  <p align="center">
+    Orchestrate multiple AI coding agents — Claude Code, Codex, Pi, Gemini, Aider, … —
+    running concurrently in isolated git worktrees, local or over SSH.
+  </p>
+</p>
 
-> One conductor for all your coding agents.
+<p align="center">
+  <a href="https://github.com/yro7/boulez"><img alt="repo" src="https://img.shields.io/badge/repo-yro7%2Fboulez-blue"></a>
+  <a href="./LICENSE.md"><img alt="license" src="https://img.shields.io/badge/license-AGPL--3.0-success"></a>
+  <img alt="go" src="https://img.shields.io/badge/Go-1.26+-00ADD8">
+  <img alt="status" src="https://img.shields.io/badge/status-active%20development-orange">
+</p>
+
+<p align="center">
+  <img src="./demo.png" alt="Boulez TUI supervising a fleet of agents" width="880">
+</p>
+
+---
+
+Boulez is a **kernel + daemon** that manages a fleet of AI coding agents. Each
+agent runs in its own isolated git worktree so they can work in parallel without
+stepping on each other. A TUI (one of several possible consumers) supervises the
+whole fleet from one place — across multiple repositories and even multiple
+machines over SSH.
+
+> Before working here, read **[AGENTS.md](./AGENTS.md)** for the project's
+> goals, non-negotiable rules, and code philosophy.
+
+## Highlights
+
+- **Agent-agnostic.** Adding a new agent (Pi, Codex, Amp, …) is **one file
+  under `program/` + one `Register` line**. No edits to the tmux core, the TUI,
+  or the daemon. The `program.Adapter` seam (3 methods) is the whole contract.
+- **Multi-repo orchestration.** The TUI centralizes instances running across
+  several different repositories in a single dashboard.
+- **Multi-env (SSH).** An instance's whole environment — worktree, tmux,
+  agent — can run on a remote machine over SSH while you supervise it locally.
+  One dashboard, many machines: `(repo-A, local)`, `(repo-A, gpu-box)`,
+  `(repo-B, gpu-box)`.
+- **Kernel + daemon architecture.** The daemon owns the control authority;
+  the TUI and `boulez ctl` are just clients. Anything the TUI can do, a script
+  can do too.
+- **Isolation by construction.** Every instance is bound to a git worktree of a
+  real repo. No agent can touch `main` unless you explicitly allow it.
+- **Standalone.** Ships as a single `boulez` binary with its own config dir
+  (`~/.boulez/`). No migration from `cs` or `claude-squad`; cold start is clean.
+
+---
+
+## Installation
+
+```bash
+curl -fsSL https://raw.githubusercontent.com/yro7/boulez/main/install.sh | bash
+```
+
+This puts the `boulez` binary in `~/.local/bin`.
+
+To use a custom name for the binary:
+
+```bash
+curl -fsSL https://raw.githubusercontent.com/yro7/boulez/main/install.sh | bash -s -- --name <your-binary-name>
+```
+
+### Prerequisites
+
+- [tmux](https://github.com/tmux/tmux/wiki/Installing)
+- [gh](https://cli.github.com/)
+
+### Build from source
+
+Requires Go 1.26+ (`brew install go`).
+
+```bash
+go build -o boulez .
+```
+
+---
+
+## Quick start
+
+```bash
+boulez                 # launch the TUI (default agent: claude)
+boulez -p "codex"      # use a different agent
+boulez -p "aider ..."  # pass args to the agent
+```
+
+| Flag / Command                              | Description                                                         |
+|---------------------------------------------|---------------------------------------------------------------------|
+| `boulez`                                    | Launch the TUI dashboard.                                           |
+| `boulez tui`                                | Explicit TUI subcommand (same as bare `boulez`).                    |
+| `boulez daemon`                             | Manage the daemon (the kernel / control authority).                |
+| `boulez ctl <syscall>`                      | Send a JSON-RPC syscall to the kernel — scriptable, pure JSON.      |
+| `boulez repo-import`                        | Import git repos from your IDEs into the registry (one-shot).      |
+| `boulez debug`                              | Print debug info (config paths, etc.).                              |
+| `boulez reset`                              | Reset all stored instances.                                         |
+| `-p, --program <cmd>`                       | Program to run in new instances.                                    |
+| `-y, --autoyes`                             | Auto-accept prompts for supported agents (claude code, aider, …).   |
+
+> **Default program** is `claude`; we recommend the latest version.
 >
-> Boulez is a kernel and daemon that **orchestrates multiple AI coding agents**
-> (Claude Code, Codex, Pi, Gemini, Aider, …) running concurrently, each in its
-> own isolated git worktree — **local or over SSH** — with a TUI to supervise
-> the whole fleet from one place.
+> **Other agents:** set the relevant env vars (e.g.
+> `export OPENAI_API_KEY=...` for Codex) and launch with
+> `boulez -p "codex"` / `boulez -p "gemini"` / `boulez -p "aider ..."`. Make it
+> the default via the `profiles` array in `~/.boulez/config.json` (see
+> [Configuration](#configuration)).
 
-Before working here, read **[AGENTS.md](./AGENTS.md)** for the project's goals,
-non-negotiable rules, and code philosophy.
+---
 
-## Origin
+## Menu
 
-Boulez is derived from [claude-squad](https://github.com/smtg-ai/claude-squad)
-(upstream commit `5a604f7`, v1.0.19). It is **not** the upstream project and is
-not affiliated with `smtg-ai`. The original `AGPL-3.0` license is preserved
-(see [LICENSE.md](./LICENSE.md)); attribution to the upstream authors is kept in
-the git history and in this notice.
+The bottom bar of the TUI shows the available commands.
 
-What changed since the fork:
+#### Instance / session management
+- `n` — Create a new session
+- `N` — Create a new session with a prompt
+- `D` — Kill (delete) the selected session
+- `↑ / j`, `↓ / k` — Navigate between sessions
 
-- Ships as a standalone `boulez` binary (separate config dir `~/.boulez/`).
-- **Kernel + daemon architecture**: the TUI is only one consumer of a daemon
-  that owns the kernel / control authority. `boulez ctl` is a thin client.
-- **Modular agent support** via a `program.Adapter` seam: adding a new agent
-  (Pi, Codex, Amp, …) is one file under `program/` + one `Register` line, with
-  no edits to the tmux core, TUI, or daemon.
-- **Multi-repo orchestration**: the TUI centralizes instances running across
-  several different repositories.
-- **Multi-env (SSH)**: an instance's whole environment (worktree, tmux, agent)
-  can run on a remote machine over SSH while you supervise it locally.
-- A small Pi ↔ boulez ready-signal bridge (see `extensions/pi-boulez.ts` +
-  `program/pi.go`).
+#### Actions
+- `↵ / o` — Attach to the selected session to reprompt
+- `ctrl-q` — Detach from session
+- `s` — Commit and push branch to GitHub
+- `c` — Checkout — commits changes and pauses the session
+- `r` — Resume a paused session
+- `?` — Show help menu
+
+#### Navigation
+- `tab` — Switch between preview and diff tabs
+- `shift-↑ / ↓` — Scroll in diff view
+- `q` — Quit
+
+---
+
+## Configuration
+
+Boulez stores its configuration in `~/.boulez/config.json`. Find the exact path
+with `boulez debug`.
+
+#### Profiles
+
+Profiles let you define multiple named program configurations and switch
+between them when creating a new session. When more than one profile is defined,
+the session creation overlay shows a profile picker navigable with `← / →`.
+
+```json
+{
+  "default_program": "claude",
+  "profiles": [
+    { "name": "claude", "program": "claude" },
+    { "name": "codex",  "program": "codex" },
+    { "name": "aider",  "program": "aider --model ollama_chat/gemma3:1b" }
+  ]
+}
+```
+
+| Field     | Description                                              |
+|-----------|----------------------------------------------------------|
+| `name`    | Display name shown in the profile picker                 |
+| `program` | Shell command used to launch the agent for that profile  |
+
+If no profiles are defined, boulez uses `default_program` directly as the
+launch command (default: `claude`).
 
 ---
 
@@ -43,15 +174,9 @@ the registry automatically as you use them; you can also **import them in a
 one-shot, manual pass** from the IDEs you already use.
 
 ```bash
-# Preview (read-only) what would be imported, without writing:
-boulez repo-import --dry-run
-
-# Import: scan all installed VS Code-family IDEs, keep only git repos,
-# add the new ones to the registry:
-boulez repo-import
-
-# Restrict the scan to a single IDE:
-boulez repo-import --ide cursor
+boulez repo-import --dry-run     # preview (read-only) what would be imported
+boulez repo-import               # import: scan VS Code-family IDEs, keep git repos
+boulez repo-import --ide cursor  # restrict the scan to a single IDE
 ```
 
 Supported IDEs (all VS Code-family forks sharing the same `storage.json`
@@ -60,7 +185,7 @@ layout): `vscode`, `cursor`, `windsurf`, `antigravity`, `vscodium`, `pearai`,
 
 This is a **one-shot, manual** import — boulez never reads IDE state
 automatically, so a format change in an IDE's `storage.json` never affects
-normal operation. The IDE parsing is isolated in the `ideimport/` package.
+normal operation. IDE parsing is isolated in the `ideimport/` package.
 
 ---
 
@@ -68,8 +193,7 @@ normal operation. The IDE parsing is isolated in the `ideimport/` package.
 
 Boulez can run an instance's whole environment (git worktree, tmux session,
 agent) on a **remote machine** over SSH while you supervise it from the local
-TUI. A single dashboard can then span several machines — e.g.
-`(A, local)`, `(A, gpu-box)`, `(B, gpu-box)`.
+TUI. A single dashboard can span several machines.
 
 ### How it works
 
@@ -82,9 +206,9 @@ and attaches via `ssh -t dev-machine tmux attach-session -t <name>`.
 ### Picking a host
 
 When creating an instance (`n` / `N`), the first screen is the **host
-selector**. `local` (this machine) is always listed first; any SSH aliases
-you have used before follow; you can also type a new alias as free text — it
-is remembered for next time (stored in `~/.boulez/hosts.json`).
+selector**. `local` (this machine) is always listed first; any SSH aliases you
+have used before follow; you can also type a new alias as free text — it is
+remembered for next time (stored in `~/.boulez/hosts.json`).
 
 The alias must resolve through your SSH config / known hosts. Boulez treats it
 as opaque — user, port, and key resolution are ssh's job.
@@ -116,162 +240,20 @@ Host *
 
 ### Auto-yes on remote
 
-Auto-yes is **off by default** on remote hosts — auto-approving agent
-actions on a shared/production box is riskier than locally. Toggle it
-per-instance with `a`; the TUI warns when auto-yes is on for a remote
-instance.
+Auto-yes is **off by default** on remote hosts — auto-approving agent actions
+on a shared/production box is riskier than locally. Toggle it per-instance with
+`a`; the TUI warns when auto-yes is on for a remote instance.
 
 ### Attaching
 
 `↵` / `o` attaches to the selected instance's tmux session. For a remote
-instance this opens an interactive `ssh -t <host> tmux attach-session` under
-a local PTY, so you interact with the remote agent directly. Detach with
+instance this opens an interactive `ssh -t <host> tmux attach-session` under a
+local PTY, so you interact with the remote agent directly. Detach with
 `ctrl-q` as usual.
 
 ---
 
-## Installation
-
-```bash
-curl -fsSL https://raw.githubusercontent.com/yro7/boulez/main/install.sh | bash
-```
-
-This puts the `boulez` binary in `~/.local/bin`.
-
-To use a custom name for the binary:
-
-```bash
-curl -fsSL https://raw.githubusercontent.com/yro7/boulez/main/install.sh | bash -s -- --name <your-binary-name>
-```
-
-### Prerequisites
-
-- [tmux](https://github.com/tmux/tmux/wiki/Installing)
-- [gh](https://cli.github.com/)
-
-### Build from source
-
-```bash
-go build -o boulez .
-```
-
----
-
-## Usage
-
-```
-Usage:
-  boulez [flags]
-  boulez [command]
-
-Available Commands:
-  completion  Generate the autocompletion script for the specified shell
-  ctl         Send a JSON-RPC syscall to the kernel's control socket
-  daemon      Manage the boulez daemon (the kernel / control authority)
-  debug       Print debug information like config paths
-  help        Help about any command
-  repo-import Import git repos from your IDEs into the registry
-  reset       Reset all stored instances
-  version     Print the version number of boulez
-
-Flags:
-  -y, --autoyes          If enabled, all instances will automatically accept prompts for claude code & aider
-  -h, --help             help for boulez
-  -p, --program string   Program to run in new instances (e.g. 'aider --model ollama_chat/gemma3:1b')
-```
-
-Run the application with:
-
-```bash
-boulez
-```
-
-NOTE: The default program is `claude` and we recommend using the latest version.
-
-<b>Using Boulez with other AI assistants:</b>
-- For [Codex](https://github.com/openai/codex): Set your API key with `export OPENAI_API_KEY=<your_key>`
-- Launch with specific assistants:
-   - Codex: `boulez -p "codex"`
-   - Aider: `boulez -p "aider ..."`
-   - Gemini: `boulez -p "gemini"`
-- Make this the default, by modifying the config file (locate with `boulez debug`)
-
----
-
-## Menu
-
-The menu at the bottom of the screen shows available commands.
-
-##### Instance/Session Management
-- `n` - Create a new session
-- `N` - Create a new session with a prompt
-- `D` - Kill (delete) the selected session
-- `↑/j`, `↓/k` - Navigate between sessions
-
-##### Actions
-- `↵/o` - Attach to the selected session to reprompt
-- `ctrl-q` - Detach from session
-- `s` - Commit and push branch to github
-- `c` - Checkout. Commits changes and pauses the session
-- `r` - Resume a paused session
-- `?` - Show help menu
-
-##### Navigation
-- `tab` - Switch between preview tab and diff tab
-- `q` - Quit the application
-- `shift-↓/↑` - scroll in diff view
-
----
-
-## Configuration
-
-Boulez stores its configuration in `~/.boulez/config.json`. You can find the
-exact path by running `boulez debug`.
-
-#### Profiles
-
-Profiles let you define multiple named program configurations and switch
-between them when creating a new session. When more than one profile is
-defined, the session creation overlay shows a profile picker that you can
-navigate with `←`/`→`.
-
-To configure profiles, add a `profiles` array to your config file and set
-`default_program` to the name of the profile to select by default:
-
-```json
-{
-  "default_program": "claude",
-  "profiles": [
-    { "name": "claude", "program": "claude" },
-    { "name": "codex", "program": "codex" },
-    { "name": "aider", "program": "aider --model ollama_chat/gemma3:1b" }
-  ]
-}
-```
-
-Each profile has two fields:
-
-| Field     | Description                                              |
-|-----------|----------------------------------------------------------|
-| `name`    | Display name shown in the profile picker                 |
-| `program` | Shell command used to launch the agent for that profile  |
-
-If no profiles are defined, boulez uses `default_program` directly as the
-launch command (the default is `claude`).
-
----
-
-## FAQs
-
-#### Failed to start new session
-
-If you get an error like `failed to start new session: timed out waiting for
-tmux session`, update the underlying program (ex. `claude`) to the latest
-version.
-
----
-
-## How It Works
+## How it works
 
 1. **tmux** creates isolated terminal sessions for each agent.
 2. **git worktrees** isolate codebases so each session works on its own branch.
@@ -284,6 +266,42 @@ version.
 
 ---
 
+## FAQs
+
+#### Failed to start new session
+
+If you get an error like `failed to start new session: timed out waiting for
+tmux session`, update the underlying program (e.g. `claude`) to the latest
+version.
+
+---
+
+## Origin
+
+Boulez is derived from [claude-squad](https://github.com/smtg-ai/claude-squad)
+(upstream commit `5a604f7`, v1.0.19). It is **not** the upstream project and is
+not affiliated with `smtg-ai`. The original `AGPL-3.0` license is preserved
+(see [LICENSE.md](./LICENSE.md)); attribution to the upstream authors is kept
+in the git history and in this notice.
+
+What changed since the fork:
+
+- Ships as a standalone `boulez` binary (separate config dir `~/.boulez/`).
+- **Kernel + daemon architecture**: the TUI is only one consumer of a daemon
+  that owns the kernel / control authority. `boulez ctl` is a thin client.
+- **Modular agent support** via a `program.Adapter` seam.
+- **Multi-repo orchestration** + **multi-env (SSH)**.
+- A small Pi ↔ boulez ready-signal bridge (see `extensions/pi-boulez.ts` +
+  `program/pi.go`).
+
+---
+
+## Contributing
+
+See [CONTRIBUTING.md](./CONTRIBUTING.md).
+
+---
+
 ## License
 
-[AGPL-3.0](LICENSE.md)
+[AGPL-3.0](./LICENSE.md)
