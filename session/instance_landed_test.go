@@ -40,24 +40,41 @@ func TestInstance_LandingLifecycle(t *testing.T) {
 	assert.False(t, inst.Landing())
 }
 
-// TestInstance_LandedNotPersisted proves the landed/landing hints are TUI-only
-// view state: they do NOT appear in InstanceData (ToInstanceData), so a save/load
-// round-trip (or a wire snapshot) does not carry them. The hint is set by the
-// TUI after a land and survives only because reconcileFleet reuses handles by
-// ID without resetting these fields.
-func TestInstance_LandedNotPersisted(t *testing.T) {
+// TestInstance_LandedPersisted proves the landed hint is now PERSISTED in
+// InstanceData (ToInstanceData / FromInstanceData): a save/load round-trip
+// carries it. This is the kernel-side persisted state the Merge/Land syscalls
+// set after a successful merge so `boulez ctl list_instances` / `get_instance`
+// reflect that an instance's branch has been merged into the target trunk.
+// (Previously landed was TUI-only and did not survive a round-trip.)
+func TestInstance_LandedPersisted(t *testing.T) {
 	inst, err := NewInstance(InstanceOptions{
 		Title: "feat-x", Path: t.TempDir(), Program: "claude",
 	})
 	require.NoError(t, err)
 	inst.SetLanded(true)
+
+	data := inst.ToInstanceData()
+	assert.True(t, data.Landed, "landed must be serialized into InstanceData")
+
+	roundTripped, err := FromInstanceData(data)
+	require.NoError(t, err)
+	assert.True(t, roundTripped.Landed(), "landed must survive a save/load round-trip")
+}
+
+// TestInstance_LandingNotPersisted proves the in-flight `landing` hint is
+// TUI-only view state: it is NOT in InstanceData, so a save/load round-trip
+// does not carry it. Unlike `landed` (now persisted + propagated by the
+// kernel), `landing` is a transient spinner hint the TUI clears on
+// landDoneMsg and has no meaning outside the TUI.
+func TestInstance_LandingNotPersisted(t *testing.T) {
+	inst, err := NewInstance(InstanceOptions{
+		Title: "feat-x", Path: t.TempDir(), Program: "claude",
+	})
+	require.NoError(t, err)
 	inst.SetLanding(true)
 
 	data := inst.ToInstanceData()
-	// No field for landed/landing exists on InstanceData; the only bool is
-	// AutoYes. Reconstruct from data and confirm the hints reset.
 	roundTripped, err := FromInstanceData(data)
 	require.NoError(t, err)
-	assert.False(t, roundTripped.Landed(), "landed must not survive a save/load round-trip")
 	assert.False(t, roundTripped.Landing(), "landing must not survive a save/load round-trip")
 }
