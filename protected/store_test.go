@@ -11,7 +11,7 @@ import (
 )
 
 // newTestStore returns a Store backed by a temp file, isolated from the real
-// ~/.cs2/protected.json.
+// ~/.boulez/protected.json.
 func newTestStore(t *testing.T) *Store {
 	t.Helper()
 	return NewAt(filepath.Join(t.TempDir(), "protected.json"))

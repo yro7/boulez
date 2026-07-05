@@ -1,10 +1,10 @@
-// Package kernel is the control authority of cs2: the single writer that
+// Package kernel is the control authority of boulez: the single writer that
 // owns the fleet's mutable state and exposes the orchestration syscalls as
 // pure Go methods.
 //
 // The kernel is the OS metaphor: it is the long-running process that owns
 // the instances (processes) and applies guards of security that no client
-// can bypass. The TUI is a console (observer); `cs2 ctl` is a thin client
+// can bypass. The TUI is a console (observer); `boulez ctl` is a thin client
 // that sends requests to the kernel via a transport (step 6). The kernel
 // itself knows nothing of transports or LLMs — it is consumer-agnostic, in
 // the same spirit as program.Adapter.
@@ -17,10 +17,10 @@
 package kernel
 
 import (
-	"claude-squad/host"
-	"claude-squad/session"
-	"claude-squad/session/git"
 	"fmt"
+	"github.com/yro7/boulez/host"
+	"github.com/yro7/boulez/session"
+	"github.com/yro7/boulez/session/git"
 	"sync"
 )
 
@@ -53,17 +53,17 @@ type Spawner interface {
 // caller's Kind so the recursion guard (a Worker cannot spawn) can be
 // enforced. When the transport (step 6) authenticates a control session to
 // an orchestrator instance, it builds a CallerContext from that instance.
-// v1 callers pass CallerContext{} (empty CallerID = top-level `cs2 ctl`) for
+// v1 callers pass CallerContext{} (empty CallerID = top-level `boulez ctl`) for
 // top-level control, which is NOT subject to the Worker guard.
 type CallerContext struct {
-	// CallerID is the instance ID of the caller. Empty = top-level `cs2 ctl`
+	// CallerID is the instance ID of the caller. Empty = top-level `boulez ctl`
 	// (no instance caller), which is allowed to spawn any Kind.
 	CallerID string
 	// Kind is the caller's Kind. Only meaningful when CallerID is non-empty.
 	Kind session.Kind
 }
 
-// IsTopLevel reports whether the caller is `cs2 ctl` itself (no instance
+// IsTopLevel reports whether the caller is `boulez ctl` itself (no instance
 // caller). A top-level caller is never subject to the Worker guard.
 func (c CallerContext) IsTopLevel() bool {
 	return c.CallerID == ""
@@ -96,7 +96,7 @@ type Kernel struct {
 	// never target, beyond the conventional main/master the Merger already
 	// refuses (defense in depth lives there). It carries the protected store's
 	// union (spec decision 7): the daemon has no cwd, so protected branches
-	// are declared explicitly per repo in ~/.cs2/protected.json and fed here at
+	// are declared explicitly per repo in ~/.boulez/protected.json and fed here at
 	// boot; the daemon hot-swaps the set on SIGHUP via SetProtectedBranches.
 	// The Merger cannot know the host repo, so this guard lives in the kernel
 	// — the authority that applies guards no client can bypass.
@@ -210,7 +210,7 @@ func (k *Kernel) ListInstances(filter ListFilter) []InstanceSummary {
 // *session.Instance view handles (refreshed from this syscall), while every
 // fleet mutation goes through the kernel. The wire alias is
 // `list_instances_full`; the lightweight `list_instances` (summaries) stays
-// for `cs2 ctl`'s human-facing output.
+// for `boulez ctl`'s human-facing output.
 func (k *Kernel) ListInstancesData(filter ListFilter) []session.InstanceData {
 	k.mu.Lock()
 	defer k.mu.Unlock()

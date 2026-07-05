@@ -25,7 +25,7 @@ func TestSSHHost_NameAndPolicy(t *testing.T) {
 func TestSSHHost_WorktreeDir(t *testing.T) {
 	dir, err := NewSSHHost("h").WorktreeDir()
 	require.NoError(t, err)
-	assert.Equal(t, "~/.cs2/worktrees", dir)
+	assert.Equal(t, "~/.boulez/worktrees", dir)
 }
 
 // TestSSHExecutor_Wrap proves the seam: every command is wrapped as
@@ -140,7 +140,7 @@ func TestSSHHost_ResolveRepoPath_Passthrough(t *testing.T) {
 	h := NewSSHHost("dev-machine")
 	cases := []string{
 		"/home/freebox/testgit", // absolute
-		"testgit",                // relative — must reach the remote shell as-is
+		"testgit",               // relative — must reach the remote shell as-is
 		"~/repos/proj",          // ~-relative — expanded remotely, not here
 		"./foo/../bar",          // dirty relative — remote shell cleans it
 	}

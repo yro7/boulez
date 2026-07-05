@@ -6,9 +6,9 @@ import (
 	"path/filepath"
 	"testing"
 
-	cmdtest "claude-squad/cmd/cmd_test"
 	"github.com/stretchr/testify/assert"
 	"github.com/stretchr/testify/require"
+	cmdtest "github.com/yro7/boulez/cmd/cmd_test"
 )
 
 // fakeFS is an in-memory FS recorder for seam tests. It records every path
@@ -73,9 +73,9 @@ func TestGitWorktree_Setup_RoutesMkdirAllThroughFS(t *testing.T) {
 	fsys := &fakeFS{}
 	executor := cmdtest.MockCmdExec{
 		// Route git commands to the real executor — we only care about FS routing here.
-		RunFunc:             func(c *exec.Cmd) error { return c.Run() },
-		OutputFunc:          func(c *exec.Cmd) ([]byte, error) { return c.Output() },
-		CombinedOutputFunc:  func(c *exec.Cmd) ([]byte, error) { return c.CombinedOutput() },
+		RunFunc:            func(c *exec.Cmd) error { return c.Run() },
+		OutputFunc:         func(c *exec.Cmd) ([]byte, error) { return c.Output() },
+		CombinedOutputFunc: func(c *exec.Cmd) ([]byte, error) { return c.CombinedOutput() },
 	}
 
 	g, _, err := NewGitWorktreeWithDeps(repoPath, "sess", executor, fsys, filepath.Join(t.TempDir(), "worktrees"))

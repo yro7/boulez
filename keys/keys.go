@@ -49,7 +49,7 @@ const (
 
 	// KeySpawnOrchestrator spawns a new orchestrator instance (Shift+O). The
 	// orchestrator is an ordinary fleet instance (KindOrchestrator, headless
-	// worktree) that supervises the fleet via `cs2 ctl`. This is the manual,
+	// worktree) that supervises the fleet via `boulez ctl`. This is the manual,
 	// on-demand replacement for the old always-on "instance 0" bootstrap: the
 	// user spawns one when they want one, nothing is auto-spawned at startup.
 	KeySpawnOrchestrator

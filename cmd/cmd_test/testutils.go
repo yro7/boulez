@@ -5,9 +5,9 @@ import (
 )
 
 type MockCmdExec struct {
-	RunFunc             func(cmd *exec.Cmd) error
-	OutputFunc          func(cmd *exec.Cmd) ([]byte, error)
-	CombinedOutputFunc  func(cmd *exec.Cmd) ([]byte, error)
+	RunFunc            func(cmd *exec.Cmd) error
+	OutputFunc         func(cmd *exec.Cmd) ([]byte, error)
+	CombinedOutputFunc func(cmd *exec.Cmd) ([]byte, error)
 }
 
 func (e MockCmdExec) Run(cmd *exec.Cmd) error {

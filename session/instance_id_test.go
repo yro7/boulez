@@ -32,7 +32,7 @@ func TestInstance_ID_AllocatedAtCreation(t *testing.T) {
 // TestInstance_ID_StableAcrossRoundTrip proves the ID survives a
 // save→load cycle: ToInstanceData serializes it, FromInstanceData restores
 // the same value. This is the persistence contract an orchestrator relies on
-// to address instances by ID across a cs2 restart.
+// to address instances by ID across a boulez restart.
 func TestInstance_ID_StableAcrossRoundTrip(t *testing.T) {
 	repoPath := makeTempGitRepo(t)
 
@@ -62,14 +62,14 @@ func TestInstance_ID_BackfilledForLegacyData(t *testing.T) {
 	legacy := InstanceData{
 		Title:   "legacy",
 		Path:    repoPath,
-		Branch:  "cs2/legacy",
+		Branch:  "boulez/legacy",
 		Status:  Paused, // Paused so FromInstanceData doesn't call Start()
 		Program: "claude",
 		Worktree: GitWorktreeData{
 			RepoPath:      repoPath,
 			WorktreePath:  filepath.Join(t.TempDir(), "wt"),
 			SessionName:   "legacy",
-			BranchName:    "cs2/legacy",
+			BranchName:    "boulez/legacy",
 			BaseCommitSHA: "HEAD",
 		},
 	}

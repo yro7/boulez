@@ -4,8 +4,8 @@ import (
 	"path/filepath"
 	"testing"
 
-	"claude-squad/ideimport"
-	"claude-squad/repo"
+	"github.com/yro7/boulez/ideimport"
+	"github.com/yro7/boulez/repo"
 
 	"github.com/stretchr/testify/assert"
 	"github.com/stretchr/testify/require"

@@ -44,12 +44,12 @@ func (f *fakePane) CapturePaneContent() (string, error) {
 // stop typing and proceed to submit. Here the capture echoes the marker after
 // the first SendKeys, so SendKeys must be called exactly once.
 func TestSendPromptReliablyDoesNotFloodOnMultiLine(t *testing.T) {
-	prompt := "You are the cs2 global orchestrator.\n\nYou are supervised, not autonomous. Do the following, in order:\n1. Read ./ORCHESTRATOR.md.\n2. STOP and wait."
+	prompt := "You are the boulez global orchestrator.\n\nYou are supervised, not autonomous. Do the following, in order:\n1. Read ./ORCHESTRATOR.md.\n2. STOP and wait."
 	marker := promptEchoMarker(prompt)
 	if !strings.Contains(prompt, marker) {
 		t.Fatalf("marker %q must be a substring of the prompt", marker)
 	}
-	if marker != "You are the cs2 global orchestrator." {
+	if marker != "You are the boulez global orchestrator." {
 		t.Fatalf("marker = %q, want the first non-empty line", marker)
 	}
 

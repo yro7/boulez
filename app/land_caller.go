@@ -4,15 +4,15 @@ import (
 	"encoding/json"
 	"fmt"
 
-	"claude-squad/kernel"
-	"claude-squad/session"
-	"claude-squad/session/git"
+	"github.com/yro7/boulez/kernel"
+	"github.com/yro7/boulez/session"
+	"github.com/yro7/boulez/session/git"
 )
 
 // socketLandCaller is a session.LandCaller that reaches the kernel over the
 // control socket. The TUI does not hold a *kernel.Kernel directly (the kernel
 // lives in the daemon process); instead it speaks the wire protocol, exactly
-// like `cs2 ctl land`. The connection is an unauthenticated (top-level) one,
+// like `boulez ctl land`. The connection is an unauthenticated (top-level) one,
 // which is the only identity Land accepts.
 //
 // This is the thin adapter that lets session.LandInstance drive the Land
@@ -33,8 +33,8 @@ func encodeLandParams(repoPath, targetBranch, sourceBranch string, strategy git.
 	return json.Marshal(map[string]interface{}{
 		"target_repo":   repoPath,
 		"target_branch": targetBranch,
-		"source":       sourceBranch,
-		"strategy":     int(strategy),
+		"source":        sourceBranch,
+		"strategy":      int(strategy),
 	})
 }
 

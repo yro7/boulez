@@ -1,8 +1,8 @@
 package ui
 
 import (
-	"claude-squad/host"
-	"claude-squad/session"
+	"github.com/yro7/boulez/host"
+	"github.com/yro7/boulez/session"
 	"testing"
 
 	"github.com/charmbracelet/bubbles/spinner"
@@ -42,7 +42,7 @@ func TestRepoBadgeRendersName(t *testing.T) {
 }
 
 func TestEnvBadgeLocalIsHidden(t *testing.T) {
-	// The local host is implicit (the machine running cs2); it must not render
+	// The local host is implicit (the machine running boulez); it must not render
 	// a badge, so a local-only list stays uncluttered.
 	require.Equal(t, "", envBadge(host.LocalAlias, lipgloss.Color("#000000")))
 	require.Equal(t, "", envBadge("", lipgloss.Color("#000000")))

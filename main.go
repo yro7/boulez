@@ -1,16 +1,16 @@
 package main
 
 import (
-	"claude-squad/app"
-	cmd2 "claude-squad/cmd"
-	"claude-squad/config"
-	"claude-squad/daemon"
-	"claude-squad/log"
-	"claude-squad/session/git"
-	"claude-squad/session/tmux"
 	"context"
 	"encoding/json"
 	"fmt"
+	"github.com/yro7/boulez/app"
+	cmd2 "github.com/yro7/boulez/cmd"
+	"github.com/yro7/boulez/config"
+	"github.com/yro7/boulez/daemon"
+	"github.com/yro7/boulez/log"
+	"github.com/yro7/boulez/session/git"
+	"github.com/yro7/boulez/session/tmux"
 	"os"
 	"path/filepath"
 
@@ -23,8 +23,8 @@ var (
 	autoYesFlag bool
 	binName     string
 	rootCmd     = &cobra.Command{
-		Use:   "claude-squad",
-		Short: "Claude Squad - Manage multiple AI agents like Claude Code, Aider, Codex, and Amp.",
+		Use:   "boulez",
+		Short: "Boulez - Orchestrate multiple AI coding agents (Claude Code, Codex, Pi, Aider, …) in isolated git worktrees.",
 		RunE: func(cmd *cobra.Command, args []string) error {
 			ctx := context.Background()
 			log.Initialize(false)
@@ -47,7 +47,7 @@ var (
 			// The TUI is a viewer of the kernel: no kernel, no viewer (decision
 			// D2). If the socket is absent we auto-start the daemon detached;
 			// if it does not come up within the timeout we fail loud — print the
-			// daemon log tail and the path to `cs2 daemon log` and exit
+			// daemon log tail and the path to `boulez daemon log` and exit
 			// non-zero. There is no degraded TUI mode over a broken daemon.
 			//
 			// The daemon's parent during the transition is this Setsid-detached
@@ -123,13 +123,13 @@ var (
 		Short: "Print the version number",
 		Run: func(cmd *cobra.Command, args []string) {
 			fmt.Printf("%s version %s\n", binName, version)
-			fmt.Printf("https://github.com/smtg-ai/claude-squad/releases/tag/v%s\n", version)
+			fmt.Printf("https://github.com/yro7/boulez/releases/tag/v%s\n", version)
 		},
 	}
 )
 
 func init() {
-	rootCmd.Flags().StringVarP(&programFlag, "program", "p", "", 
+	rootCmd.Flags().StringVarP(&programFlag, "program", "p", "",
 		"Program to run in new instances (e.g. 'aider --model ollama_chat/gemma3:1b')")
 	rootCmd.Flags().BoolVarP(&autoYesFlag, "autoyes", "y", false,
 		"[experimental] If enabled, all instances will automatically accept prompts")

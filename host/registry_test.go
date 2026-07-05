@@ -137,6 +137,7 @@ func TestRegistry_TouchLocalAliasIsNoOp(t *testing.T) {
 	assert.Equal(t, []string{"dev"}, got)
 	assert.NotContains(t, got, LocalAlias)
 }
+
 // else → SSHHost bound to the alias. FromInstanceData relies on this.
 func TestLookup(t *testing.T) {
 	_, ok := Lookup(LocalAlias).(LocalHost)

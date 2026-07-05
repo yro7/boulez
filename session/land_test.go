@@ -4,13 +4,12 @@ import (
 	"errors"
 	"testing"
 
-	"claude-squad/session/git"
 	"github.com/stretchr/testify/assert"
 	"github.com/stretchr/testify/require"
+	"github.com/yro7/boulez/session/git"
 )
 
 var errBoom = errors.New("boom")
-
 
 // fakeLandWorktree is a test Worktree that scripts dirty/push behavior. It
 // implements just the surface LandInstance touches (IsDirty, PushChanges,
@@ -25,42 +24,42 @@ type fakeLandWorktree struct {
 	branch    string
 }
 
-func (f *fakeLandWorktree) IsDirty() (bool, error)         { return f.dirty, nil }
+func (f *fakeLandWorktree) IsDirty() (bool, error) { return f.dirty, nil }
 func (f *fakeLandWorktree) PushChanges(msg string, open bool) error {
 	f.pushCalls++
 	f.pushed = true
 	return f.pushErr
 }
-func (f *fakeLandWorktree) GetRepoPath() string  { return f.repoPath }
+func (f *fakeLandWorktree) GetRepoPath() string   { return f.repoPath }
 func (f *fakeLandWorktree) GetBranchName() string { return f.branch }
 
 // unused methods — panic to surface coupling if LandInstance starts calling them.
-func (f *fakeLandWorktree) Setup() error                { panic("unexpected") }
-func (f *fakeLandWorktree) Cleanup() error             { panic("unexpected") }
-func (f *fakeLandWorktree) Remove() error               { panic("unexpected") }
-func (f *fakeLandWorktree) Prune() error                { panic("unexpected") }
-func (f *fakeLandWorktree) IsValidWorktree() (bool, error) { panic("unexpected") }
-func (f *fakeLandWorktree) WorktreeDirExists() bool     { panic("unexpected") }
+func (f *fakeLandWorktree) Setup() error                      { panic("unexpected") }
+func (f *fakeLandWorktree) Cleanup() error                    { panic("unexpected") }
+func (f *fakeLandWorktree) Remove() error                     { panic("unexpected") }
+func (f *fakeLandWorktree) Prune() error                      { panic("unexpected") }
+func (f *fakeLandWorktree) IsValidWorktree() (bool, error)    { panic("unexpected") }
+func (f *fakeLandWorktree) WorktreeDirExists() bool           { panic("unexpected") }
 func (f *fakeLandWorktree) IsBranchCheckedOut() (bool, error) { panic("unexpected") }
-func (f *fakeLandWorktree) IsExistingBranch() bool     { panic("unexpected") }
-func (f *fakeLandWorktree) RemoveWorktreeDir() error    { panic("unexpected") }
-func (f *fakeLandWorktree) CommitChanges(string) error { panic("unexpected") }
-func (f *fakeLandWorktree) Diff() *git.DiffStats        { panic("unexpected") }
-func (f *fakeLandWorktree) DiffNumstat() *git.DiffStats { panic("unexpected") }
-func (f *fakeLandWorktree) GetWorktreePath() string     { panic("unexpected") }
-func (f *fakeLandWorktree) GetRepoName() string          { panic("unexpected") }
-func (f *fakeLandWorktree) GetBaseCommitSHA() string     { panic("unexpected") }
+func (f *fakeLandWorktree) IsExistingBranch() bool            { panic("unexpected") }
+func (f *fakeLandWorktree) RemoveWorktreeDir() error          { panic("unexpected") }
+func (f *fakeLandWorktree) CommitChanges(string) error        { panic("unexpected") }
+func (f *fakeLandWorktree) Diff() *git.DiffStats              { panic("unexpected") }
+func (f *fakeLandWorktree) DiffNumstat() *git.DiffStats       { panic("unexpected") }
+func (f *fakeLandWorktree) GetWorktreePath() string           { panic("unexpected") }
+func (f *fakeLandWorktree) GetRepoName() string               { panic("unexpected") }
+func (f *fakeLandWorktree) GetBaseCommitSHA() string          { panic("unexpected") }
 
 // fakeLandCaller is a test LandCaller that records the call and scripts the
 // merge result / error.
 type fakeLandCaller struct {
-	result  git.MergeResult
-	err     error
-	called  bool
-	repo    string
-	target  string
-	source  string
-	strat   git.Strategy
+	result git.MergeResult
+	err    error
+	called bool
+	repo   string
+	target string
+	source string
+	strat  git.Strategy
 }
 
 func (f *fakeLandCaller) Land(repoPath, targetBranch, sourceBranch string, strategy git.Strategy) (git.MergeResult, error) {

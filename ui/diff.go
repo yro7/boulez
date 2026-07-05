@@ -1,8 +1,8 @@
 package ui
 
 import (
-	"claude-squad/session"
 	"fmt"
+	"github.com/yro7/boulez/session"
 	"strings"
 
 	"github.com/charmbracelet/bubbles/viewport"

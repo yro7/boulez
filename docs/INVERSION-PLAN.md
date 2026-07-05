@@ -1,7 +1,7 @@
 # CS2 Hierarchy Inversion — Plan
 
-**Goal:** make cs2 what it claims to be: a long-lived **kernel (service)** that owns
-the fleet, with the **TUI and `cs2 ctl` as ephemeral clients** over the control
+**Goal:** make boulez what it claims to be: a long-lived **kernel (service)** that owns
+the fleet, with the **TUI and `boulez ctl` as ephemeral clients** over the control
 socket. Today the TUI is the process parent, the kernel is a sidecar it spawned and
 then ignores, and the TUI persists fleet state directly to `session.Storage` — a
 double-writer that desyncs the kernel from disk. This plan finishes the inversion that
@@ -15,7 +15,7 @@ plugin / hot-reload framework, removing bubbletea.
 **North-star invariant — stated and enforced:**
 > The daemon process is the single writer over fleet state. No process other than the
 > daemon constructs a `*kernel.Kernel` or touches `session.Storage` for writes. The TUI
-> and `cs2 ctl` are pure clients of the control socket. The daemon and the TUI have
+> and `boulez ctl` are pure clients of the control socket. The daemon and the TUI have
 > **no repo / workspace of their own** — they operate above the repo layer. Repos are
 > a property of worker instances, never of the supervisor or its viewer.
 
@@ -33,7 +33,7 @@ plugin / hot-reload framework, removing bubbletea.
   909, 924, 1544`. This is the double-writer.
 - The only TUI→kernel bridge is `app/land_caller.go` (~70 LOC) for the `land` syscall.
   spawn / pause / resume / kill / orchestrator all bypass the kernel.
-- The `IsGitRepo` cwd gate from upstream CS has already been removed from cs2's
+- The `IsGitRepo` cwd gate from upstream CS has already been removed from boulez's
   `main.go` — the TUI no longer hard-requires a repo at boot. Good base.
 - **Residual debt:** `daemon.resolveHostProtectedBranches` reads `os.Getwd()` to derive
   "the branch the user is standing on." This is the **only** remaining coupling between
@@ -68,25 +68,25 @@ branches are declared per-repo in an explicit store (`repos.json` extension or a
 `resolveHostProtectedBranches` is deleted. This is the clean separation: repos belong
 to worker instances; the supervisor knows them only as named, protected targets.
 
-### D2 — Command shape: `cs2` = `cs2 tui`, daemon auto-started
+### D2 — Command shape: `boulez` = `boulez tui`, daemon auto-started
 
-- `cs2` (and `cs2 tui`) — the TUI. Connects to the daemon's control socket. If the
+- `boulez` (and `boulez tui`) — the TUI. Connects to the daemon's control socket. If the
   socket is absent, **auto-starts the daemon** and waits for the socket (best-effort).
   **If the daemon fails to come up — for any reason: crash, missing binary, bad config
   — the TUI does not start.** It prints the failure (with the tail of the daemon log
-  and the path to `cs2 daemon log`) and exits non-zero. There is no degraded TUI mode
+  and the path to `boulez daemon log`) and exits non-zero. There is no degraded TUI mode
   over a broken daemon.
-- `cs2 ctl` — unchanged, one-shot client. Auto-launches the daemon the same way the
+- `boulez ctl` — unchanged, one-shot client. Auto-launches the daemon the same way the
   TUI does (existing behavior in `rawCtlSession`), with the same "fail loudly if the
   daemon won't come up" contract.
-- `cs2 daemon run` — foreground daemon (dev / debug). The canonical entrypoint that
+- `boulez daemon run` — foreground daemon (dev / debug). The canonical entrypoint that
   the service unit and the auto-start both invoke under the hood.
-- `cs2 daemon start|stop|status|log` — manage the background daemon (start = detached
+- `boulez daemon start|stop|status|log` — manage the background daemon (start = detached
   via launchd/systemd if installed, else `nohup`/`Setsid`).
-- `cs2 daemon install|uninstall` — write/remove the launchd plist or systemd unit.
+- `boulez daemon install|uninstall` — write/remove the launchd plist or systemd unit.
 
 No `auto_start_daemon` config flag: auto-start is unconditional. The escape hatch is
-`cs2 daemon run` in the foreground to see what is wrong.
+`boulez daemon run` in the foreground to see what is wrong.
 
 ---
 
@@ -95,20 +95,20 @@ No `auto_start_daemon` config flag: auto-start is unconditional. The escape hatc
 Phases are ordered by dependency. Each phase is independently shippable and ends with
 the fleet in a working state. Commits within a phase are tiny and reviewable.
 
-### Phase 1 — `cs2 daemon` as a first-class command
+### Phase 1 — `boulez daemon` as a first-class command
 
 **Why first:** separates the daemon's lifecycle from the TUI at the command level,
 which is the prerequisite for installing it as a service and for the TUI becoming a
 client.
 
-- **C1.1 — Promote `--daemon` to `cs2 daemon run`.** New `cmd_daemon.go`; moves
+- **C1.1 — Promote `--daemon` to `boulez daemon run`.** New `cmd_daemon.go`; moves
   `daemon.RunDaemon` invocation out of the root `RunE`. Keep `--daemon` as a hidden
   alias for one release (back-compat for any in-flight process / scripts).
-- **C1.2 — `cs2 daemon start|stop|status|log`.** `start` launches the daemon detached
+- **C1.2 — `boulez daemon start|stop|status|log`.** `start` launches the daemon detached
   (reuse `LaunchDaemon` + the existing O_EXCL lock). `stop` reuses `StopDaemon`.
   `status` probes the socket + reads `daemon.pid`. `log` prints the tail of the
-  claudesquad log.
-- **C1.3 — `cs2` / `cs2 tui` auto-start contract.** At TUI boot, probe the socket; if
+  boulez log.
+- **C1.3 — `boulez` / `boulez tui` auto-start contract.** At TUI boot, probe the socket; if
   absent, call `LaunchDaemon` then `WaitForSocket` (exists already). On timeout, **do
   not start the TUI**: print the daemon log tail and exit non-zero. Remove the current
   silent "proceed with whatever storage holds" fallback. The TUI is a viewer of the
@@ -118,8 +118,8 @@ client.
   the daemon's parent." The daemon's parent is launchd/systemd (after Phase 2) or
   `Setsid`-detached (during transition).
 
-**Acceptance:** `cs2 daemon run` runs the kernel in the foreground; `cs2 daemon start`
-runs it detached; `cs2 ctl list_instances` works against either; the TUI refuses to
+**Acceptance:** `boulez daemon run` runs the kernel in the foreground; `boulez daemon start`
+runs it detached; `boulez ctl list_instances` works against either; the TUI refuses to
 start if the daemon cannot come up.
 
 ### Phase 2 — Daemon as OS service + no repo/workspace
@@ -129,7 +129,7 @@ making it independent of the user's filesystem. The cwd-derived branch protectio
 the last filesystem coupling; it dies here.
 
 - **C2.1 — Per-repo protected-branch store.** Extend `repos.json` (or add
-  `~/.cs2/protected.json`) mapping `repoPath -> []branch`. `cs2 daemon protect
+  `~/.boulez/protected.json`) mapping `repoPath -> []branch`. `boulez daemon protect
   <repo> <branch>` / `unprotect` / `list-protected` subcommands. Loader reads at boot
   and on `SIGHUP`.
 - **C2.2 — Kernel reads the explicit protected set; cwd path deleted.** Replace
@@ -137,15 +137,15 @@ the last filesystem coupling; it dies here.
   is fed from the store at boot and reloaded on `SIGHUP`. Delete
   `resolveHostProtectedBranches` and its call site. Conventional `main`/`master`
   guard in the Merger is unchanged (defense in depth).
-- **C2.3 — `cs2 daemon install|uninstall` (macOS).** Write
-  `~/Library/LaunchAgents/ai.smtg.cs2.plist` (`RunAtLoad`, `KeepAlive`,
+- **C2.3 — `boulez daemon install|uninstall` (macOS).** Write
+  `~/Library/LaunchAgents/ai.smtg.boulez.plist` (`RunAtLoad`, `KeepAlive`,
   `ProgramArguments` = `<exe> daemon run`). `install` writes the plist and
   `launchctl bootstrap gui/<uid>`; `uninstall` `bootout`s and removes.
-- **C2.4 — `cs2 daemon install|uninstall` (Linux).** Write
-  `~/.config/systemd/user/cs2.service` (`Restart=on-failure`,
+- **C2.4 — `boulez daemon install|uninstall` (Linux).** Write
+  `~/.config/systemd/user/boulez.service` (`Restart=on-failure`,
   `WantedBy=default.target`). `systemctl --user daemon-reload` + `enable --now`.
 - **C2.5 — Dev fallback.** If neither launchd nor systemd is present,
-  `cs2 daemon start` documents the `nohup cs2 daemon run &` form. No custom
+  `boulez daemon start` documents the `nohup boulez daemon run &` form. No custom
   supervisor.
 - **C2.6 — Audit: the daemon has no filesystem-of-the-user dependency.** After C2.2,
   grep the daemon package for `os.Getwd`, `os.Getenv("PWD")`, and any repo path
@@ -153,7 +153,7 @@ the last filesystem coupling; it dies here.
   boots and serves `list_instances` with cwd set to `/` (a directory that is not a git
   repo and not writable).
 
-**Acceptance:** after `cs2 daemon install`, a reboot brings the kernel back up; `cs2
+**Acceptance:** after `boulez daemon install`, a reboot brings the kernel back up; `boulez
 ctl list_instances` works against it; the daemon boots cleanly from cwd `/`; a merge
 into a declared-protected branch is refused with `PROTECTED_BRANCH`; `SIGHUP` reloads
 the protected set.
@@ -190,8 +190,8 @@ desync by construction.
   populated purely from the kernel.
 
 **Acceptance:** grep shows zero `SaveInstances`/`LoadInstances` in `app/`; spawning
-from the TUI makes the instance immediately visible to `cs2 ctl list_instances`;
-killing from the TUI removes it from `cs2 ctl list_instances`; the TUI boots from a
+from the TUI makes the instance immediately visible to `boulez ctl list_instances`;
+killing from the TUI removes it from `boulez ctl list_instances`; the TUI boots from a
 non-repo cwd and displays the kernel's fleet. The desync is gone by construction.
 
 ### Phase 4 — Hardening
@@ -223,7 +223,7 @@ double-writer and rewriting them after the inversion.
   the existing `everyN` throttle so a transiently-unreachable instance does not spam per
   tick. Mostly moot after C4.1/C4.4, but cheap.
 - **C4.6 — Deprecate `--daemon` flag.** Remove the hidden alias now that
-  `cs2 daemon run` exists. One release after C1.1.
+  `boulez daemon run` exists. One release after C1.1.
 
 **Acceptance:** `app/` does not compile if it reaches for storage writes; a daemon
 restart after a tmux crash shows the crashed instance as dead, not running; the log is
@@ -239,9 +239,9 @@ quiet for dead instances; `as <bogus> spawn` errors loudly with no spawn side-ef
 | Losing the TUI's in-memory list breaks bubbletea's model (it expects to own its state) | Med | Keep a read-only cache in the TUI, refreshed from `list_instances` on a timer + on every mutation ack. The TUI owns the *view*, not the *truth*. |
 | Existing users have `--daemon` in scripts / launchd plists | Low | Keep `--daemon` as a hidden alias for one release (C1.1) before C4.6 removes it. |
 | launchd/systemd unit paths differ across distros | Low | Start with the two well-known user paths (macOS LaunchAgent, Linux user systemd). Don't over-engineer; document `nohup` fallback (C2.5). |
-| Per-repo protected branches surprise users who relied on cwd protection | Med | Migration: on first `cs2 daemon install`, seed `protected.json` with the current cwd's branch for any registered repo that matches. One-time, opt-out. Documented in the install command's output. |
+| Per-repo protected branches surprise users who relied on cwd protection | Med | Migration: on first `boulez daemon install`, seed `protected.json` with the current cwd's branch for any registered repo that matches. One-time, opt-out. Documented in the install command's output. |
 | Reconciliation (C4.4) marks a slow instance as dead | Low | Only demote when tmux reports the session gone (definitive), never on a timeout. |
-| Bug A (orchestrator `UNKNOWN_INSTANCE`) is tolerated during the migration and bites dogfooding | Med | Acceptable per decision: the dev target is cs2 itself, not a production orchestrator. If dogfooding an orchestrator becomes necessary mid-migration, C0.3-equivalent (route `spawnOrchestrator` through the kernel) can be cherry-picked out of Phase 3 as a one-off. |
+| Bug A (orchestrator `UNKNOWN_INSTANCE`) is tolerated during the migration and bites dogfooding | Med | Acceptable per decision: the dev target is boulez itself, not a production orchestrator. If dogfooding an orchestrator becomes necessary mid-migration, C0.3-equivalent (route `spawnOrchestrator` through the kernel) can be cherry-picked out of Phase 3 as a one-off. |
 | Auto-start masks a crashing daemon from the user | Low | By decision D2: the TUI does not start if the daemon won't come up. The failure is surfaced with the daemon log tail, not swallowed. |
 
 ---
@@ -249,7 +249,7 @@ quiet for dead instances; `as <bogus> spawn` errors loudly with no spawn side-ef
 ## Sequencing summary
 
 ```
-Phase 1 (cs2 daemon command)      ── daemon lifecycle detached from TUI
+Phase 1 (boulez daemon command)      ── daemon lifecycle detached from TUI
    │
    ▼
 Phase 2 (OS service + no repo)    ── daemon persistent, repo-free (depends D1, D2)
@@ -294,5 +294,5 @@ daemon is the persistent, repo-free authority it defers to.
    `marseilleFreebox`) suggests remote hosts are coming. This plan is local-only;
    remote execution is a separate epic that the `host.Host` seam already anticipates.
 3. **Migration seeding for protected branches (risk register):** seed
-   `protected.json` from the current cwd on first `cs2 daemon install`, or start
-   empty and require explicit `cs2 daemon protect`? Default: seed, opt-out.
+   `protected.json` from the current cwd on first `boulez daemon install`, or start
+   empty and require explicit `boulez daemon protect`? Default: seed, opt-out.

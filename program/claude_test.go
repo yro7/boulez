@@ -16,37 +16,37 @@ func TestClaudeAdapter_NameAndMatch(t *testing.T) {
 
 func TestClaudeAdapter_Detect(t *testing.T) {
 	cases := []struct {
-		name      string
-		content   string
-		wantStat  Status
+		name       string
+		content    string
+		wantStat   Status
 		wantPrompt bool
-		wantKind  PromptKind
+		wantKind   PromptKind
 	}{
 		{
-			name:      "trust folder prompt",
-			content:   "Do you trust the files in this folder?",
-			wantStat:  StatusPermission,
+			name:       "trust folder prompt",
+			content:    "Do you trust the files in this folder?",
+			wantStat:   StatusPermission,
 			wantPrompt: true,
-			wantKind:  PromptTrust,
+			wantKind:   PromptTrust,
 		},
 		{
-			name:      "new MCP server prompt",
-			content:   "Detected new MCP server from config",
-			wantStat:  StatusPermission,
+			name:       "new MCP server prompt",
+			content:    "Detected new MCP server from config",
+			wantStat:   StatusPermission,
 			wantPrompt: true,
-			wantKind:  PromptTrust,
+			wantKind:   PromptTrust,
 		},
 		{
-			name:      "ready for input",
-			content:   "No, and tell Claude what to do differently",
-			wantStat:  StatusReady,
+			name:       "ready for input",
+			content:    "No, and tell Claude what to do differently",
+			wantStat:   StatusReady,
 			wantPrompt: true,
-			wantKind:  PromptReady,
+			wantKind:   PromptReady,
 		},
 		{
-			name:      "working",
-			content:   "random pane content while agent runs",
-			wantStat:  StatusWorking,
+			name:       "working",
+			content:    "random pane content while agent runs",
+			wantStat:   StatusWorking,
 			wantPrompt: false,
 		},
 	}
@@ -70,6 +70,6 @@ func TestClaudeAdapter_Detect(t *testing.T) {
 
 type stubResponder struct{}
 
-func (stubResponder) TapEnter() error          { return nil }
-func (stubResponder) TapDAndEnter() error      { return nil }
-func (stubResponder) SendKeys(string) error    { return nil }
+func (stubResponder) TapEnter() error       { return nil }
+func (stubResponder) TapDAndEnter() error   { return nil }
+func (stubResponder) SendKeys(string) error { return nil }

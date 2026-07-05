@@ -1,7 +1,7 @@
 // Package fs abstracts filesystem operations behind an injectable interface.
 //
 // The git and session packages operate on worktree paths that are assumed to
-// live on the local filesystem. For a local-only cs2 this is correct, but an
+// live on the local filesystem. For a local-only boulez this is correct, but an
 // instance whose worktree lives on a remote host cannot be manipulated with
 // os.Stat / os.RemoveAll — those act on the local machine, silently doing the
 // wrong thing (a local stat of a remote path is a bug, not a network error).
@@ -15,7 +15,7 @@ import (
 	"os"
 )
 
-// FS is the filesystem surface cs2 needs against worktree paths. Kept narrow
+// FS is the filesystem surface boulez needs against worktree paths. Kept narrow
 // on purpose — only the operations the git/session layer actually uses.
 type FS interface {
 	// Stat reports metadata for the named path. Mirrors os.Stat.

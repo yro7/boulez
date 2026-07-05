@@ -1,12 +1,12 @@
 package ui
 
 import (
-	"claude-squad/host"
-	"claude-squad/log"
-	"claude-squad/program"
-	"claude-squad/session"
 	"errors"
 	"fmt"
+	"github.com/yro7/boulez/host"
+	"github.com/yro7/boulez/log"
+	"github.com/yro7/boulez/program"
+	"github.com/yro7/boulez/session"
 	"strings"
 
 	"github.com/charmbracelet/bubbles/spinner"
@@ -91,7 +91,7 @@ const envBadgeColor = "#6E7B8B"
 
 // envBadge renders a colored [host] pill for the execution environment of an
 // instance, mirroring the program/repo badges. The local host is implicit (it
-// is the machine running cs2) and renders nothing, so a local-only list stays
+// is the machine running boulez) and renders nothing, so a local-only list stays
 // uncluttered — exactly like the repo badge is hidden in single-repo lists.
 // Only a remote (ssh) host gets a badge, because that is the only case where
 // "where" is not implied. The background is taken from the surrounding line
@@ -303,7 +303,7 @@ func (r *InstanceRenderer) Render(i *session.Instance, idx int, selected bool, h
 	}
 
 	// Environment (host) badge: a [host] pill for remote (ssh) instances only.
-	// Local is implicit (the machine running cs2) and renders nothing, so a
+	// Local is implicit (the machine running boulez) and renders nothing, so a
 	// local-only list stays uncluttered. Unlike the repo badge this is shown in
 	// both single- and multi-repo lists: "where" is never implied by the repo,
 	// and the env badge is most useful precisely when one repo runs on several
