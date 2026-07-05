@@ -40,6 +40,10 @@ func (f *fakeSpawner) Spawn(opts SpawnOptions) (*session.Instance, error) {
 	// Mark as started so the kernel's summarize treats it as live.
 	inst.SetStatus(session.Running)
 	inst.MarkStartedForTest()
+	// Mirror what Start(firstTimeSetup=true) does: bind the branch on the
+	// instance so kernel syscalls that match instances by branch (e.g. marking
+	// a merge's source instances landed) can find them without a real worktree.
+	inst.Branch = opts.Branch
 	if f.tmuxInjector != nil {
 		f.tmuxInjector(inst)
 	}
@@ -459,4 +463,107 @@ func TestKernel_Land_NoMergerWired(t *testing.T) {
 	k := New(nil, WithoutAutosave()) // real merger default → git on /nonexistent
 	_, err := k.Land(CallerContext{}, "/nonexistent", "main", "feat", git.StrategyDefault)
 	assert.Error(t, err)
+}
+
+// --- landed persistence on merge/land (fix: landed state was TUI-only) ---
+
+// TestKernel_Merge_MarksSourceInstancesLanded proves a successful merge marks
+// the instances whose branch is in sourceBranches as landed — the persisted,
+// wire-visible state that `boulez ctl list_instances` / `get_instance` expose.
+// Before the fix, `landed` was a TUI-only hint not propagated by the merge
+// syscall, so an orchestrator's `merge --source b1,b2` left the source workers
+// showing as plain Running with no landed marker.
+func TestKernel_Merge_MarksSourceInstancesLanded(t *testing.T) {
+	k, _, merger := newTestKernel(t)
+	merger.result = git.MergeResult{Status: git.MergeMerged, Message: "ok"}
+
+	wID, err := k.Spawn(CallerContext{}, SpawnOptions{Repo: "/r", Title: "w1", Branch: "b1"})
+	require.NoError(t, err)
+	otherID, err := k.Spawn(CallerContext{}, SpawnOptions{Repo: "/r", Title: "w2", Branch: "b2"})
+	require.NoError(t, err)
+
+	// Snapshot UpdatedAt before the merge to assert it is refreshed.
+	wBefore, err := k.InstanceByID(wID)
+	require.NoError(t, err)
+	beforeUpdated := wBefore.UpdatedAt
+
+	res, err := k.Merge(CallerContext{}, "/r", "main", []string{"b1"}, git.StrategyDefault)
+	require.NoError(t, err)
+	assert.Equal(t, git.MergeMerged, res.Status)
+
+	// list_instances_full: the b1 source is landed; the unrelated b2 is not.
+	data := k.ListInstancesData(ListFilter{})
+	require.Len(t, data, 2)
+	var wData, otherData session.InstanceData
+	for _, d := range data {
+		if d.ID == wID {
+			wData = d
+		}
+		if d.ID == otherID {
+			otherData = d
+		}
+	}
+	assert.True(t, wData.Landed, "source instance on b1 must be marked landed after a successful merge")
+	assert.False(t, otherData.Landed, "non-source instance on b2 must not be marked landed")
+
+	// list_instances (summaries) carry Landed too — the `boulez ctl` read path.
+	sums := k.ListInstances(ListFilter{})
+	require.Len(t, sums, 2)
+	for _, s := range sums {
+		switch s.ID {
+		case wID:
+			assert.True(t, s.Landed, "summary for b1 source must report Landed")
+		case otherID:
+			assert.False(t, s.Landed, "summary for b2 must not report Landed")
+		}
+	}
+
+	// The live instance's UpdatedAt is refreshed (the persisted value, not the
+	// ToInstanceData wire override). This is the kernel-side refresh the bug
+	// report called out as missing.
+	wAfter, err := k.InstanceByID(wID)
+	require.NoError(t, err)
+	assert.True(t, wAfter.UpdatedAt.After(beforeUpdated), "landed instance UpdatedAt must be refreshed")
+	assert.True(t, wAfter.Landed(), "live instance reports Landed")
+}
+
+// TestKernel_Merge_ConflictDoesNotMarkLanded proves a conflicting merge does
+// NOT mark the source landed — only a successful merge (res.Status !=
+// MergeConflict) does. Landing a conflicted state would lie to the user.
+func TestKernel_Merge_ConflictDoesNotMarkLanded(t *testing.T) {
+	k, _, merger := newTestKernel(t)
+	merger.result = git.MergeResult{Status: git.MergeConflict, Message: "conflict"}
+
+	_, err := k.Spawn(CallerContext{}, SpawnOptions{Repo: "/r", Title: "w1", Branch: "b1"})
+	require.NoError(t, err)
+
+	res, err := k.Merge(CallerContext{}, "/r", "main", []string{"b1"}, git.StrategyDefault)
+	require.NoError(t, err)
+	assert.Equal(t, git.MergeConflict, res.Status)
+
+	data := k.ListInstancesData(ListFilter{})
+	require.Len(t, data, 1)
+	assert.False(t, data[0].Landed, "a conflicting merge must not mark the source landed")
+}
+
+// TestKernel_Land_MarksSourceInstanceLanded proves the Land syscall (the
+// top-level "land to main" path) marks the single source instance landed on
+// success, mirroring Merge. The TUI's own SetLanded(true) on landDoneMsg
+// coexists with this kernel-side mark — they set the same field; the kernel
+// path is what makes the state visible to non-TUI consumers (boulez ctl).
+func TestKernel_Land_MarksSourceInstanceLanded(t *testing.T) {
+	k, _, merger := newTestKernel(t)
+	merger.result = git.MergeResult{Status: git.MergeMerged, Message: "ok"}
+
+	wID, err := k.Spawn(CallerContext{}, SpawnOptions{Repo: "/r", Title: "w1", Branch: "b1"})
+	require.NoError(t, err)
+
+	res, err := k.Land(CallerContext{}, "/r", "main", "b1", git.StrategyDefault)
+	require.NoError(t, err)
+	assert.Equal(t, git.MergeMerged, res.Merge.Status)
+
+	data := k.ListInstancesData(ListFilter{})
+	require.Len(t, data, 1)
+	assert.True(t, data[0].Landed, "source instance must be marked landed after a successful land")
+	assert.Equal(t, wID, data[0].ID)
 }

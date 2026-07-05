@@ -17,6 +17,7 @@ type InstanceSummary struct {
 	Program string
 	Host    string
 	Updated string // RFC3339 of the instance's UpdatedAt
+	Landed  bool
 }
 
 // InstanceDetail is the full projection an orchestrator uses to decide: the
@@ -92,6 +93,7 @@ func summarize(inst *session.Instance) InstanceSummary {
 		Program: inst.Program,
 		Host:    inst.Host().Name(),
 		Updated: inst.UpdatedAt.Format("2006-01-02T15:04:05Z07:00"),
+		Landed:  inst.Landed(),
 	}
 }
 
