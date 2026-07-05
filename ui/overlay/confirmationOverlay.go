@@ -13,10 +13,14 @@ type ConfirmationOverlay struct {
 	message string
 	// Width of the overlay
 	width int
-	// Callback function to be called when the user confirms (presses 'y')
-	OnConfirm func()
-	// Callback function to be called when the user cancels (presses 'n' or 'esc')
-	OnCancel func()
+	// OnConfirm is invoked when the user confirms (presses the confirm key).
+	// It returns a tea.Cmd that the caller dispatches in its Update loop,
+	// so confirm actions can run asynchronously and surface their outcome
+	// (success/error) back to the program. Returning nil is a valid no-op.
+	OnConfirm func() tea.Cmd
+	// OnCancel is invoked when the user cancels (cancel key or esc). Same
+	// contract as OnConfirm.
+	OnCancel func() tea.Cmd
 	// Custom confirm key (defaults to 'y')
 	ConfirmKey string
 	// Custom cancel key (defaults to 'n')
@@ -37,25 +41,32 @@ func NewConfirmationOverlay(message string) *ConfirmationOverlay {
 	}
 }
 
-// HandleKeyPress processes a key press and updates the state
-// Returns true if the overlay should be closed
-func (c *ConfirmationOverlay) HandleKeyPress(msg tea.KeyMsg) bool {
+// HandleKeyPress processes a key press and updates the state. It returns
+// (closed, cmd): closed is true if the overlay should be dismissed, and cmd
+// is the tea.Cmd returned by the confirm/cancel callback (nil when there is
+// no callback or the overlay stays open). The caller is responsible for
+// dispatching cmd so the action's outcome reaches the Update loop — this is
+// what lets a confirm action run a long-running operation and report its
+// result back (previously the returned Cmd was discarded).
+func (c *ConfirmationOverlay) HandleKeyPress(msg tea.KeyMsg) (bool, tea.Cmd) {
 	switch msg.String() {
 	case c.ConfirmKey:
 		c.Dismissed = true
+		var cmd tea.Cmd
 		if c.OnConfirm != nil {
-			c.OnConfirm()
+			cmd = c.OnConfirm()
 		}
-		return true
+		return true, cmd
 	case c.CancelKey, "esc":
 		c.Dismissed = true
+		var cmd tea.Cmd
 		if c.OnCancel != nil {
-			c.OnCancel()
+			cmd = c.OnCancel()
 		}
-		return true
+		return true, cmd
 	default:
 		// Ignore other keys in confirmation state
-		return false
+		return false, nil
 	}
 }
 

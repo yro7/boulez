@@ -174,6 +174,31 @@ func TestReconcileFleet_RefreshesLightweightState(t *testing.T) {
 	assert.True(t, inst.AutoYes, "autoyes refreshed from kernel")
 }
 
+// TestReconcileFleet_PreservesLandedHint proves the TUI-only landed/landing
+// hints survive a fleet refresh: reconcileFleet reuses existing handles by ID
+// and resets only the kernel-owned lightweight state (Status, AutoYes), so the
+// view-only landed hint (set after a successful land, cleared on Running→Ready)
+// is NOT wiped on the periodic fleet tick. Without this, a land's visual
+// indicator would flicker off on the next 1s tick.
+func TestReconcileFleet_PreservesLandedHint(t *testing.T) {
+	fleet := &fakeFleetClient{
+		list: []session.InstanceData{instData("w1", "w1", session.Ready, session.KindWorker)},
+	}
+	h := newReconcileHome(t, fleet)
+	require.NoError(t, h.refreshFleetFromKernel())
+
+	inst := h.list.GetInstances()[0]
+	inst.SetLanded(true)
+	inst.SetLanding(true)
+
+	// A fleet tick arrives (same instance, status unchanged).
+	require.NoError(t, h.refreshFleetFromKernel())
+
+	after := h.list.GetInstances()[0]
+	assert.True(t, after.Landed(), "landed hint survives fleet refresh")
+	assert.True(t, after.Landing(), "landing hint survives fleet refresh")
+}
+
 // TestReconcileFleet_EmptySnapshotClearsView proves an empty snapshot clears
 // the view (the kernel has no instances → the TUI shows none).
 func TestReconcileFleet_EmptySnapshotClearsView(t *testing.T) {

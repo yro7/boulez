@@ -89,6 +89,19 @@ type Merger interface {
 	MergeTrunk(repoPath, targetBranch string, sourceBranches []string, strategy Strategy) (MergeResult, error)
 }
 
+// MergerInPlace is an OPTIONAL capability a Merger may implement: the
+// fast-path ff-only merge directly in the host repo's working tree (see
+// MergeTrunkInPlace). The kernel probes for it with a type assertion and
+// falls back to the throwaway MergeTrunk when it is absent, so a Merger that
+// does not support the in-place variant (e.g. a fake in tests) keeps working.
+// Keeping this as a separate interface follows the "one adapter means a
+// hypothetical seam; two means a real one" rule: the in-place path is a real,
+// exercised second behaviour, so it earns its own seam rather than polluting
+// Merger with a method that throws "not implemented" for most impls.
+type MergerInPlace interface {
+	MergeTrunkInPlace(repoPath, targetBranch string, sourceBranches []string, strategy Strategy) (handled bool, result MergeResult, err error)
+}
+
 // defaultMerger is the v1 Merger: deterministic git merge.
 type defaultMerger struct {
 	cmdExec cmd.Executor
@@ -229,6 +242,72 @@ func (m *defaultMerger) mergeInto(repoPath, targetBranch string, sourceBranches 
 	// merge returns MergeConflict + a non-nil error wrapping git's non-zero
 	// exit, so callers can distinguish clean vs conflicting by err != nil).
 	return MergeResult{Status: MergeConflict, Conflicts: conflicts, Message: outStr, WorktreePath: tmpDir}, fmt.Errorf("merge: git merge failed: %s: %w", outStr, err)
+}
+
+// MergeTrunkInPlace implements the fast-path ff-only merge. See the Merger
+// interface doc for the contract. It runs git directly in repoPath (the host
+// repo's working tree), so the guards are: (1) the host must have
+// targetBranch checked out, (2) the host working tree must be clean, and
+// (3) targetBranch must be an ancestor of the (single) source (ff possible).
+// If any guard fails, handled=false and nothing is mutated. On all-pass, a
+// `git merge --ff-only <source>` runs in place; git validates the
+// losslessness itself (ff-only refuses non-ff), so no --hard flag is used.
+func (m *defaultMerger) MergeTrunkInPlace(repoPath, targetBranch string, sourceBranches []string, strategy Strategy) (bool, MergeResult, error) {
+	if err := mergeValidate(repoPath, targetBranch, sourceBranches, strategy); err != nil {
+		return false, MergeResult{}, err
+	}
+	// The fast path lands exactly one source (the instance's own branch),
+	// mirroring Land's single-source contract. A multi-source in-place merge
+	// is not a land gesture; fall back to the throwaway merger.
+	if len(sourceBranches) != 1 {
+		return false, MergeResult{}, nil
+	}
+	source := sourceBranches[0]
+
+	// (1) Host must be on targetBranch. `rev-parse --abbrev-ref HEAD` returns
+	// "HEAD" when detached, which is != targetBranch, so a detached HEAD falls
+	// back to the throwaway path (correct: we don't switch branches).
+	out, err := m.cmdExec.Output(exec.Command("git", "-C", repoPath, "rev-parse", "--abbrev-ref", "HEAD"))
+	if err != nil {
+		return false, MergeResult{Status: MergeConflict, Message: string(out)}, nil
+	}
+	current := strings.TrimSpace(string(out))
+	if current != targetBranch {
+		return false, MergeResult{}, nil
+	}
+
+	// (2) Host working tree must be clean (no uncommitted changes to lose).
+	statusOut, err := m.cmdExec.Output(exec.Command("git", "-C", repoPath, "status", "--porcelain"))
+	if err != nil {
+		return false, MergeResult{Status: MergeConflict, Message: string(statusOut)}, nil
+	}
+	if len(strings.TrimSpace(string(statusOut))) != 0 {
+		return false, MergeResult{}, nil
+	}
+
+	// (3) targetBranch must be an ancestor of source (ff possible). If git
+	// says no, fall back to the throwaway merger (which produces a real merge
+	// commit) rather than forcing anything.
+	if mbOut, mbErr := m.cmdExec.Output(exec.Command("git", "-C", repoPath, "merge-base", "--is-ancestor", targetBranch, source)); mbErr != nil {
+		_ = mbOut
+		return false, MergeResult{}, nil
+	}
+
+	// All guards passed: ff-only merge in place. git itself refuses if it
+	// cannot ff (e.g. main moved between the guard check and now — a race),
+	// in which case we fall back to the throwaway merger.
+	mergeOut, mergeErr := m.cmdExec.CombinedOutput(exec.Command("git", "-C", repoPath, "merge", "--ff-only", source))
+	if mergeErr != nil {
+		// Could be a conflict (ff-only never conflicts on a true ff, but a
+		// race could leave the repo in a merging state). If there are
+		// conflicted files, report them; otherwise fall back.
+		conflicts, cErr := m.conflictedFiles(repoPath)
+		if cErr != nil || len(conflicts) == 0 {
+			return false, MergeResult{Status: MergeConflict, Message: string(mergeOut)}, nil
+		}
+		return true, MergeResult{Status: MergeConflict, Conflicts: conflicts, Message: string(mergeOut), WorktreePath: repoPath}, fmt.Errorf("merge: in-place ff-only failed: %s: %w", string(mergeOut), mergeErr)
+	}
+	return true, MergeResult{Status: MergeMerged, Message: string(mergeOut)}, nil
 }
 
 // runGit runs `git -C repoPath args...` and returns the combined output + error.

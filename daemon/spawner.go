@@ -45,6 +45,21 @@ func (realMerger) MergeTrunk(repoPath, targetBranch string, sourceBranches []str
 	return git.NewMerger(cmd.MakeExecutor()).MergeTrunk(repoPath, targetBranch, sourceBranches, strategy)
 }
 
+// MergeTrunkInPlace delegates to the real Merger's fast-path ff-only variant.
+// The kernel probes for MergerInPlace and uses this to sync the host working
+// tree when a lossless fast-forward is possible; otherwise it falls back to
+// MergeTrunk (throwaway worktree). See git.MergerInPlace. NewMerger returns
+// the Merger interface; the concrete defaultMerger also satisfies
+// MergerInPlace, so a type assertion reaches the fast-path impl.
+func (realMerger) MergeTrunkInPlace(repoPath, targetBranch string, sourceBranches []string, strategy git.Strategy) (bool, git.MergeResult, error) {
+	m := git.NewMerger(cmd.MakeExecutor())
+	ip, ok := m.(git.MergerInPlace)
+	if !ok {
+		return false, git.MergeResult{}, nil
+	}
+	return ip.MergeTrunkInPlace(repoPath, targetBranch, sourceBranches, strategy)
+}
+
 // Compile-time checks that the adapters satisfy the kernel's interfaces.
 var (
 	_ kernel.Spawner = kernelSpawner{}

@@ -65,7 +65,7 @@ func TestConfirmationModalStateTransitions(t *testing.T) {
 
 		// Simulate pressing 'y' using HandleKeyPress
 		keyMsg := tea.KeyMsg{Type: tea.KeyRunes, Runes: []rune("y")}
-		shouldClose := h.confirmationOverlay.HandleKeyPress(keyMsg)
+		shouldClose, _ := h.confirmationOverlay.HandleKeyPress(keyMsg)
 		if shouldClose {
 			h.state = stateDefault
 			h.confirmationOverlay = nil
@@ -82,7 +82,7 @@ func TestConfirmationModalStateTransitions(t *testing.T) {
 
 		// Simulate pressing 'n' using HandleKeyPress
 		keyMsg := tea.KeyMsg{Type: tea.KeyRunes, Runes: []rune("n")}
-		shouldClose := h.confirmationOverlay.HandleKeyPress(keyMsg)
+		shouldClose, _ := h.confirmationOverlay.HandleKeyPress(keyMsg)
 		if shouldClose {
 			h.state = stateDefault
 			h.confirmationOverlay = nil
@@ -99,7 +99,7 @@ func TestConfirmationModalStateTransitions(t *testing.T) {
 
 		// Simulate pressing ESC using HandleKeyPress
 		keyMsg := tea.KeyMsg{Type: tea.KeyEscape}
-		shouldClose := h.confirmationOverlay.HandleKeyPress(keyMsg)
+		shouldClose, _ := h.confirmationOverlay.HandleKeyPress(keyMsg)
 		if shouldClose {
 			h.state = stateDefault
 			h.confirmationOverlay = nil
@@ -292,10 +292,10 @@ func TestConfirmActionWithDifferentTypes(t *testing.T) {
 		// Set up callback to track action execution
 		actionExecuted := false
 		h.confirmationOverlay = overlay.NewConfirmationOverlay("Test action?")
-		h.confirmationOverlay.OnConfirm = func() {
+		h.confirmationOverlay.OnConfirm = func() tea.Cmd {
 			h.state = stateDefault
 			actionExecuted = true
-			action() // Execute the action
+			return action // Execute the action and propagate its Cmd
 		}
 		h.state = stateConfirm
 
@@ -305,8 +305,13 @@ func TestConfirmActionWithDifferentTypes(t *testing.T) {
 		assert.False(t, h.confirmationOverlay.Dismissed)
 		assert.NotNil(t, h.confirmationOverlay.OnConfirm)
 
-		// Execute the confirmation callback
-		h.confirmationOverlay.OnConfirm()
+		// Execute the confirmation callback. It returns the action's Cmd
+		// (not yet executed — tea dispatches it). Invoke the Cmd to mimic the
+		// program loop and prove the action runs.
+		cmd := h.confirmationOverlay.OnConfirm()
+		if cmd != nil {
+			_ = cmd()
+		}
 		assert.True(t, actionCalled)
 		assert.True(t, actionExecuted)
 	})
@@ -320,9 +325,9 @@ func TestConfirmActionWithDifferentTypes(t *testing.T) {
 		// Set up callback to track action execution
 		var receivedMsg tea.Msg
 		h.confirmationOverlay = overlay.NewConfirmationOverlay("Error action?")
-		h.confirmationOverlay.OnConfirm = func() {
+		h.confirmationOverlay.OnConfirm = func() tea.Cmd {
 			h.state = stateDefault
-			receivedMsg = action() // Execute the action and capture result
+			return action // Execute the action and propagate its Cmd
 		}
 		h.state = stateConfirm
 
@@ -332,8 +337,11 @@ func TestConfirmActionWithDifferentTypes(t *testing.T) {
 		assert.False(t, h.confirmationOverlay.Dismissed)
 		assert.NotNil(t, h.confirmationOverlay.OnConfirm)
 
-		// Execute the confirmation callback
-		h.confirmationOverlay.OnConfirm()
+		// Execute the confirmation callback and capture the returned Cmd's msg.
+		cmd := h.confirmationOverlay.OnConfirm()
+		if cmd != nil {
+			receivedMsg = cmd()
+		}
 		assert.Equal(t, expectedErr, receivedMsg)
 	})
 
@@ -345,9 +353,9 @@ func TestConfirmActionWithDifferentTypes(t *testing.T) {
 		// Set up callback to track action execution
 		var receivedMsg tea.Msg
 		h.confirmationOverlay = overlay.NewConfirmationOverlay("Custom message action?")
-		h.confirmationOverlay.OnConfirm = func() {
+		h.confirmationOverlay.OnConfirm = func() tea.Cmd {
 			h.state = stateDefault
-			receivedMsg = action() // Execute the action and capture result
+			return action // Execute the action and propagate its Cmd
 		}
 		h.state = stateConfirm
 
@@ -357,8 +365,11 @@ func TestConfirmActionWithDifferentTypes(t *testing.T) {
 		assert.False(t, h.confirmationOverlay.Dismissed)
 		assert.NotNil(t, h.confirmationOverlay.OnConfirm)
 
-		// Execute the confirmation callback
-		h.confirmationOverlay.OnConfirm()
+		// Execute the confirmation callback and capture the returned Cmd's msg.
+		cmd := h.confirmationOverlay.OnConfirm()
+		if cmd != nil {
+			receivedMsg = cmd()
+		}
 		_, ok := receivedMsg.(instanceChangedMsg)
 		assert.True(t, ok, "Expected instanceChangedMsg but got %T", receivedMsg)
 	})
@@ -381,9 +392,9 @@ func TestMultipleConfirmationsDontInterfere(t *testing.T) {
 
 	// Set up first confirmation
 	h.confirmationOverlay = overlay.NewConfirmationOverlay("First action?")
-	firstOnConfirm := func() {
+	firstOnConfirm := func() tea.Cmd {
 		h.state = stateDefault
-		action1()
+		return action1
 	}
 	h.confirmationOverlay.OnConfirm = firstOnConfirm
 	h.state = stateConfirm
@@ -396,7 +407,7 @@ func TestMultipleConfirmationsDontInterfere(t *testing.T) {
 
 	// Cancel first confirmation (simulate pressing 'n')
 	keyMsg := tea.KeyMsg{Type: tea.KeyRunes, Runes: []rune("n")}
-	shouldClose := h.confirmationOverlay.HandleKeyPress(keyMsg)
+	shouldClose, _ := h.confirmationOverlay.HandleKeyPress(keyMsg)
 	if shouldClose {
 		h.state = stateDefault
 		h.confirmationOverlay = nil
@@ -412,9 +423,9 @@ func TestMultipleConfirmationsDontInterfere(t *testing.T) {
 	// Set up second confirmation
 	h.confirmationOverlay = overlay.NewConfirmationOverlay("Second action?")
 	var secondResult tea.Msg
-	secondOnConfirm := func() {
+	secondOnConfirm := func() tea.Cmd {
 		h.state = stateDefault
-		secondResult = action2()
+		return action2
 	}
 	h.confirmationOverlay.OnConfirm = secondOnConfirm
 	h.state = stateConfirm
@@ -426,15 +437,23 @@ func TestMultipleConfirmationsDontInterfere(t *testing.T) {
 	assert.NotNil(t, h.confirmationOverlay.OnConfirm)
 
 	// Execute second action to verify it's the correct one
-	h.confirmationOverlay.OnConfirm()
+	cmd := h.confirmationOverlay.OnConfirm()
+	if cmd != nil {
+		secondResult = cmd()
+	}
 	err, ok := secondResult.(error)
 	assert.True(t, ok)
 	assert.Equal(t, "action2 error", err.Error())
 	assert.True(t, action2Called)
 	assert.False(t, action1Called, "First action should not have been called")
 
-	// Test that cancelled action can still be executed independently
-	firstOnConfirm()
+	// Test that cancelled action can still be executed independently. The
+	// firstOnConfirm callback returns the action1 Cmd; invoke it to prove the
+	// cancelled callback is still callable after being replaced.
+	firstCmd := firstOnConfirm()
+	if firstCmd != nil {
+		firstCmd()
+	}
 	assert.True(t, action1Called, "First action should be callable after being replaced")
 }
 

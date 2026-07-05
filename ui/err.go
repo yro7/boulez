@@ -34,6 +34,9 @@ func (e *ErrBox) HasError() bool {
 	return e.err != nil
 }
 
+// Err returns the error currently displayed (or nil). Test-only accessor.
+func (e *ErrBox) Err() error { return e.err }
+
 func (e *ErrBox) SetSize(width, height int) {
 	e.width = width
 	e.height = height
