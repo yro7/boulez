@@ -61,14 +61,16 @@ const (
 	// (Ctrl+R) to start a quick session. On submit the host/repo/prompt
 	// selectors are skipped entirely: only the instance name remains to type.
 	statePresetSelect
-	// stateInsert is the vim-style insert mode: keystrokes are forwarded to
-	// the selected instance's tmux pane (via Instance.SendKeys) instead of
-	// being interpreted as fleet keybindings. Entered from stateDefault with
-	// `i` (only on the Preview tab, with a started, non-paused instance),
-	// exited with Esc. The modal separation is what stops fleet bindings
-	// (q, c, r, p, ...) from colliding with text the user types into the
-	// agent. The PreviewPane owns the in-progress text buffer; this state
-	// only routes keys to it.
+	// stateInsert is the vim-style insert mode: keystrokes are forwarded
+	// directly to the selected instance's tmux pane (via forwardInsertKey /
+	// Instance.SendKey) instead of being interpreted as fleet keybindings.
+	// Entered from stateDefault with `i` (only on the Preview tab, with a
+	// started, non-paused instance), exited with Esc. The modal separation is
+	// what stops fleet bindings (q, c, r, p, ...) from colliding with text the
+	// user types into the agent. There is NO local text buffer — each key is
+	// injected as-is, so the agent's own readline/editor (backspace, history,
+	// completion, multi-line, IME) is the authority. The PreviewPane only
+	// renders a `-- INSERT --` banner.
 	stateInsert
 )
 
@@ -890,8 +892,8 @@ func (m *home) handleKeyPress(msg tea.KeyMsg) (mod tea.Model, cmd tea.Cmd) {
 // selected instance can receive input (started, not paused, not loading) and
 // the Preview tab is active. Insert mode is intentionally Preview-only for
 // now: the Terminal tab already has its own attach flow, and duplicating the
-// buffer/forwarding there is premature until a second site justifies the seam
-// (per AGENTS.md: one adapter is a hypothetical seam, two make a real one).
+// forwarding there is premature until a second site justifies the seam (per
+// AGENTS.md: one adapter is a hypothetical seam, two make a real one).
 func (m *home) enterInsertMode() (tea.Model, tea.Cmd) {
 	if !m.tabbedWindow.IsInPreviewTab() {
 		return m, nil
@@ -905,52 +907,37 @@ func (m *home) enterInsertMode() (tea.Model, tea.Cmd) {
 	return m, nil
 }
 
-// handleInsertState routes keystrokes to the selected instance's tmux pane via
-// SendKeys, while keeping the dashboard visible. Esc exits insert mode (it is
-// intercepted here and never forwarded to the agent — same contract as vim's
-// insert mode). Enter sends the buffered line to the agent and stays in
-// insert mode (chat-style multi-line). The PreviewPane owns the in-progress
-// text buffer; this handler only forwards events to it and dispatches the
-// SendKeys on commit. The next previewTick (~10fps) re-captures the pane, so
-// the typed text is reflected in the preview without a forced refresh.
+// handleInsertState routes each keystroke directly to the selected instance's
+// tmux pane, keeping the dashboard visible. This is the "pure injection" path:
+// there is no local text buffer — every key is forwarded as-is via
+// forwardInsertKey, so the agent's own readline/editor (backspace, arrows,
+// history, completion, multi-line, IME) is the authority over editing. The
+// next previewTick (~10fps) re-captures the pane, so typed text is reflected
+// in the preview without a forced refresh.
+//
+// Esc exits insert mode (it is intercepted here and never forwarded to the
+// agent — same contract as vim's insert mode). Ctrl+C is forwarded as C-c so
+// the user can interrupt a runaway agent; the global quit-on-ctrl+c guard is
+// scoped to state != stateInsert so it reaches here.
 func (m *home) handleInsertState(msg tea.KeyMsg) (tea.Model, tea.Cmd) {
 	selected := m.list.GetSelectedInstance()
 	// Safety net: if the instance becomes unsendable mid-insert (killed,
-	// paused, deselected), drop back to the default state rather than buffering
-	// keystrokes that can never be delivered.
+	// paused, deselected), drop back to the default state rather than
+	// forwarding keystrokes that can never be delivered.
 	if selected == nil || selected.Status == session.Paused || !selected.Started() {
 		m.tabbedWindow.ExitInsertMode()
 		m.state = stateDefault
 		return m, nil
 	}
-	switch msg.String() {
-	case "esc":
+	if msg.String() == "esc" {
 		m.tabbedWindow.ExitInsertMode()
 		m.state = stateDefault
 		return m, nil
-	case "enter":
-		text := m.tabbedWindow.CommitInsert()
-		if text != "" {
-			if err := selected.SendKeys(text); err != nil {
-				return m, m.handleError(err)
-			}
-			// Send the Enter key separately: SendKeys uses -l (literal), so it
-			// cannot itself submit the line. SendEnter routes through the same
-			// host executor as SendKeys.
-			if err := selected.SendEnter(); err != nil {
-				return m, m.handleError(err)
-			}
-		}
-		return m, nil
-	default:
-		// Accumulate printable runes into the PreviewPane's insert buffer.
-		if len(msg.Runes) > 0 {
-			for _, r := range msg.Runes {
-				m.tabbedWindow.HandleInsertKey(r)
-			}
-		}
-		return m, nil
 	}
+	if err := forwardInsertKey(selected, msg); err != nil {
+		return m, m.handleError(err)
+	}
+	return m, nil
 }
 
 // instanceChanged updates the preview pane, menu, and diff pane based on the selected instance. It returns an error
