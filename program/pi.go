@@ -23,7 +23,7 @@ import "strings"
 type PiAdapter struct{}
 
 // PiReadySentinel is the marker string the pi-boulez Pi extension appends to the
-// end of every completed assistant turn. CS2 detects this string in the tmux
+// end of every completed assistant turn. Boulez detects this string in the tmux
 // pane content to know Pi is idle and waiting for input (StatusReady).
 //
 // This is a shared contract between two codebases:
@@ -55,7 +55,7 @@ func (PiAdapter) Detect(content string) (Status, *Prompt) {
 	if !isPiFooter(content) {
 		return StatusUnknown, nil
 	}
-	// First, check for the CS2 sentinel emitted by the pi-boulez extension (see
+	// First, check for the Boulez sentinel emitted by the pi-boulez extension (see
 	// pi-boulez.ts). This is the most reliable ready signal: Pi prints it at the
 	// end of each completed assistant turn, so its presence means Pi is idle
 	// and waiting for input.
