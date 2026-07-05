@@ -417,6 +417,17 @@ func (k *Kernel) Merge(caller CallerContext, repoPath, targetBranch string, sour
 	return res, err
 }
 
+// LandResult is the outcome of the Land syscall. It carries the git merge
+// outcome plus host-sync hints surfaced to the TUI: whether the host repo's
+// working tree was fast-pathed to the merged main (HostSynced), and if not,
+// a human-readable recovery hint (HostSyncNote). This is what the wire
+// marshals and what session.LandOutcome mirrors on the seam side.
+type LandResult struct {
+	Merge        git.MergeResult
+	HostSynced   bool
+	HostSyncNote string
+}
+
 // Land merges a single source branch into a target branch of a repo, with the
 // explicit authority to land onto a trunk (main/master). This is the "land to
 // main" syscall: it bypasses ONLY the conventional-trunk guard, and only for a
@@ -424,16 +435,27 @@ func (k *Kernel) Merge(caller CallerContext, repoPath, targetBranch string, sour
 // Merge, which refuses trunks). The protected-branch guard still applies:
 // you cannot land into a declared-protected branch.
 //
+// The merge runs in two phases:
+//  1. Fast path: if the host repo has targetBranch checked out, a clean
+//     working tree, and sourceBranch can fast-forward targetBranch, the merge
+//     runs in place (exactly like `git pull --ff-only`). index + worktree
+//     advance to the merged commit and the host can build from main
+//     immediately. No `git reset --hard` is ever used; git itself validates
+//     the losslessness (ff-only refuses non-ff).
+//  2. Fallback: otherwise (host on another branch / dirty / non-ff / race),
+//     the throwaway-worktree merger runs (the ref advances via update-ref but
+//     the host working tree is left untouched) and a recovery hint is returned.
+//
 // v1 lands ONE source branch per call (the instance's own branch). On
 // conflict, MergeConflict is returned and the repo is left for resolution
 // (no silent --abort). There is no plan to update (a top-level caller has no
 // plan) and no RecordMerge (reserved for orchestrators).
-func (k *Kernel) Land(caller CallerContext, repoPath, targetBranch, sourceBranch string, strategy git.Strategy) (git.MergeResult, error) {
+func (k *Kernel) Land(caller CallerContext, repoPath, targetBranch, sourceBranch string, strategy git.Strategy) (LandResult, error) {
 	// Topology guard: only a top-level caller may land onto a trunk. This is
 	// the mirror of the Worker recursion guard — the v1 topology forbids
 	// instances (workers or orchestrators) from touching the trunk.
 	if !caller.IsTopLevel() {
-		return git.MergeResult{Status: git.MergeConflict, Message: "non-top-level land"}, ErrNonTopLevelLand{}
+		return LandResult{Merge: git.MergeResult{Status: git.MergeConflict, Message: "non-top-level land"}}, ErrNonTopLevelLand{}
 	}
 
 	// Kernel-level guard (spec decision 7): refuse to land into a
@@ -446,12 +468,34 @@ func (k *Kernel) Land(caller CallerContext, repoPath, targetBranch, sourceBranch
 	merger := k.merger
 	k.mu.Unlock()
 	if isKernelProtected(protected, targetBranch) {
-		return git.MergeResult{Status: git.MergeConflict, Message: "protected branch"}, git.ErrProtectedBranch{Branch: targetBranch}
+		return LandResult{Merge: git.MergeResult{Status: git.MergeConflict, Message: "protected branch"}}, git.ErrProtectedBranch{Branch: targetBranch}
 	}
 
 	if merger == nil {
-		return git.MergeResult{}, fmt.Errorf("kernel: no merger wired")
+		return LandResult{}, fmt.Errorf("kernel: no merger wired")
 	}
 
-	return merger.MergeTrunk(repoPath, targetBranch, []string{sourceBranch}, strategy)
+	// Phase 1 — fast path: ff-only merge in place. Lossless (git validates),
+	// and syncs the host working tree so the user can build from main right
+	// away. Only attempted when the merger exposes the in-place variant.
+	if inPlace, ok := merger.(git.MergerInPlace); ok {
+		handled, res, err := inPlace.MergeTrunkInPlace(repoPath, targetBranch, []string{sourceBranch}, strategy)
+		if handled {
+			if err != nil {
+				return LandResult{Merge: res, HostSynced: false, HostSyncNote: "in-place ff-only merge failed"}, err
+			}
+			return LandResult{Merge: res, HostSynced: res.Status == git.MergeMerged, HostSyncNote: ""}, nil
+		}
+		// handled=false: fast path did not apply (host on another branch /
+		// dirty / non-ff). Fall through to the throwaway merger and report a
+		// recovery hint so the user knows the host worktree was not synced.
+	}
+
+	// Phase 2 — fallback: throwaway-worktree merge. The ref advances via
+	// update-ref but the host working tree is NOT touched. Surface a clear
+	// recovery hint instead of leaving the user wondering why `go build` from
+	// main still builds the old code.
+	merge, err := merger.MergeTrunk(repoPath, targetBranch, []string{sourceBranch}, strategy)
+	note := fmt.Sprintf("host not synced — run: git -C %s pull --ff-only", repoPath)
+	return LandResult{Merge: merge, HostSynced: false, HostSyncNote: note}, err
 }

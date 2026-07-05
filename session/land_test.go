@@ -53,7 +53,7 @@ func (f *fakeLandWorktree) GetBaseCommitSHA() string          { panic("unexpecte
 // fakeLandCaller is a test LandCaller that records the call and scripts the
 // merge result / error.
 type fakeLandCaller struct {
-	result git.MergeResult
+	result LandOutcome
 	err    error
 	called bool
 	repo   string
@@ -62,7 +62,7 @@ type fakeLandCaller struct {
 	strat  git.Strategy
 }
 
-func (f *fakeLandCaller) Land(repoPath, targetBranch, sourceBranch string, strategy git.Strategy) (git.MergeResult, error) {
+func (f *fakeLandCaller) Land(repoPath, targetBranch, sourceBranch string, strategy git.Strategy) (LandOutcome, error) {
 	f.called = true
 	f.repo = repoPath
 	f.target = targetBranch
@@ -88,7 +88,7 @@ func newLandInstance(t *testing.T, wt Worktree) *Instance {
 // and Land receives the instance's branch + repo path.
 func TestLandInstance_DirtyCommitsAndPushes(t *testing.T) {
 	wt := &fakeLandWorktree{dirty: true, repoPath: "/repo", branch: "feat"}
-	caller := &fakeLandCaller{result: git.MergeResult{Status: git.MergeMerged}}
+	caller := &fakeLandCaller{result: LandOutcome{Merge: git.MergeResult{Status: git.MergeMerged}}}
 	inst := newLandInstance(t, wt)
 
 	res, err := LandInstance(inst, caller, "main", "msg")
@@ -108,7 +108,7 @@ func TestLandInstance_DirtyCommitsAndPushes(t *testing.T) {
 // goes straight to Land. Pushed=false, Land still called with the branch.
 func TestLandInstance_CleanSkipsPush(t *testing.T) {
 	wt := &fakeLandWorktree{dirty: false, repoPath: "/repo", branch: "feat"}
-	caller := &fakeLandCaller{result: git.MergeResult{Status: git.MergeMerged}}
+	caller := &fakeLandCaller{result: LandOutcome{Merge: git.MergeResult{Status: git.MergeMerged}}}
 	inst := newLandInstance(t, wt)
 
 	res, err := LandInstance(inst, caller, "main", "msg")
@@ -126,10 +126,10 @@ func TestLandInstance_CleanSkipsPush(t *testing.T) {
 func TestLandInstance_ConflictPropagated(t *testing.T) {
 	wt := &fakeLandWorktree{dirty: true, repoPath: "/repo", branch: "feat"}
 	caller := &fakeLandCaller{
-		result: git.MergeResult{
+		result: LandOutcome{Merge: git.MergeResult{
 			Status:    git.MergeConflict,
 			Conflicts: []git.Conflict{{File: "a.go"}},
-		},
+		}},
 		err: nil, // some merger impls report a conflict with err=nil
 	}
 	inst := newLandInstance(t, wt)
@@ -148,7 +148,7 @@ func TestLandInstance_ConflictPropagated(t *testing.T) {
 func TestLandInstance_ConflictWithError(t *testing.T) {
 	wt := &fakeLandWorktree{dirty: false, repoPath: "/repo", branch: "feat"}
 	caller := &fakeLandCaller{
-		result: git.MergeResult{Status: git.MergeConflict, Conflicts: []git.Conflict{{File: "a.go"}}},
+		result: LandOutcome{Merge: git.MergeResult{Status: git.MergeConflict, Conflicts: []git.Conflict{{File: "a.go"}}}},
 		err:    errBoom,
 	}
 	inst := newLandInstance(t, wt)

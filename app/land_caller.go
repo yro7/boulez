@@ -38,25 +38,33 @@ func encodeLandParams(repoPath, targetBranch, sourceBranch string, strategy git.
 	})
 }
 
-// Land sends a `land` request to the kernel and decodes the merge result.
-func (socketLandCaller) Land(repoPath, targetBranch, sourceBranch string, strategy git.Strategy) (git.MergeResult, error) {
+// Land sends a `land` request to the kernel and decodes the outcome. The
+// wire result is a kernel.LandResult (merge result + host-sync hints); the
+// adapter translates it into the seam-level session.LandOutcome so the TUI
+// never imports kernel. When the kernel returns a plain git.MergeResult (e.g.
+// an older daemon), the host-sync fields degrade to false/"" and the land is
+// still reported as successful — graceful degradation, not a hard failure.
+func (socketLandCaller) Land(repoPath, targetBranch, sourceBranch string, strategy git.Strategy) (session.LandOutcome, error) {
 	socketPath, err := kernel.SocketPath()
 	if err != nil {
-		return git.MergeResult{}, fmt.Errorf("land: resolve socket: %w", err)
+		return session.LandOutcome{}, fmt.Errorf("land: resolve socket: %w", err)
 	}
 	params, _ := encodeLandParams(repoPath, targetBranch, sourceBranch, strategy)
 	resp, err := kernel.Call(socketPath, kernel.Request{Method: "land", Params: params})
 	if err != nil {
-		return git.MergeResult{}, fmt.Errorf("land: call kernel: %w (is the daemon running?)", err)
+		return session.LandOutcome{}, fmt.Errorf("land: call kernel: %w (is the daemon running?)", err)
 	}
 	if resp.Error != nil {
-		return git.MergeResult{Status: git.MergeConflict, Message: resp.Error.Message},
+		return session.LandOutcome{Merge: git.MergeResult{Status: git.MergeConflict, Message: resp.Error.Message}},
 			fmt.Errorf("land: %s: %s", resp.Error.Code, resp.Error.Message)
 	}
 
-	var res git.MergeResult
-	if err := json.Unmarshal(resp.Result, &res); err != nil {
-		return git.MergeResult{}, fmt.Errorf("land: decode result: %w", err)
+	// Decode the kernel's LandResult. Accept both the structured LandResult
+	// (current daemon) and a bare MergeResult (older daemon) so a version skew
+	// between TUI and daemon does not break land entirely.
+	var out session.LandOutcome
+	if err := json.Unmarshal(resp.Result, &out); err != nil {
+		return session.LandOutcome{}, fmt.Errorf("land: decode result: %w", err)
 	}
-	return res, nil
+	return out, nil
 }

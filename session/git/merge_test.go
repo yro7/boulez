@@ -342,3 +342,107 @@ func mustOutput(t *testing.T, dir string, args ...string) string {
 	require.NoErrorf(t, err, "git %v: %s", args, out)
 	return string(out)
 }
+
+// TestMerger_MergeTrunkInPlace_FastPath proves the lossless fast path: when
+// the host repo has targetBranch checked out, a clean working tree, and the
+// source can fast-forward targetBranch, the merge runs IN PLACE (no throwaway
+// worktree) and the host working tree advances to the merged commit. This is
+// what lets the user build from main immediately after a land.
+func TestMerger_MergeTrunkInPlace_FastPath(t *testing.T) {
+	repo := makeMergeRepo(t) // on main, one empty commit
+	// Create a source branch one commit ahead of main (ff possible).
+	mrun(t, repo, "branch", "feat")
+	mrun(t, repo, "checkout", "feat")
+	writeCommit(t, repo, "a.txt", "hello\n", "feat work")
+	mrun(t, repo, "checkout", "main")
+	// Host is on main with a clean tree → fast path applies.
+
+	m := NewMerger(cmd2.MakeExecutor())
+	ip := m.(MergerInPlace)
+	handled, res, err := ip.MergeTrunkInPlace(repo, "main", []string{"feat"}, StrategyDefault)
+	require.NoError(t, err)
+	assert.True(t, handled, "fast path applies (main checkout, clean, ff)")
+	assert.Equal(t, MergeMerged, res.Status)
+
+	// The host working tree must now contain the merged file (synced), and
+	// main must point at the feat commit — proving the in-place merge moved
+	// both the ref AND the worktree, with no `git reset --hard`.
+	body, rerr := os.ReadFile(filepath.Join(repo, "a.txt"))
+	require.NoError(t, rerr, "host worktree synced: merged file present")
+	assert.Equal(t, "hello\n", string(body))
+
+	mainHead := strings.TrimSpace(mrunOut(t, repo, "rev-parse", "main"))
+	featHead := strings.TrimSpace(mrunOut(t, repo, "rev-parse", "feat"))
+	assert.Equal(t, featHead, mainHead, "main fast-forwarded to feat")
+}
+
+// TestMerger_MergeTrunkInPlace_HostDirtyFallsBack proves a dirty host working
+// tree refuses the fast path (handled=false) so nothing is mutated, and the
+// caller falls back to the throwaway merger. This is the losslessness guard.
+func TestMerger_MergeTrunkInPlace_HostDirtyFallsBack(t *testing.T) {
+	repo := makeMergeRepo(t)
+	mrun(t, repo, "branch", "feat")
+	mrun(t, repo, "checkout", "feat")
+	writeCommit(t, repo, "a.txt", "hello\n", "feat work")
+	mrun(t, repo, "checkout", "main")
+	// Dirty the host working tree.
+	require.NoError(t, os.WriteFile(filepath.Join(repo, "uncommitted.txt"), []byte("x"), 0644))
+
+	m := NewMerger(cmd2.MakeExecutor())
+	ip := m.(MergerInPlace)
+	handled, res, err := ip.MergeTrunkInPlace(repo, "main", []string{"feat"}, StrategyDefault)
+	require.NoError(t, err)
+	assert.False(t, handled, "dirty host must not take the fast path")
+	assert.Equal(t, MergeStatus(0), res.Status, "no result on fallback")
+
+	// Host worktree unchanged: main has NOT moved, dirty file still there.
+	mainHead := strings.TrimSpace(mrunOut(t, repo, "rev-parse", "main"))
+	featHead := strings.TrimSpace(mrunOut(t, repo, "rev-parse", "feat"))
+	assert.NotEqual(t, featHead, mainHead, "main did not move on fallback")
+	_, statErr := os.Stat(filepath.Join(repo, "uncommitted.txt"))
+	assert.NoError(t, statErr, "dirty file preserved")
+}
+
+// TestMerger_MergeTrunkInPlace_OtherBranchFallsBack proves the fast path does
+// not apply when the host is checked out on a branch other than targetBranch —
+// we never switch branches for the user.
+func TestMerger_MergeTrunkInPlace_OtherBranchFallsBack(t *testing.T) {
+	repo := makeMergeRepo(t)
+	mrun(t, repo, "branch", "feat")
+	mrun(t, repo, "checkout", "feat")
+	writeCommit(t, repo, "a.txt", "hello\n", "feat work")
+	mrun(t, repo, "checkout", "-b", "other", "main") // host on `other`, not main
+
+	m := NewMerger(cmd2.MakeExecutor())
+	ip := m.(MergerInPlace)
+	handled, _, err := ip.MergeTrunkInPlace(repo, "main", []string{"feat"}, StrategyDefault)
+	require.NoError(t, err)
+	assert.False(t, handled, "host on another branch must not take the fast path")
+}
+
+// TestMerger_MergeTrunkInPlace_NonFFFallsBack proves a non-fast-forwardable
+// source (main and feat diverged) refuses the fast path rather than producing
+// a merge commit in the host worktree.
+func TestMerger_MergeTrunkInPlace_NonFFFallsBack(t *testing.T) {
+	repo := makeMergeRepo(t)
+	// Diverge: main and feat each get a distinct commit.
+	mrun(t, repo, "checkout", "-b", "feat")
+	writeCommit(t, repo, "a.txt", "feat\n", "feat work")
+	mrun(t, repo, "checkout", "main")
+	writeCommit(t, repo, "b.txt", "main\n", "main work") // main moved independently
+
+	m := NewMerger(cmd2.MakeExecutor())
+	ip := m.(MergerInPlace)
+	handled, _, err := ip.MergeTrunkInPlace(repo, "main", []string{"feat"}, StrategyDefault)
+	require.NoError(t, err)
+	assert.False(t, handled, "non-ff source must not take the fast path")
+}
+
+// mrunOut runs git and returns its stdout (for rev-parse comparisons).
+func mrunOut(t *testing.T, dir string, args ...string) string {
+	t.Helper()
+	cmdArgs := append([]string{"-C", dir}, args...)
+	out, err := exec.Command("git", cmdArgs...).Output()
+	require.NoErrorf(t, err, "git %v: %s", args, out)
+	return string(out)
+}
