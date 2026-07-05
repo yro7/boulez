@@ -310,7 +310,7 @@ func FromInstanceData(data InstanceData) (*Instance, error) {
 
 	if instance.Paused() {
 		instance.started = true
-		instance.tmuxSession = tmux.NewTmuxSession(instance.SessionName(), instance.Program)
+		instance.tmuxSession = tmux.NewTmuxSession(instance.SessionLabel(), instance.Program)
 	} else {
 		if err := instance.Start(false); err != nil {
 			return nil, err
@@ -554,7 +554,7 @@ func (i *Instance) Start(firstTimeSetup bool) error {
 		// the same name) cannot collide on the same tmux session name. Without
 		// this, the shared session masked orphaned worktrees during liveness
 		// reconciliation (the collision-from-shared-titles regression).
-		tmuxSession = tmux.NewTmuxSessionWithDeps(i.SessionName(), i.Program, i.host.PtyFactory(), i.host.Executor())
+		tmuxSession = tmux.NewTmuxSessionWithDeps(i.SessionLabel(), i.Program, i.host.PtyFactory(), i.host.Executor())
 	}
 	i.tmuxSession = tmuxSession
 
