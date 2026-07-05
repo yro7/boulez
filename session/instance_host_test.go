@@ -216,8 +216,8 @@ func TestInstance_SetAutoYes_Toggles(t *testing.T) {
 	assert.False(t, inst.AutoYes)
 }
 
-// TestInstance_PII_HostAliasNotInArtifacts pins the PII discipline
-// (PLAN-ssh-v2.md decision 5): the ssh host alias must never appear in git
+// TestInstance_PII_HostAliasNotInArtifacts pins the PII discipline:
+// the ssh host alias must never appear in git
 // artifacts an instance produces — branch names or commit messages (and by
 // construction, tmux session names, which derive from the title at the tmux
 // construction site). All three derive from the user-chosen instance Title,
