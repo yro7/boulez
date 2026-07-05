@@ -257,27 +257,45 @@ func (m *statusMonitor) hash(s string) []byte {
 	return h.Sum(nil)
 }
 
-// TapEnter sends an enter keystroke to the tmux pane.
+// TapEnter sends an enter keystroke to the tmux pane via `tmux send-keys`.
+// This goes through the host executor (cmdExec), so it works whether or not a
+// PTY is currently attached, and transparently reaches remote (SSH) hosts —
+// the same channel CapturePaneContent uses for reading. Sending Enter as a
+// named key (rather than a raw 0x0D byte) is equivalent to writing 0x0D to an
+// attached PTY: tmux forwards the Enter key to the pane.
 func (t *TmuxSession) TapEnter() error {
-	_, err := t.ptmx.Write([]byte{0x0D})
-	if err != nil {
-		return fmt.Errorf("error sending enter keystroke to PTY: %w", err)
+	cmd := exec.Command("tmux", "send-keys", "-t", t.sanitizedName, "Enter")
+	if err := t.cmdExec.Run(cmd); err != nil {
+		return fmt.Errorf("error sending enter keystroke: %w", err)
 	}
 	return nil
 }
 
 // TapDAndEnter sends 'D' followed by an enter keystroke to the tmux pane.
+// See TapEnter for why this uses `tmux send-keys` rather than a raw PTY write.
 func (t *TmuxSession) TapDAndEnter() error {
-	_, err := t.ptmx.Write([]byte{0x44, 0x0D})
-	if err != nil {
-		return fmt.Errorf("error sending enter keystroke to PTY: %w", err)
+	cmd := exec.Command("tmux", "send-keys", "-t", t.sanitizedName, "D", "Enter")
+	if err := t.cmdExec.Run(cmd); err != nil {
+		return fmt.Errorf("error sending D+enter keystroke: %w", err)
 	}
 	return nil
 }
 
+// SendKeys sends the given string to the tmux pane via `tmux send-keys -l`.
+// The -l flag makes tmux treat the argument as literal characters rather than
+// key names, so a user (or prompt sender) typing the word "Enter" is sent as
+// the letters E-n-t-e-r, not the Enter key. This matches the previous raw-PTY
+// byte-write behaviour (which also did no key-name interpretation) while
+// working without an attached PTY and over SSH — the same channel
+// CapturePaneContent uses for reading. Callers that need to submit input
+// must call TapEnter (or append an Enter) separately; SendKeys does not
+// append a newline.
 func (t *TmuxSession) SendKeys(keys string) error {
-	_, err := t.ptmx.Write([]byte(keys))
-	return err
+	cmd := exec.Command("tmux", "send-keys", "-t", t.sanitizedName, "-l", keys)
+	if err := t.cmdExec.Run(cmd); err != nil {
+		return fmt.Errorf("error sending keys to tmux pane: %w", err)
+	}
+	return nil
 }
 
 // HasUpdated checks if the tmux pane content has changed since the last
