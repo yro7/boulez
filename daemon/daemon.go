@@ -179,7 +179,7 @@ func LaunchDaemon() error {
 		return nil
 	}
 
-	// Find the claude squad binary.
+	// Find the boulez binary.
 	execPath, err := os.Executable()
 	if err != nil {
 		return fmt.Errorf("failed to get executable path: %w", err)

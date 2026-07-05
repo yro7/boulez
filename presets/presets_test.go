@@ -34,13 +34,13 @@ func TestStoreSetGetRoundTrip(t *testing.T) {
 	s := newTestStore(t)
 	repo := t.TempDir()
 
-	require.NoError(t, s.Set("CS2 Work", Preset{
+	require.NoError(t, s.Set("Boulez Work", Preset{
 		Repo:    repo,
 		Host:    "local",
 		Profile: "Pi",
 	}))
 
-	p, ok, err := s.Get("CS2 Work")
+	p, ok, err := s.Get("Boulez Work")
 	require.NoError(t, err)
 	assert.True(t, ok)
 	assert.Equal(t, repo, p.Repo) // already absolute (TempDir)
