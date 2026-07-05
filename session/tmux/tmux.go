@@ -224,6 +224,16 @@ func (t *TmuxSession) Restore() error {
 type statusMonitor struct {
 	// Store hashes to save memory.
 	prevOutputHash []byte
+	// lastChangeAt is the last time the pane content hash changed (i.e. the
+	// agent produced output). Used to derive stableFor: if the pane hasn't
+	// changed for longer than the threshold, the agent is presumed idle even
+	// when no adapter-specific ready signal is present. This is the
+	// agent-agnostic fallback that makes boulez work for any harness without
+	// a dedicated adapter — the adapter's authoritative Ready/Permission
+	// signal always takes priority, but when the adapter is silent (unknown
+	// agent, or a known agent whose extension isn't installed), stability is
+	// a good-enough proxy for "waiting on input".
+	lastChangeAt time.Time
 	// captureErrEvery throttles the "error capturing pane content" log in
 	// HasUpdated. The daemon poll loop calls HasUpdated every tick; a
 	// transiently-unreachable instance would otherwise spam once per tick.
@@ -233,7 +243,10 @@ type statusMonitor struct {
 }
 
 func newStatusMonitor() *statusMonitor {
-	return &statusMonitor{captureErrEvery: log.NewEvery(60 * time.Second)}
+	return &statusMonitor{
+		captureErrEvery: log.NewEvery(60 * time.Second),
+		lastChangeAt:    time.Now(),
+	}
 }
 
 // hash hashes the string.
@@ -268,7 +281,8 @@ func (t *TmuxSession) SendKeys(keys string) error {
 }
 
 // HasUpdated checks if the tmux pane content has changed since the last
-// tick, and returns the agent's perceived status from the program.Adapter.
+// tick, and returns the agent's perceived status from the program.Adapter
+// plus how long the pane has been stable (stableFor).
 //
 // Callers branch on the precise Status rather than a lossy "has prompt" bool:
 // a definitive StatusReady/StatusPermission from the adapter MUST take
@@ -278,22 +292,33 @@ func (t *TmuxSession) SendKeys(keys string) error {
 // would leave a finished agent stuck showing the running spinner forever.
 // Agent-specific detection is delegated to program.Adapter; this function
 // holds no agent-specific strings.
-func (t *TmuxSession) HasUpdated() (updated bool, status program.Status) {
+//
+// stableFor is the agent-agnostic fallback signal: the time elapsed since the
+// pane content last changed. When the adapter returns StatusWorking or
+// StatusUnknown (no authoritative ready signal — e.g. an unknown agent, or a
+// known agent whose sentinel extension isn't installed), the caller may treat
+// a sufficiently long stableFor as "idle / waiting on input". This keeps
+// boulez usable for any harness without a dedicated adapter: the worst case
+// is a delayed Ready badge rather than an instance stuck on Running forever.
+// A long silent tool run (build/test with no output) can produce a transient
+// false Ready, but it self-corrects the moment the tool emits a line.
+func (t *TmuxSession) HasUpdated() (updated bool, status program.Status, stableFor time.Duration) {
 	content, err := t.CapturePaneContent()
 	if err != nil {
 		if t.monitor.captureErrEvery.ShouldLog() {
 			log.ErrorLog.Printf("error capturing pane content in status monitor: %v", err)
 		}
-		return false, program.StatusUnknown
+		return false, program.StatusUnknown, 0
 	}
 
 	status, _ = t.adapter.Detect(content)
-
+	now := time.Now()
 	if !bytes.Equal(t.monitor.hash(content), t.monitor.prevOutputHash) {
 		t.monitor.prevOutputHash = t.monitor.hash(content)
-		return true, status
+		t.monitor.lastChangeAt = now
+		return true, status, 0
 	}
-	return false, status
+	return false, status, now.Sub(t.monitor.lastChangeAt)
 }
 
 func (t *TmuxSession) Attach() (chan struct{}, error) {
