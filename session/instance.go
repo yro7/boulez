@@ -1235,6 +1235,19 @@ func (i *Instance) SendKeys(keys string) error {
 	return i.tmuxSession.SendKeys(keys)
 }
 
+// SendEnter presses the Enter key on the instance's tmux pane. Unlike
+// TapEnter (which is gated on AutoYes for the orchestrator's approval-tapping
+// path), this unconditionally sends the key — it is the submit counterpart to
+// SendKeys' literal text. Used by the TUI's insert mode to submit a typed
+// line. Same host-executor channel as SendKeys, so it works over SSH and
+// without an attached PTY.
+func (i *Instance) SendEnter() error {
+	if !i.started || i.Status == Paused {
+		return fmt.Errorf("cannot send enter to instance that has not been started or is paused")
+	}
+	return i.tmuxSession.TapEnter()
+}
+
 // MarkStartedForTest sets the started flag without running tmux. It is a test
 // seam for packages (e.g. kernel) that need an instance to look started for
 // in-memory unit tests without a real PTY. Not for production use.
