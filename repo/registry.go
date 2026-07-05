@@ -7,8 +7,8 @@
 // offered the next time.
 //
 // The format is intentionally minimal: a JSON array of absolute path strings.
-// No aliases, no default, no ordering metadata — those enrichments are deferred
-// (see roadmap_and_ideas.md). Insertion order is preserved.
+// No aliases, no default, no ordering metadata — those enrichments are deferred.
+// Insertion order is preserved.
 package repo
 
 import (

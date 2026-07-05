@@ -6,7 +6,7 @@
 // path, value a small struct. A missing or corrupt file is treated as empty,
 // never an error that blocks startup. The format mirrors the registries
 // (repo/host): a dedicated package, SRP — prefs knows about preferences and
-// nothing else. See PLAN-instance-creation-ux.md (étape 6).
+// nothing else.
 package prefs
 
 import (

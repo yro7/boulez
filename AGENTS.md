@@ -74,6 +74,5 @@ differences). See the [Origin](./README.md#origin) section of the README.
 - Build: `go build -o boulez .`. Baseline: `go build ./... && go test ./...` green.
 - Go 1.26+ (`brew install go`).
 - Boulez uses a dedicated `~/.boulez/` config dir. Cold start: no migration from
-  `cs` or `claude-squad`. See `PLAN-multi-repo.md`.
-- See `PLAN.md` for the (completed) modularity plan. See `PLAN-multi-repo.md`
-  for the multi-repo plan.
+  `cs` or `claude-squad`.
+

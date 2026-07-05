@@ -818,7 +818,7 @@ func (i *Instance) Pause() error {
 	} else if dirty {
 		// Commit changes locally (without pushing to GitHub). The message is a
 		// function of the instance Title + time only — never the host (PII
-		// discipline, PLAN-ssh-v2.md decision 5): a remote host's alias must
+		// discipline): a remote host's alias must
 		// not leak into git history.
 		commitMsg := pausedCommitMessage(i.Title, time.Now())
 		if err := i.gitWorktree.CommitChanges(commitMsg); err != nil {
