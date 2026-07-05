@@ -296,12 +296,6 @@ What changed since the fork:
 
 ---
 
-## Contributing
-
-See [CONTRIBUTING.md](./CONTRIBUTING.md).
-
----
-
 ## License
 
 [AGPL-3.0](./LICENSE.md)
