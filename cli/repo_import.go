@@ -1,4 +1,4 @@
-package main
+package cli
 
 import (
 	"fmt"
@@ -15,7 +15,7 @@ var (
 	repoImportDryRun bool
 )
 
-var repoImportCmd = &cobra.Command{
+var RepoImportCmd = &cobra.Command{
 	Use:   "repo-import",
 	Short: "Import recently-opened folders from IDE state into the repo registry",
 	Long: `Scan VS Code and VS Code-based forks (Cursor, Windsurf, Antigravity, VSCodium,
@@ -29,12 +29,15 @@ Use --dry-run to preview what would be imported without writing.`,
 	RunE: runRepoImport,
 }
 
-func init() {
-	repoImportCmd.Flags().StringVar(&repoImportIDE, "ide", "",
+// NewRepoImportCmd returns the `repo-import` command with its flags wired.
+// It is constructed lazily (rather than a package-level var) so callers can
+// attach it to an arbitrary root command without an init() side effect.
+func NewRepoImportCmd() *cobra.Command {
+	RepoImportCmd.Flags().StringVar(&repoImportIDE, "ide", "",
 		"Restrict the scan to one IDE (one of: vscode, cursor, windsurf, antigravity, vscodium, pearai, void, trae)")
-	repoImportCmd.Flags().BoolVar(&repoImportDryRun, "dry-run", false,
+	RepoImportCmd.Flags().BoolVar(&repoImportDryRun, "dry-run", false,
 		"List what would be imported without writing to the registry")
-	rootCmd.AddCommand(repoImportCmd)
+	return RepoImportCmd
 }
 
 func runRepoImport(cmd *cobra.Command, args []string) error {
