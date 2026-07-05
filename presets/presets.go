@@ -8,7 +8,7 @@
 // and self-healing (a missing or corrupt file is treated as empty, never an
 // error that blocks startup). The file is read fresh on every call, so an
 // agent or editor can change it between two Ctrl+R opens and boulez picks up the
-// new contents with no watcher (read-on-open reload — see PLAN-quick-session).
+// new contents with no watcher (read-on-open reload).
 //
 // A preset is an explicit, complete recipe: it does NOT reference the
 // repo→profile preference store. If you want the magic of "use my preferred

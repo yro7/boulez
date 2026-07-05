@@ -49,7 +49,7 @@ func TestSSHExecutor_Wrap(t *testing.T) {
 
 // TestSSHExecutor_Wrap_Quoting proves args survive the remote shell: a path
 // with a space stays a single arg after the remote shell re-parses. This is
-// the safety-critical property (PLAN-ssh-v2.md decision 7) — without it, a
+// the safety-critical property — without it, a
 // repo path like `/home/me/my repo` would split into two args remotely.
 // We check the round-trip (the real property ssh relies on) rather than
 // pinning the exact quoting of safe words.
