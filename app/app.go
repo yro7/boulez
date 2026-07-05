@@ -97,6 +97,15 @@ type home struct {
 	// The draft instance is held in the list (Loading) and removed on the
 	// spawn ack.
 	instanceStarting bool
+	// pendingDraftIDs tracks instance IDs that the TUI has added to the
+	// list as local drafts (during name entry or while a spawn syscall is in
+	// flight) but that the kernel does not yet know about. reconcileFleet
+	// preserves these against the read-only fleet snapshot so the periodic
+	// fleet tick (C3.2) does not wipe a draft mid-name-entry (which would
+	// panic the stateNew handler with index out of range). An ID is removed
+	// here when the draft leaves the list: on spawn ack (success or error)
+	// or when the user cancels name entry.
+	pendingDraftIDs map[string]struct{}
 	// startingInstance is retained for back-compat with callers that used to
 	// pass it to runInstanceStartCmd; it is now unused (spawn goes through the
 	// kernel) but kept here so a bare &home{} test construct that sets it
@@ -200,10 +209,11 @@ func newHome(ctx context.Context, program string, autoYes bool) *home {
 		hostRegistry: hostRegistry,
 		prefs:        prefStore,
 		presetStore:  presetStore,
-		program:      program,
-		autoYes:      autoYes,
-		state:        stateDefault,
-		appState:     appState,
+		program:          program,
+		autoYes:          autoYes,
+		state:            stateDefault,
+		appState:         appState,
+		pendingDraftIDs:  make(map[string]struct{}),
 	}
 	h.list = ui.NewList(&h.spinner, autoYes)
 
@@ -427,6 +437,7 @@ func (m *home) Update(msg tea.Msg) (tea.Model, tea.Cmd) {
 		// because the kernel owns the real instance now (with its own ID).
 		if msg.draftID != "" {
 			m.list.RemoveByID(msg.draftID)
+			m.untrackDraft(msg.draftID)
 		}
 		if msg.err != nil {
 			// No draft to clean beyond RemoveByID; the failed spawn just surfaces
@@ -516,6 +527,9 @@ func (m *home) handleKeyPress(msg tea.KeyMsg) (mod tea.Model, cmd tea.Cmd) {
 	if m.state == stateNew {
 		// Handle quit commands first. Don't handle q because the user might want to type that.
 		if msg.String() == "ctrl+c" {
+			if draft := m.list.GetSelectedInstance(); draft != nil {
+				m.untrackDraft(draft.GetID())
+			}
 			m.state = stateDefault
 			m.promptAfterName = false
 			m.list.Kill()
@@ -591,6 +605,9 @@ func (m *home) handleKeyPress(msg tea.KeyMsg) (mod tea.Model, cmd tea.Cmd) {
 				return m, m.handleError(err)
 			}
 		case tea.KeyEsc:
+			if draft := m.list.GetSelectedInstance(); draft != nil {
+				m.untrackDraft(draft.GetID())
+			}
 			m.list.Kill()
 			m.state = stateDefault
 			m.instanceChanged()
@@ -1208,6 +1225,7 @@ func (m *home) saveProfilePreference() tea.Cmd {
 func (m *home) cancelPromptOverlay() tea.Cmd {
 	selected := m.list.GetSelectedInstance()
 	if selected != nil && !selected.Started() {
+		m.untrackDraft(selected.GetID())
 		m.list.Kill()
 	}
 	m.textInputOverlay = nil
@@ -1455,6 +1473,7 @@ func (m *home) startNewInstance(repoPath string, promptFlow bool) tea.Cmd {
 	}
 
 	m.newInstanceFinalizer = m.list.AddInstance(instance)
+	m.trackDraft(instance.GetID())
 	m.list.SetSelectedInstance(m.list.NumInstances() - 1)
 	// Apply the chosen host before Start binds tmux/git deps. SetHost refuses
 	// after Start, so this must happen here (name entry → Start).
@@ -1513,6 +1532,7 @@ func (m *home) spawnOrchestrator() tea.Cmd {
 	}
 	draft.SetStatus(session.Loading)
 	finalize := m.list.AddInstance(draft)
+	m.trackDraft(draft.GetID())
 	m.list.SetSelectedInstance(m.list.NumInstances() - 1)
 	finalize() // orchestrator has no repo, so the repo-name registration is a no-op
 
@@ -1720,6 +1740,7 @@ func (m *home) startNewInstanceFromPreset(name string, p presets.Preset) tea.Cmd
 	}
 
 	m.newInstanceFinalizer = m.list.AddInstance(instance)
+	m.trackDraft(instance.GetID())
 	m.list.SetSelectedInstance(m.list.NumInstances() - 1)
 	m.pendingHost = nil
 	// A preset is a complete recipe: the host/repo/prompt selectors are

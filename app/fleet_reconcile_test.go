@@ -199,6 +199,73 @@ func TestRefreshFleetFromKernel_ListErrorIsFatal(t *testing.T) {
 	assert.Contains(t, err.Error(), "socket unreachable")
 }
 
+// TestReconcileFleet_PreservesDraftDuringNameEntry is the regression test for
+// the index-out-of-range panic: the fleet tick fires every second while the
+// user is typing a name for a new instance. The draft instance is held in the
+// list but is NOT yet known to the kernel (no spawn has been issued), so the
+// kernel snapshot does not contain it. Before the fix, reconcileFleet rebuilt
+// the view from the snapshot alone, dropping the draft; the next keystroke in
+// stateNew then panicked on m.list.GetInstances()[m.list.NumInstances()-1]
+// (index -1). The draft must be preserved against the snapshot.
+func TestReconcileFleet_PreservesDraftDuringNameEntry(t *testing.T) {
+	fleet := &fakeFleetClient{
+		list: []session.InstanceData{instData("w1", "w1", session.Running, session.KindWorker)},
+	}
+	h := newReconcileHome(t, fleet)
+	require.NoError(t, h.refreshFleetFromKernel())
+
+	// Simulate startNewInstance adding a local draft (name entry). The draft
+	// has a TUI-local ID the kernel does not know about.
+	draft, err := session.NewInstance(session.InstanceOptions{
+		Title: "", Path: "/repo", Program: "claude",
+	})
+	require.NoError(t, err)
+	h.list.AddInstance(draft)
+	h.trackDraft(draft.GetID())
+	h.list.SetSelectedInstance(h.list.NumInstances() - 1)
+	require.Len(t, h.list.GetInstances(), 2, "draft added to the view")
+
+	// A fleet tick fires: the kernel snapshot still has only w1 (the draft is
+	// not spawned yet). The draft MUST survive this refresh.
+	require.NoError(t, h.refreshFleetFromKernel())
+
+	got := h.list.GetInstances()
+	require.Len(t, got, 2, "draft preserved against fleet snapshot")
+	ids := map[string]bool{got[0].GetID(): true, got[1].GetID(): true}
+	assert.True(t, ids[draft.GetID()], "draft ID still present in the view")
+	assert.True(t, ids["w1"], "kernel instance still present")
+
+	// And the stateNew handler's index access no longer panics on an empty list.
+	selected := h.list.GetSelectedInstance()
+	require.NotNil(t, selected, "selection preserved (no -1 index panic)")
+}
+
+// TestReconcileFleet_UntrackedLocalInstanceIsDropped proves the fix is
+// scoped: only TRACKED drafts (pending spawn / name entry) are preserved. A
+// stale local instance that is not in the kernel snapshot and not tracked is
+// dropped (e.g. a killed instance whose removal raced the tick).
+func TestReconcileFleet_UntrackedLocalInstanceIsDropped(t *testing.T) {
+	fleet := &fakeFleetClient{
+		list: []session.InstanceData{instData("w1", "w1", session.Running, session.KindWorker)},
+	}
+	h := newReconcileHome(t, fleet)
+	require.NoError(t, h.refreshFleetFromKernel())
+
+	// Add a local instance that is NOT tracked as a draft (simulating a stale
+	// leftover from a killed-kernel race). It is not in the kernel snapshot.
+	stale, err := session.NewInstance(session.InstanceOptions{
+		Title: "stale", Path: "/repo", Program: "claude",
+	})
+	require.NoError(t, err)
+	h.list.AddInstance(stale)
+	require.Len(t, h.list.GetInstances(), 2)
+
+	require.NoError(t, h.refreshFleetFromKernel())
+	got := h.list.GetInstances()
+	require.Len(t, got, 1, "untracked local instance dropped")
+	assert.Equal(t, "w1", got[0].GetID())
+}
+
 type assertErr string
 
 func (e assertErr) Error() string { return string(e) }
