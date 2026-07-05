@@ -60,13 +60,14 @@ type ErrorInfo struct {
 // codes for common kernel errors. Stable so clients (and LLM tools) can
 // branch on them.
 const (
-	CodeUnknownInstance    = "UNKNOWN_INSTANCE"
-	CodeWorkerCannotSpawn  = "WORKER_CANNOT_SPAWN"
-	CodeNestedOrchestrator = "NESTED_ORCHESTRATOR"
-	CodeProtectedBranch    = "PROTECTED_BRANCH"
-	CodeNonTopLevelLand    = "NON_TOP_LEVEL_LAND"
-	CodeBranchNotFound     = "BRANCH_NOT_FOUND"
-	CodeInternal           = "INTERNAL"
+	CodeUnknownInstance         = "UNKNOWN_INSTANCE"
+	CodeWorkerCannotSpawn       = "WORKER_CANNOT_SPAWN"
+	CodeNestedOrchestrator      = "NESTED_ORCHESTRATOR"
+	CodeProtectedBranch         = "PROTECTED_BRANCH"
+	CodeNonTopLevelLand         = "NON_TOP_LEVEL_LAND"
+	CodeBranchNotFound          = "BRANCH_NOT_FOUND"
+	CodeHostOnTargetBranchDirty = "HOST_ON_TARGET_BRANCH_DIRTY"
+	CodeInternal                = "INTERNAL"
 )
 
 // Serve listens on the control socket and dispatches requests to the kernel.
@@ -368,6 +369,10 @@ func kernelErrResp(err error) Response {
 	var branchNF git.ErrBranchNotFound
 	if errors.As(err, &branchNF) {
 		return errResp(CodeBranchNotFound, branchNF.Error())
+	}
+	var hostDirty git.ErrHostOnTargetBranchDirty
+	if errors.As(err, &hostDirty) {
+		return errResp(CodeHostOnTargetBranchDirty, hostDirty.Error())
 	}
 	switch err.(type) {
 	case ErrUnknownInstance:

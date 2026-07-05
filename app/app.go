@@ -1211,7 +1211,15 @@ func (m *home) handleLandDone(msg landDoneMsg) tea.Cmd {
 	}
 
 	if msg.err != nil {
-		if msg.result.Merge.Status == git.MergeConflict {
+		// A real merge conflict carries conflicted files and/or a merging
+		// worktree path. A refusal (e.g. ErrHostOnTargetBranchDirty) reaches
+		// here with MergeConflict status (fabricated by the socket adapter on
+		// any wire error) but NO conflicts and NO worktree path — surface the
+		// raw error instead so the actionable message ("commit, stash, or
+		// switch branches before landing") is shown rather than an empty
+		// "merge conflict on <target>: ".
+		if msg.result.Merge.Status == git.MergeConflict &&
+			(len(msg.result.Merge.Conflicts) > 0 || msg.result.Merge.WorktreePath != "") {
 			files := make([]string, 0, len(msg.result.Merge.Conflicts))
 			for _, c := range msg.result.Merge.Conflicts {
 				files = append(files, c.File)
