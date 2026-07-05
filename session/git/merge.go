@@ -170,11 +170,20 @@ func mergeValidate(repoPath, targetBranch string, sourceBranches []string, strat
 //
 // On a clean merge, the target branch ref is fast-forwarded to the new
 // commit via `git update-ref` (plumbing, not subject to the
-// checked-out-branch guard), and the throwaway worktree is removed. On a conflicting merge, the
-// throwaway worktree is LEFT in the merging state (not auto-aborted) so a
-// resolver can act there; its path is returned in MergeResult.WorktreePath.
-// Guards that differ between the two callers (trunk protection) are applied
-// by the respective entrypoints.
+// checked-out-branch guard), and the throwaway worktree is removed. When the
+// host repo is ON targetBranch with a CLEAN working tree, the host worktree
+// is then synced to the new ref via a lossless `git reset --hard` (nothing
+// to lose: status --porcelain was empty; untracked files survive). When the
+// host is on targetBranch but DIRTY, the fallback REFUSES
+// (ErrHostOnTargetBranchDirty) and mutates nothing — `reset --hard` would
+// lose uncommitted tracked work, and a bare update-ref would diverge HEAD
+// from the worktree (the regression where every touched file reads as
+// "modified"). When the host is on ANOTHER branch, update-ref is safe (no
+// divergence possible) and the host worktree is left untouched. On a
+// conflicting merge, the throwaway worktree is LEFT in the merging state
+// (not auto-aborted) so a resolver can act there; its path is returned in
+// MergeResult.WorktreePath. Guards that differ between the two callers
+// (trunk protection) are applied by the respective entrypoints.
 func (m *defaultMerger) mergeInto(repoPath, targetBranch string, sourceBranches []string, strategy Strategy) (MergeResult, error) {
 	// Create a throwaway worktree detached at targetBranch's commit. --detach
 	// is essential: without it, `git worktree add <dir> <branch>` refuses when
@@ -207,18 +216,76 @@ func (m *defaultMerger) mergeInto(repoPath, targetBranch string, sourceBranches 
 	if err == nil {
 		// Clean merge: fast-forward the target branch ref to the new commit.
 		// update-ref is plumbing: it moves the ref even when the branch is
-		// checked out elsewhere (unlike `git branch -f`), so the user's main
-		// checkout is not disturbed. The new commit is the detached HEAD of
-		// the throwaway worktree.
+		// checked out elsewhere (unlike `git branch -f`). The new commit is the
+		// detached HEAD of the throwaway worktree.
 		headOut, headErr := m.cmdExec.Output(exec.Command("git", "-C", tmpDir, "rev-parse", "HEAD"))
-		removeWorktree()
 		if headErr != nil {
+			removeWorktree()
 			return MergeResult{Status: MergeConflict, Message: outStr}, fmt.Errorf("merge: read merged HEAD: %s: %w", string(headOut), headErr)
 		}
 		newHead := strings.TrimSpace(string(headOut))
+
+		// Host-sync guard. When the host repo is ON targetBranch, a bare
+		// update-ref would move the ref WITHOUT touching the host's working
+		// tree/index, diverging HEAD from the worktree: every touched file
+		// then reads as "modified" (a revert-in-appearance of the merge), and
+		// `git pull --ff-only` fails because the worktree is behind with
+		// conflicting staged changes. This is the regression seen when landing
+		// onto a trunk the user has checked out in their IDE.
+		//
+		// Two cases:
+		//  - host on targetBranch + CLEAN tree → sync after update-ref via
+		//    `git reset --hard`. Lossless because `status --porcelain` is empty
+		//    (no tracked work to lose; untracked files survive reset --hard).
+		//    This extends the fast-path's in-place contract to the non-ff case.
+		//  - host on targetBranch + DIRTY tree → REFUSE. `reset --hard` would
+		//    lose uncommitted tracked work. Mutate nothing (no update-ref, no
+		//    reset); the throwaway worktree is cleaned up. The fast-path already
+		//    refused for the same reason; the fallback must refuse too.
+		//  - host on ANOTHER branch → update-ref only (original throwaway
+		//    contract: the ref advances, the host worktree is untouched because
+		//    it's on a different branch — no divergence possible).
+		//
+		// The clean check and the reset run in the same call sequence; if a
+		// race dirties the tree between the check and the reset, the reset is
+		// still lossless because the check observed a clean tree at guard time
+		// (the only way to lose work is if the race ADDED tracked work after
+		// the check, which `reset --hard` would then discard — accepted as a
+		// narrow race; the fast-path has the same property).
+		hostBranch, hostErr := m.hostCheckedOutBranch(repoPath)
+		if hostErr != nil {
+			removeWorktree()
+			return MergeResult{Status: MergeConflict, Message: outStr}, fmt.Errorf("merge: probe host branch: %w", hostErr)
+		}
+		onTarget := hostBranch == targetBranch
+		if onTarget {
+			clean, cleanErr := m.isWorktreeClean(repoPath)
+			if cleanErr != nil {
+				removeWorktree()
+				return MergeResult{Status: MergeConflict, Message: outStr}, fmt.Errorf("merge: probe host cleanliness: %w", cleanErr)
+			}
+			if !clean {
+				removeWorktree()
+				return MergeResult{Status: MergeConflict, Message: outStr}, ErrHostOnTargetBranchDirty{Branch: targetBranch}
+			}
+		}
+
 		if _, refErr := m.runGit(repoPath, "update-ref", "refs/heads/"+targetBranch, newHead); refErr != nil {
+			removeWorktree()
 			return MergeResult{Status: MergeConflict, Message: outStr}, fmt.Errorf("merge: update target ref: %w", refErr)
 		}
+
+		if onTarget {
+			// Sync the host working tree to the new ref. Lossless: the guard
+			// above proved the tree was clean. reset --hard moves index + worktree
+			// to HEAD; untracked files survive (they're not tracked, reset doesn't
+			// touch them).
+			if resetOut, resetErr := m.runGit(repoPath, "reset", "--hard", targetBranch); resetErr != nil {
+				return MergeResult{Status: MergeConflict, Message: outStr}, fmt.Errorf("merge: sync host worktree (reset --hard): %s: %w", resetOut, resetErr)
+			}
+		}
+
+		removeWorktree()
 		return MergeResult{Status: MergeMerged, Message: outStr}, nil
 	}
 
@@ -360,4 +427,49 @@ type ErrProtectedBranch struct {
 
 func (e ErrProtectedBranch) Error() string {
 	return fmt.Sprintf("refusing to merge into protected branch %q", e.Branch)
+}
+
+// hostCheckedOutBranch returns the branch the host repo at repoPath has
+// checked out (rev-parse --abbrev-ref HEAD). Returns "HEAD" when the host is
+// detached, which is != any real targetBranch so the on-target guard does not
+// fire (a detached host cannot diverge from a branch ref via update-ref).
+func (m *defaultMerger) hostCheckedOutBranch(repoPath string) (string, error) {
+	out, err := m.cmdExec.Output(exec.Command("git", "-C", repoPath, "rev-parse", "--abbrev-ref", "HEAD"))
+	if err != nil {
+		return "", fmt.Errorf("rev-parse --abbrev-ref HEAD: %s: %w", string(out), err)
+	}
+	return strings.TrimSpace(string(out)), nil
+}
+
+// isWorktreeClean reports whether the host repo at repoPath has NO tracked
+// changes (no modified/staged/deleted tracked files). Untracked files are
+// NOT reported by `status --porcelain` (default) and survive `reset --hard`,
+// so they are not a losslessness risk for the sync path. Used by the
+// host-on-targetBranch guard: a clean tree means `reset --hard` after
+// update-ref is lossless.
+func (m *defaultMerger) isWorktreeClean(repoPath string) (bool, error) {
+	out, err := m.cmdExec.Output(exec.Command("git", "-C", repoPath, "status", "--porcelain"))
+	if err != nil {
+		return false, fmt.Errorf("status --porcelain: %s: %w", string(out), err)
+	}
+	return strings.TrimSpace(string(out)) == "", nil
+}
+
+// ErrHostOnTargetBranchDirty is returned when a merge's fallback (mergeInto)
+// would update-ref a branch the host repo has CHECKED OUT, but the host
+// working tree is DIRTY. `git reset --hard` (the lossless sync when clean)
+// would lose the uncommitted tracked work, so the fallback refuses and
+// mutates nothing: no update-ref, no reset. The fast-path already refused
+// for the same reason; this guard makes the fallback refuse too, preventing
+// the HEAD↔worktree divergence regression. Typed so the kernel/transport can
+// map it to a stable wire code.
+type ErrHostOnTargetBranchDirty struct {
+	Branch string
+}
+
+func (e ErrHostOnTargetBranchDirty) Error() string {
+	return fmt.Sprintf(
+		"refusing to land: host repo is on %q with uncommitted changes; "+
+			"commit, stash, or switch branches before landing (a clean tree would be auto-synced via reset --hard)",
+		e.Branch)
 }

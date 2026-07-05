@@ -450,9 +450,20 @@ type LandResult struct {
 //     advance to the merged commit and the host can build from main
 //     immediately. No `git reset --hard` is ever used; git itself validates
 //     the losslessness (ff-only refuses non-ff).
-//  2. Fallback: otherwise (host on another branch / dirty / non-ff / race),
-//     the throwaway-worktree merger runs (the ref advances via update-ref but
-//     the host working tree is left untouched) and a recovery hint is returned.
+//  2. Fallback: otherwise (host on another branch / non-ff / race — the
+//     fast-path refused), the throwaway-worktree merger runs the merge in an
+//     isolated worktree, then advances the target ref via update-ref. The
+//     host worktree is then synced IF AND ONLY IF it is on targetBranch and
+//     CLEAN (status --porcelain empty): a lossless `git reset --hard` brings
+//     index + worktree to the new ref so the user can build from main
+//     immediately, exactly like the fast path. If the host is on targetBranch
+//     but DIRTY, the fallback REFUSES (git.ErrHostOnTargetBranchDirty) and
+//     mutates nothing — `reset --hard` would lose uncommitted tracked work,
+//     and a bare update-ref would diverge HEAD from the worktree (the
+//     regression where every touched file reads as "modified" and `git pull
+//     --ff-only` fails). When the host is on ANOTHER branch, update-ref is
+//     safe (no divergence possible) and the host worktree is left untouched
+//     with a recovery hint.
 //
 // v1 lands ONE source branch per call (the instance's own branch). On
 // conflict, MergeConflict is returned and the repo is left for resolution
