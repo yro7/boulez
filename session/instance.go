@@ -1004,6 +1004,58 @@ func (i *Instance) SendPrompt(prompt string) error {
 	return nil
 }
 
+// WaitForPaneStable polls the tmux pane content until it stops changing, then
+// returns. Spawn uses it to defer the initial prompt until the agent CLI has
+// finished its boot animation: keystrokes — and especially the carriage
+// return that submits the prompt — sent while the CLI is still rendering its
+// welcome banner / initializing MCP / drawing the input box are routinely
+// swallowed or consumed by the boot sequence, so the prompt text lands in the
+// input box but never gets submitted, as if Enter had never been pressed.
+// Waiting for the pane to settle guarantees the input handler is live before
+// we type.
+//
+// Stability is defined as `stableSamples` consecutive identical captures
+// spaced `interval` apart. This is deliberately agent-agnostic: it needs no
+// per-agent "ready" marker (the adapters do not reliably emit one at boot —
+// Pi's cs2:ready sentinel only appears after a completed turn, and Claude's
+// ready marker only appears in refusal dialogs). A timeout is NOT an error:
+// if the pane never settles (e.g. an animated spinner that updates every
+// tick), we fall back to the previous best-effort behaviour and let the caller
+// send the prompt anyway. Capture errors during very early boot are treated
+// as "not stable yet" rather than aborting.
+func (i *Instance) WaitForPaneStable(timeout time.Duration) error {
+	if !i.started || i.tmuxSession == nil {
+		return nil
+	}
+	const (
+		interval      = 150 * time.Millisecond
+		stableSamples = 3
+	)
+	deadline := time.Now().Add(timeout)
+	prev := ""
+	stable := 0
+	for {
+		content, err := i.tmuxSession.CapturePaneContent()
+		switch {
+		case err != nil:
+			// Transient capture failure (pane not ready yet) — keep waiting.
+			stable = 0
+		case content == prev:
+			stable++
+		default:
+			prev = content
+			stable = 1
+		}
+		if stable >= stableSamples {
+			return nil
+		}
+		if !deadline.After(time.Now()) {
+			return nil
+		}
+		time.Sleep(interval)
+	}
+}
+
 // PreviewFullHistory captures the entire tmux pane output including full scrollback history
 func (i *Instance) PreviewFullHistory() (string, error) {
 	if !i.started || i.Status == Paused {

@@ -130,6 +130,15 @@ func Spawn(opts SpawnOptions) (*session.Instance, error) {
 	inst.SetAutoYes(inst.Host().AutoYesDefault())
 
 	if opts.Prompt != "" {
+		// Wait for the agent CLI to finish booting before sending the prompt.
+		// Without this, the prompt text is typed into the input box but the
+		// Enter that submits it is sent while the CLI is still rendering (welcome
+		// banner, MCP init, …) and gets swallowed — the prompt sits unsent, as if
+		// Enter had never been pressed. We wait for the pane to stabilize so the
+		// input handler is live before we type + submit. Best-effort: on timeout
+		// we proceed anyway, preserving the previous behaviour for agents that
+		// never settle.
+		_ = inst.WaitForPaneStable(8 * time.Second)
 		if err := inst.SendPrompt(opts.Prompt); err != nil {
 			// The instance is started; a prompt failure is not fatal to the
 			// spawn itself. Surface it but return the running instance.
