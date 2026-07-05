@@ -726,13 +726,18 @@ func (m *home) handleKeyPress(msg tea.KeyMsg) (mod tea.Model, cmd tea.Cmd) {
 
 	// Handle confirmation state
 	if m.state == stateConfirm {
-		shouldClose := m.confirmationOverlay.HandleKeyPress(msg)
-		if shouldClose {
+		closed, cmd := m.confirmationOverlay.HandleKeyPress(msg)
+		if closed {
 			m.state = stateDefault
 			m.confirmationOverlay = nil
-			return m, nil
 		}
-		return m, nil
+		// Dispatch the action's Cmd (e.g. an async land/push/kill) so its
+		// outcome reaches Update. Previously this was discarded, which is why
+		// Land/Push/Kill gave zero feedback. The action's own returned msg
+		// (e.g. instanceChangedMsg from kill) drives the view refresh; we do
+		// not batch instanceChanged here so a minimal test home without a
+		// tabbedWindow does not panic.
+		return m, cmd
 	}
 
 	// Exit scrolling mode when ESC is pressed and preview pane is in scrolling mode
@@ -1257,7 +1262,12 @@ func (m *home) cancelPromptOverlay() tea.Cmd {
 	)
 }
 
-// confirmAction shows a confirmation modal and stores the action to execute on confirm
+// confirmAction shows a confirmation modal and stores the action to execute on
+// confirm. The action is a tea.Cmd: on confirm it is returned through the
+// overlay's OnConfirm callback and dispatched by the stateConfirm handler in
+// handleKeyPress, so the action's outcome (a tea.Msg) reaches Update. This is
+// what lets a confirm action run asynchronously and report success/error back
+// to the TUI — previously the returned Cmd was discarded.
 func (m *home) confirmAction(message string, action tea.Cmd) tea.Cmd {
 	m.state = stateConfirm
 
@@ -1266,17 +1276,17 @@ func (m *home) confirmAction(message string, action tea.Cmd) tea.Cmd {
 	// Set a fixed width for consistent appearance
 	m.confirmationOverlay.SetWidth(50)
 
-	// Set callbacks for confirmation and cancellation
-	m.confirmationOverlay.OnConfirm = func() {
+	// On confirm, transition back to default and return the action so the
+	// stateConfirm handler dispatches it. The action runs as a tea.Cmd; if it
+	// is a func() tea.Msg, the returned msg is delivered to Update.
+	m.confirmationOverlay.OnConfirm = func() tea.Cmd {
 		m.state = stateDefault
-		// Execute the action if it exists
-		if action != nil {
-			_ = action()
-		}
+		return action
 	}
 
-	m.confirmationOverlay.OnCancel = func() {
+	m.confirmationOverlay.OnCancel = func() tea.Cmd {
 		m.state = stateDefault
+		return nil
 	}
 
 	return nil
