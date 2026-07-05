@@ -352,7 +352,7 @@ func TestKernel_Land_TopLevel_AcceptsMain(t *testing.T) {
 
 	res, err := k.Land(CallerContext{}, "/repo", "main", "feat", git.StrategyDefault)
 	require.NoError(t, err)
-	assert.Equal(t, git.MergeMerged, res.Status)
+	assert.Equal(t, git.MergeMerged, res.Merge.Status)
 	require.Len(t, merger.calls, 1)
 	c := merger.calls[0]
 	assert.True(t, c.trunk, "kernel must route via MergeTrunk, not Merge")
