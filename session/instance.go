@@ -217,7 +217,21 @@ type Instance struct {
 
 	// The below fields are initialized upon calling Start().
 
+	// started bool
 	started bool
+	// landed is a TUI-only hint that the instance's branch has been landed
+	// (merged) into the target trunk since its last Ready transition. It is NOT
+	// propagated to the kernel (not in InstanceData, not on the wire) — it is
+	// view state that survives fleet refresh (reconcileFleet reuses handles by
+	// ID and does not reset this field) but not a TUI restart. Set true on a
+	// successful land; cleared when the agent resumes work (Running→Ready)
+	// because the displayed version no longer matches what was landed.
+	landed bool
+	// landing is a TUI-only hint that a land is in flight for this instance.
+	// Drives the in-progress spinner in the list renderer. Like landed, it is
+	// view-only and not persisted. Set true when the land Cmd is dispatched,
+	// cleared on landDoneMsg (success, conflict, or error).
+	landing bool
 	// tmuxSession is the tmux session for the instance.
 	tmuxSession *tmux.TmuxSession
 	// gitWorktree is the worktree for the instance. Polymorphic: a Worker gets
@@ -440,6 +454,28 @@ func (i *Instance) RepoName() (string, error) {
 func (i *Instance) SetStatus(status Status) {
 	i.Status = status
 }
+
+// Landed reports the TUI-only hint that this instance's branch has been
+// landed into the target trunk since its last Ready transition. It is view
+// state (not persisted, not propagated to the kernel) used by the list
+// renderer to dim the row and show a checkmark. See the field doc for the
+// lifecycle.
+func (i *Instance) Landed() bool { return i.landed }
+
+// SetLanded sets the TUI-only "landed" hint. Called by the TUI on a successful
+// land, and cleared on Running→Ready (the displayed version no longer matches
+// what was landed). Safe to call on a nil receiver (defensive: the renderer
+// calls this on view handles).
+func (i *Instance) SetLanded(on bool) { i.landed = on }
+
+// Landing reports the TUI-only hint that a land is in flight for this
+// instance. Drives the in-progress spinner in the list renderer. View state
+// only; not persisted, not propagated to the kernel.
+func (i *Instance) Landing() bool { return i.landing }
+
+// SetLanding sets the TUI-only "landing" hint. Set true when the land Cmd is
+// dispatched, cleared on landDoneMsg (success, conflict, or error).
+func (i *Instance) SetLanding(on bool) { i.landing = on }
 
 // SetSelectedBranch sets the branch to use when starting the instance.
 func (i *Instance) SetSelectedBranch(branch string) {
