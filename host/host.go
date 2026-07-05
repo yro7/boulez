@@ -59,7 +59,6 @@ type Host interface {
 
 	// AutoYesDefault is whether new instances on this host start with
 	// AutoYes enabled. LocalHost follows the global config flag; SSHHost
-	// returns false (AutoYes is off by default on remote hosts — decision 3
-	// of PLAN-ssh-v2.md).
+	// returns false (AutoYes is off by default on remote hosts).
 	AutoYesDefault() bool
 }

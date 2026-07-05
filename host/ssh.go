@@ -35,7 +35,7 @@ func (h SSHHost) Alias() string { return h.alias }
 
 // Name implements Host: the ssh alias. Used for InstanceData persistence and
 // TUI display only — never in commit messages, branch names, or tmux session
-// names (PII discipline, PLAN-ssh-v2.md decision 5).
+// names (PII discipline).
 func (h SSHHost) Name() string { return h.alias }
 
 // AutoYesDefault implements Host: false. AutoYes is off by default on remote

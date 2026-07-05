@@ -8,8 +8,8 @@
 // and is never stored in the registry.
 //
 // The format is intentionally minimal: a JSON array of alias strings.
-// Mirrors repo.Registry's design (PLAN-multi-repo.md). No enrichments
-// (default, ordering metadata) — those are deferred (see roadmap_and_ideas.md).
+// Mirrors repo.Registry's design. No enrichments
+// (default, ordering metadata) — those are deferred.
 package host
 
 import (
