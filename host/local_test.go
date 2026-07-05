@@ -5,15 +5,15 @@ import (
 	"path/filepath"
 	"testing"
 
-	"claude-squad/cmd"
-	"claude-squad/session/fs"
 	"github.com/stretchr/testify/assert"
 	"github.com/stretchr/testify/require"
+	"github.com/yro7/boulez/cmd"
+	"github.com/yro7/boulez/session/fs"
 )
 
 // TestLocalHost_WorktreeDir_MatchesOldPath verifies that LocalHost.WorktreeDir
 // returns the same path the git layer used to compute on its own
-// (getWorktreeDirectory: ~/.cs2/worktrees). This is the non-regression guard
+// (getWorktreeDirectory: ~/.boulez/worktrees). This is the non-regression guard
 // for Step 1: the Host abstraction must reproduce today's local behaviour
 // exactly so that wiring Instance through Host (Step 1b) is behaviour-neutral.
 func TestLocalHost_WorktreeDir_MatchesOldPath(t *testing.T) {
@@ -27,7 +27,7 @@ func TestLocalHost_WorktreeDir_MatchesOldPath(t *testing.T) {
 	require.NoError(t, err)
 
 	home, _ := os.UserHomeDir()
-	want := filepath.Join(home, ".cs2", "worktrees")
+	want := filepath.Join(home, ".boulez", "worktrees")
 	assert.Equal(t, want, dir)
 }
 

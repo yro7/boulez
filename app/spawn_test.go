@@ -7,10 +7,10 @@ import (
 	"strings"
 	"testing"
 
-	"claude-squad/config"
-	"claude-squad/session"
 	"github.com/stretchr/testify/assert"
 	"github.com/stretchr/testify/require"
+	"github.com/yro7/boulez/config"
+	"github.com/yro7/boulez/session"
 )
 
 // makeTempGitRepoApp creates a real git repository and returns its absolute path.
@@ -38,7 +38,7 @@ func runGitApp(t *testing.T, dir string, args ...string) {
 }
 
 // withTempHome isolates HOME so Spawn's worktrees land under a temp dir and
-// don't collide with the user's real ~/.cs2. Returns a restore func.
+// don't collide with the user's real ~/.boulez. Returns a restore func.
 func withTempHome(t *testing.T) func() {
 	t.Helper()
 	tempHome := t.TempDir()
@@ -255,5 +255,5 @@ func TestSpawn_TitleHonoured(t *testing.T) {
 	require.NoError(t, err)
 	t.Cleanup(func() { _ = inst.Kill() })
 	assert.Equal(t, "my-task", inst.Title)
-	assert.True(t, strings.HasPrefix(inst.Branch, "cs2/my-task"), "branch derives from title")
+	assert.True(t, strings.HasPrefix(inst.Branch, "boulez/my-task"), "branch derives from title")
 }

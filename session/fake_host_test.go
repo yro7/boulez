@@ -3,9 +3,9 @@ package session
 import (
 	"os/exec"
 
-	"claude-squad/cmd"
-	"claude-squad/host"
-	"claude-squad/session/fs"
+	"github.com/yro7/boulez/cmd"
+	"github.com/yro7/boulez/host"
+	"github.com/yro7/boulez/session/fs"
 )
 
 // fakeHost is a test double for host.Host that records what buildWorktree
@@ -15,19 +15,19 @@ import (
 // implementations (the instance's Start is not exercised here — only
 // ResolveRepoPath is observed).
 type fakeHost struct {
-	alias          string
-	resolvedPath   string
+	alias         string
+	resolvedPath  string
 	resolveCalled bool
 }
 
-func (f *fakeHost) Name() string             { return f.alias }
-func (f *fakeHost) AutoYesDefault() bool     { return false }
-func (f *fakeHost) Executor() cmd.Executor   { return cmd.MakeExecutor() }
-func (f *fakeHost) FS() fs.FS                { return fs.LocalFS{} }
+func (f *fakeHost) Name() string           { return f.alias }
+func (f *fakeHost) AutoYesDefault() bool   { return false }
+func (f *fakeHost) Executor() cmd.Executor { return cmd.MakeExecutor() }
+func (f *fakeHost) FS() fs.FS              { return fs.LocalFS{} }
 func (f *fakeHost) PtyFactory() host.PtyFactory {
 	return host.LocalPtyFactory()
 }
-func (f *fakeHost) WorktreeDir() (string, error) { return "/tmp/cs2-fake-wt", nil }
+func (f *fakeHost) WorktreeDir() (string, error) { return "/tmp/boulez-fake-wt", nil }
 
 // ResolveRepoPath records the path and returns it unchanged — mirroring
 // SSHHost's passthrough so the test can assert the relative path reaches the

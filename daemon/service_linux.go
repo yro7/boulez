@@ -10,7 +10,7 @@ import (
 	"strconv"
 )
 
-// systemdUnitPath is the user systemd unit location for the cs2 daemon. A
+// systemdUnitPath is the user systemd unit location for the boulez daemon. A
 // user unit (not a system one) runs without root and survives reboot for the
 // logged-in user (enable + WantedBy=default.target).
 func systemdUnitPath() (string, error) {
@@ -18,15 +18,15 @@ func systemdUnitPath() (string, error) {
 	if err != nil {
 		return "", fmt.Errorf("resolve home dir for systemd unit path: %w", err)
 	}
-	return filepath.Join(home, ".config", "systemd", "user", "cs2.service"), nil
+	return filepath.Join(home, ".config", "systemd", "user", "boulez.service"), nil
 }
 
-// unitTpl is the systemd user service. Type=simple + ExecStart=cs2 daemon run
+// unitTpl is the systemd user service. Type=simple + ExecStart=boulez daemon run
 // (the canonical foreground entrypoint, D2/C1.1). Restart=on-failure restarts
 // the daemon if it crashes; RestartSec paces the retries. WantedBy makes the
 // unit start at login.
 const unitTpl = `[Unit]
-Description=cs2 daemon (kernel / control authority)
+Description=boulez daemon (kernel / control authority)
 After=network.target
 
 [Service]
@@ -47,7 +47,7 @@ func uidImpl() (string, error) {
 
 // renderUnit builds the systemd user unit content. Extracted from install so
 // the generated unit is testable without invoking systemctl. The unit pins
-// ExecStart = `cs2 daemon run`, Restart=on-failure, and the redirect logs.
+// ExecStart = `boulez daemon run`, Restart=on-failure, and the redirect logs.
 func renderUnit(exe, outLog, errLog string) string {
 	content := fmt.Sprintf(unitTpl, exe)
 	// Mirror stdout/stderr to a file so a crash is diagnosable without journal.
@@ -85,7 +85,7 @@ func install() error {
 	if out, err := exec.Command("systemctl", "--user", "daemon-reload").CombinedOutput(); err != nil {
 		return fmt.Errorf("systemctl daemon-reload: %w: %s", err, string(out))
 	}
-	if out, err := exec.Command("systemctl", "--user", "enable", "--now", "cs2").CombinedOutput(); err != nil {
+	if out, err := exec.Command("systemctl", "--user", "enable", "--now", "boulez").CombinedOutput(); err != nil {
 		return fmt.Errorf("systemctl enable --now: %w: %s", err, string(out))
 	}
 	return nil
@@ -99,7 +99,7 @@ func uninstall() error {
 	// disable --now stops and disables the unit; a missing unit is not an
 	// error (idempotent uninstall). Ignore the error so the file removal
 	// still happens.
-	_, _ = exec.Command("systemctl", "--user", "disable", "--now", "cs2").CombinedOutput()
+	_, _ = exec.Command("systemctl", "--user", "disable", "--now", "boulez").CombinedOutput()
 
 	if err := os.Remove(unitPath); err != nil && !os.IsNotExist(err) {
 		return fmt.Errorf("remove unit %s: %w", unitPath, err)

@@ -1,8 +1,8 @@
 package kernel
 
 import (
-	"claude-squad/log"
-	"claude-squad/session"
+	"github.com/yro7/boulez/log"
+	"github.com/yro7/boulez/session"
 	"sync"
 )
 

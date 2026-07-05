@@ -15,11 +15,11 @@ import (
 )
 
 // TestCtl_StdoutIsPureJSON is the end-to-end regression test for the
-// "wrote logs to ..." stdout pollution (finding #6). It builds the cs2
-// binary, starts a daemon, runs `cs2 ctl list_instances`, and asserts the
+// "wrote logs to ..." stdout pollution (finding #6). It builds the boulez
+// binary, starts a daemon, runs `boulez ctl list_instances`, and asserts the
 // stdout is a single parseable JSON document with no trailing log line.
 //
-// Before the fix, log.Close() printed "wrote logs to /tmp/.../claudesquad.log"
+// Before the fix, log.Close() printed "wrote logs to /tmp/.../boulez.log"
 // to stdout AFTER the JSON, so json.Unmarshal failed with "Extra data".
 func TestCtl_StdoutIsPureJSON(t *testing.T) {
 	if testing.Short() {
@@ -37,7 +37,7 @@ func TestCtl_StdoutIsPureJSON(t *testing.T) {
 	out, err := build.CombinedOutput()
 	require.NoErrorf(t, err, "go build: %s", out)
 
-	// Isolate HOME so we don't touch the user's real ~/.cs2 state.
+	// Isolate HOME so we don't touch the user's real ~/.boulez state.
 	home := t.TempDir()
 	t.Setenv("HOME", home)
 
@@ -48,13 +48,13 @@ func TestCtl_StdoutIsPureJSON(t *testing.T) {
 	t.Cleanup(func() { _ = daemon.Process.Kill() })
 
 	// Wait for the socket (the daemon auto-launches the kernel server).
-	socket := filepath.Join(home, ".cs2", "ctl.sock")
+	socket := filepath.Join(home, ".boulez", "ctl.sock")
 	require.Eventually(t, func() bool {
 		_, err := os.Stat(socket)
 		return err == nil
 	}, 3*time.Second, 50*time.Millisecond, "daemon socket appeared")
 
-	// Run `cs2 ctl list_instances` and capture stdout.
+	// Run `boulez ctl list_instances` and capture stdout.
 	cmd := exec.Command(binPath, "ctl", "list_instances")
 	cmd.Env = append(os.Environ(), "HOME="+home)
 	stdout, err := cmd.Output()
@@ -76,6 +76,6 @@ func TestCtl_StdoutIsPureJSON(t *testing.T) {
 func mustRepoRoot(t *testing.T) string {
 	t.Helper()
 	_, file, _, _ := runtime.Caller(0)
-	// file ends in .../cs2/<worktree>/ctl_stdout_test.go
+	// file ends in .../boulez/<worktree>/ctl_stdout_test.go
 	return filepath.Dir(file)
 }

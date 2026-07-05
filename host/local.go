@@ -1,15 +1,15 @@
 package host
 
 import (
-	"claude-squad/cmd"
-	"claude-squad/config"
-	"claude-squad/session/fs"
+	"github.com/yro7/boulez/cmd"
+	"github.com/yro7/boulez/config"
+	"github.com/yro7/boulez/session/fs"
 	"path/filepath"
 )
 
-// LocalHost is the Host that runs everything on the machine executing cs2.
+// LocalHost is the Host that runs everything on the machine executing boulez.
 // It is today's behaviour: Executor calls os/exec, FS calls os.*, PTY is
-// local, worktrees live under the local cs2 config dir, and AutoYes follows
+// local, worktrees live under the local boulez config dir, and AutoYes follows
 // the global config flag.
 type LocalHost struct{}
 
@@ -28,7 +28,7 @@ func (LocalHost) FS() fs.FS { return fs.LocalFS{} }
 // PtyFactory implements Host: a local PTY factory (creack/pty).
 func (LocalHost) PtyFactory() PtyFactory { return LocalPtyFactory() }
 
-// WorktreeDir implements Host: the local ~/.cs2/worktrees directory.
+// WorktreeDir implements Host: the local ~/.boulez/worktrees directory.
 func (LocalHost) WorktreeDir() (string, error) {
 	configDir, err := config.GetConfigDir()
 	if err != nil {

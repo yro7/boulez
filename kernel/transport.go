@@ -3,8 +3,8 @@
 // this file adds the wire. No business logic lives here — it decodes a
 // Request, dispatches to the matching Kernel method, encodes the Response.
 //
-// This is the canonical control channel: \`cs2 ctl\` (step 6 client) speaks
-// this protocol, and a future LLM's tools will speak it too. cs2 does not
+// This is the canonical control channel: \`boulez ctl\` (step 6 client) speaks
+// this protocol, and a future LLM's tools will speak it too. boulez does not
 // know who is calling.
 package kernel
 
@@ -17,13 +17,13 @@ import (
 	"net"
 	"os"
 
-	"claude-squad/config"
-	"claude-squad/host"
-	"claude-squad/session"
-	"claude-squad/session/git"
+	"github.com/yro7/boulez/config"
+	"github.com/yro7/boulez/host"
+	"github.com/yro7/boulez/session"
+	"github.com/yro7/boulez/session/git"
 )
 
-// SocketPath returns the path to the kernel control socket under the cs2
+// SocketPath returns the path to the kernel control socket under the boulez
 // config dir. Stable across restarts so the client can find it.
 func SocketPath() (string, error) {
 	configDir, err := config.GetConfigDir()
@@ -65,7 +65,7 @@ const (
 	CodeNestedOrchestrator = "NESTED_ORCHESTRATOR"
 	CodeProtectedBranch    = "PROTECTED_BRANCH"
 	CodeNonTopLevelLand    = "NON_TOP_LEVEL_LAND"
-	CodeBranchNotFound    = "BRANCH_NOT_FOUND"
+	CodeBranchNotFound     = "BRANCH_NOT_FOUND"
 	CodeInternal           = "INTERNAL"
 )
 
@@ -97,7 +97,7 @@ func Serve(k *Kernel, socketPath string) error {
 // dispatch each, write newline-delimited responses. A connection may carry
 // multiple requests (the client may pipeline). Each connection owns a
 // session — the authoritative caller identity. A session starts
-// unauthenticated (top-level, like `cs2 ctl`) and may bind to an instance
+// unauthenticated (top-level, like `boulez ctl`) and may bind to an instance
 // via the `authenticate` syscall. The caller identity is derived from the
 // session by the transport, NEVER from request params — so a client cannot
 // spoof another instance's identity to bypass the recursion guard.
@@ -127,8 +127,8 @@ func dispatch(k *Kernel, sess *ctlSession, req Request) Response {
 	switch req.Method {
 	case "authenticate":
 		var p struct {
-			ID   string        `json:"instance_id"`
-			Kind session.Kind  `json:"kind"`
+			ID   string       `json:"instance_id"`
+			Kind session.Kind `json:"kind"`
 		}
 		if err := json.Unmarshal(req.Params, &p); err != nil {
 			return errResp(CodeInternal, "bad params: "+err.Error())
@@ -148,7 +148,7 @@ func dispatch(k *Kernel, sess *ctlSession, req Request) Response {
 		// The TUI's read path (Option B): returns full InstanceData records so
 		// the TUI can reconstruct read-only view handles via
 		// session.FromInstanceData. The lightweight `list_instances` (summaries)
-		// remains for `cs2 ctl`'s human-facing output.
+		// remains for `boulez ctl`'s human-facing output.
 		var p listParams
 		if err := json.Unmarshal(req.Params, &p); err != nil {
 			return errResp(CodeInternal, "bad params: "+err.Error())
@@ -156,7 +156,9 @@ func dispatch(k *Kernel, sess *ctlSession, req Request) Response {
 		data := k.ListInstancesData(p.toFilter())
 		return okResp(data)
 	case "get_instance":
-		var p struct{ ID string `json:"id"` }
+		var p struct {
+			ID string `json:"id"`
+		}
 		if err := json.Unmarshal(req.Params, &p); err != nil {
 			return errResp(CodeInternal, "bad params: "+err.Error())
 		}
@@ -215,7 +217,7 @@ func dispatch(k *Kernel, sess *ctlSession, req Request) Response {
 			return errResp(CodeInternal, "bad params: "+err.Error())
 		}
 		// Caller from the session (authoritative). Land refuses non-top-level
-		// sessions (workers/orchestrators) — only `cs2 ctl` / TUI may land
+		// sessions (workers/orchestrators) — only `boulez ctl` / TUI may land
 		// onto a trunk. See Kernel.Land.
 		res, err := k.Land(k.callerFor(sess), p.TargetRepo, p.TargetBranch, p.Source, git.Strategy(p.Strategy))
 		if err != nil {
@@ -229,7 +231,9 @@ func dispatch(k *Kernel, sess *ctlSession, req Request) Response {
 
 // simpleByID handles the {id}-only mutations (pause/resume/kill).
 func simpleByID(k *Kernel, _ string, fn func(id string) error, raw json.RawMessage) Response {
-	var p struct{ ID string `json:"id"` }
+	var p struct {
+		ID string `json:"id"`
+	}
 	if err := json.Unmarshal(raw, &p); err != nil {
 		return errResp(CodeInternal, "bad params: "+err.Error())
 	}
@@ -242,9 +246,9 @@ func simpleByID(k *Kernel, _ string, fn func(id string) error, raw json.RawMessa
 // --- wire param structs ---
 
 type listParams struct {
-	Kind   *session.Kind `json:"kind,omitempty"`
+	Kind   *session.Kind   `json:"kind,omitempty"`
 	Status *session.Status `json:"status,omitempty"`
-	Repo   string        `json:"repo,omitempty"`
+	Repo   string          `json:"repo,omitempty"`
 }
 
 func (p listParams) toFilter() ListFilter {
@@ -274,15 +278,15 @@ func composeStatusFilter(f ListFilter, s session.Status) ListFilter {
 }
 
 type spawnParams struct {
-	Repo            string         `json:"repo"`
-	Branch          string         `json:"branch,omitempty"`
-	BranchMustExist bool           `json:"branch_must_exist,omitempty"`
-	Prompt          string         `json:"prompt,omitempty"`
-	Program         string         `json:"program,omitempty"`
-	Title           string         `json:"title,omitempty"`
-	Kind            session.Kind   `json:"kind,omitempty"`
-	Host            string         `json:"host,omitempty"`
-	Caller          callerParams   `json:"caller,omitempty"`
+	Repo            string       `json:"repo"`
+	Branch          string       `json:"branch,omitempty"`
+	BranchMustExist bool         `json:"branch_must_exist,omitempty"`
+	Prompt          string       `json:"prompt,omitempty"`
+	Program         string       `json:"program,omitempty"`
+	Title           string       `json:"title,omitempty"`
+	Kind            session.Kind `json:"kind,omitempty"`
+	Host            string       `json:"host,omitempty"`
+	Caller          callerParams `json:"caller,omitempty"`
 }
 
 func (p spawnParams) toOptions() SpawnOptions {
@@ -305,7 +309,7 @@ func (p spawnParams) toOptions() SpawnOptions {
 // recursion guard. Kept here so an old client sending `caller` doesn't
 // break the JSON unmarshal.
 type callerParams struct {
-	ID   string        `json:"id,omitempty"`
+	ID   string       `json:"id,omitempty"`
 	Kind session.Kind `json:"kind,omitempty"`
 }
 
@@ -377,7 +381,7 @@ func kernelErrResp(err error) Response {
 // --- client ---
 
 // Call sends one Request to the kernel over the control socket and returns
-// the Response. This is the entire client: \`cs2 ctl\` wraps it. Synchronous
+// the Response. This is the entire client: \`boulez ctl\` wraps it. Synchronous
 // req→resp, as an LLM needs (e.g. spawn → {id}).
 func Call(socketPath string, req Request) (Response, error) {
 	conn, err := net.Dial("unix", socketPath)
@@ -411,11 +415,11 @@ func Call(socketPath string, req Request) (Response, error) {
 // syscall in the same session: `authenticate` binds the connection to an
 // instance, and the subsequent request is attributed to that instance. A
 // one-shot `Call` can't do this because each Call is a fresh connection
-// (unauthenticated top-level). Used by `cs2 ctl as <id> ...` and by tests.
+// (unauthenticated top-level). Used by `boulez ctl as <id> ...` and by tests.
 //
 // Abort-on-error (C4.2, Bug C): if a response in the sequence is an error,
 // CallSession stops sending further requests and returns the responses
-// collected so far. This is what prevents `cs2 ctl as <bogus-id> spawn_worker`
+// collected so far. This is what prevents `boulez ctl as <bogus-id> spawn_worker`
 // from issuing the spawn after `authenticate` fails with UNKNOWN_INSTANCE —
 // the syscall is never written to the socket, so there is no spawn
 // side-effect. Earlier responses whose error is on the FINAL request are

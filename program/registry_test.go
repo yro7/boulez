@@ -38,7 +38,7 @@ type nameAdapter struct {
 	sel []string
 }
 
-func (a nameAdapter) Name() string                  { return a.n }
+func (a nameAdapter) Name() string { return a.n }
 func (a nameAdapter) Matches(program string) bool {
 	for _, s := range a.sel {
 		if s == program {

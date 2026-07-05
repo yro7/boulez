@@ -1,8 +1,8 @@
 package git
 
 import (
-	"claude-squad/cmd"
 	"fmt"
+	"github.com/yro7/boulez/cmd"
 	"os"
 	"os/exec"
 	"strings"
@@ -28,8 +28,8 @@ type Strategy int
 
 const (
 	StrategyDefault Strategy = iota
-	StrategyOurs   // reserved
-	StrategyTheirs  // reserved
+	StrategyOurs             // reserved
+	StrategyTheirs           // reserved
 )
 
 // Conflict describes one conflicted file in a failed merge.
@@ -169,7 +169,7 @@ func (m *defaultMerger) mergeInto(repoPath, targetBranch string, sourceBranches 
 	// user's main checkout). A detached worktree at the branch's commit has
 	// the same content but does not "check out" the branch, so it coexists
 	// with the user's checkout.
-	tmpDir, err := os.MkdirTemp("", "cs2-merge-*")
+	tmpDir, err := os.MkdirTemp("", "boulez-merge-*")
 	if err != nil {
 		return MergeResult{}, fmt.Errorf("merge: create temp worktree dir: %w", err)
 	}

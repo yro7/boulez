@@ -1,7 +1,7 @@
 # Plan : support multi-repo (supervision centrale de dépôts indépendants)
 
-> Objectif : faire de cs2 un panneau de supervision central d'agents tournant
-> sur des **dépôts indépendants**. Aujourd'hui cs2 est codé « cwd = le repo
+> Objectif : faire de boulez un panneau de supervision central d'agents tournant
+> sur des **dépôts indépendants**. Aujourd'hui boulez est codé « cwd = le repo
 > source unique ». On supprime ce couplage : cwd n'a plus de rôle sémantique,
 > chaque instance désigne explicitement son repo, un registre de repos connus
 > amortit la saisie.
@@ -15,30 +15,30 @@
 
 ## Décisions verrouillées (issues du grilling)
 
-1. **Source des repos :** registre cs2 autonome, **permissif**. Le sélecteur
+1. **Source des repos :** registre boulez autonome, **permissif**. Le sélecteur
    de repo à la création propose les repos connus + accepte un path libre
    non enregistré. Tout path libre valide nourrit le registre pour la fois
    suivante.
-2. **Cwd :** le garde `IsGitRepo(cwd)` est **retiré**. cs2 démarre depuis
+2. **Cwd :** le garde `IsGitRepo(cwd)` est **retiré**. boulez démarre depuis
    n'importe où ; cwd n'est plus que le répertoire de lancement.
 3. **Branch-picker :** **refactor propre** — le picker reçoit `repoPath` en
    paramètre explicite, ne dérive plus le repo d'une instance à moitié
    construite ni de `os.Getwd()`.
 4. **Flow de création :** repo choisi **avant** branche (le picker a besoin
    du repo pour scanner les branches).
-5. **Persistance :** dossier config dédié `~/.cs2/`, **coupe le partage avec
+5. **Persistance :** dossier config dédié `~/.boulez/`, **coupe le partage avec
    `cs` officiel**. Résout par la même occasion l'item différé « separate
    config dir ».
 6. **Format du registre :** **minimal** — liste de paths nus
    (`repos: []string`). Pas d'alias, pas de défaut, pas de tri. Voir
    `roadmap_and_ideas.md` pour les enrichissements repoussés.
-7. **Migration :** **démarrage à froid, zéro migration**. `~/.cs2/` démarre
+7. **Migration :** **démarrage à froid, zéro migration**. `~/.boulez/` démarre
    vide. Les instances existantes dans `~/.claude-squad/` sont ignorées par
-   cs2.
+   boulez.
 8. **Limite d'instances :** **retirée**. Le garde `GlobalInstanceLimit = 10`
    disparaît. Le superviseur ne bloque pas arbitrairement.
-9. **Lancement `cs2` :** **inchangé**. Charge toutes les instances persistées
-   (depuis `~/.cs2/`), affiche la liste plate. Le sélecteur de repo
+9. **Lancement `boulez` :** **inchangé**. Charge toutes les instances persistées
+   (depuis `~/.boulez/`), affiche la liste plate. Le sélecteur de repo
    n'intervient qu'à la création.
 
 ---
@@ -56,7 +56,7 @@
    de l'instance. Bug latent dès que plusieurs repos cohabitent. (Décision 3 :
    refactor.)
 5. `config/config.go:18` — `GetConfigDir()` retourne `~/.claude-squad`,
-   partagé avec `cs`. (Décision 5 : `~/.cs2/`.)
+   partagé avec `cs`. (Décision 5 : `~/.boulez/`.)
 
 Le modèle de données est **déjà compatible** : `InstanceData.Worktree.RepoPath`
 est persisté (`session/storage.go:13,29`). C'est la création + la config qui
@@ -66,23 +66,23 @@ ignorent le multi-repo, pas le stockage.
 
 ## Étapes (commits atomiques, chacun vert + testé)
 
-### Étape 1 — Scission du dossier config (`~/.cs2/`)
+### Étape 1 — Scission du dossier config (`~/.boulez/`)
 
 **Décision couverte :** 5, 7.
 
 **Fichiers :**
-- `config/config.go` — `GetConfigDir()` retourne `~/.cs2/` au lieu de
+- `config/config.go` — `GetConfigDir()` retourne `~/.boulez/` au lieu de
   `~/.claude-squad/`. Crée le dossier s'il n'existe pas.
 - `config/config_test.go` — test que `GetConfigDir()` pointe sous le home,
-  suffixe `.cs2`, et est créée si absente.
+  suffixe `.boulez`, et est créée si absente.
 
-**Pas de migration.** Au premier lancement, `~/.cs2/` est vide : pas de
+**Pas de migration.** Au premier lancement, `~/.boulez/` est vide : pas de
 `config.json`, pas de `state.json`, pas d'instances. `LoadConfig` retourne
-une config par défaut (comme un `cs2 reset` implicite, mais silencieux).
+une config par défaut (comme un `boulez reset` implicite, mais silencieux).
 
-**Commit :** `feat(config): use dedicated ~/.cs2 config dir, decouple from cs`
+**Commit :** `feat(config): use dedicated ~/.boulez config dir, decouple from cs`
 
-Coupure propre avec le `cs` officiel. `cs2 debug` affichera le nouveau chemin.
+Coupure propre avec le `cs` officiel. `boulez debug` affichera le nouveau chemin.
 
 ---
 
@@ -93,7 +93,7 @@ Coupure propre avec le `cs` officiel. `cs2 debug` affichera le nouveau chemin.
 **Fichiers (nouveau package) :**
 - `repo/registry.go` — type `Registry`, méthodes `List()`, `Add(path string)`,
   `Remove(path string)`, `Contains(path string)`. Persistance dans
-  `~/.cs2/repos.json` sous forme `[]string`. `Add` déduplique et résout en
+  `~/.boulez/repos.json` sous forme `[]string`. `Add` déduplique et résout en
   chemin absolu.
 - `repo/registry_test.go` — `Add` déduplique, `Remove` idempotent, `List`
   tri stable, persistance round-trip (save → load).
@@ -114,7 +114,7 @@ Coupure propre avec le `cs` officiel. `cs2 debug` affichera le nouveau chemin.
   usage dans `main.go`.
 
 **Tests :**
-- Pas de test dédié ; la vérification est que `cs2` démarre depuis un
+- Pas de test dédié ; la vérification est que `boulez` démarre depuis un
   répertoire non-git sans erreur (testé manuellement + le build reste vert).
   On peut ajouter un test d'intégration léger plus tard si besoin.
 
@@ -231,8 +231,8 @@ choisi explicitement → branches de ce repo → instance dans ce repo.
 ## Critères de succès (vérifiables)
 
 1. `go build ./...` et `go test ./...` passent après chaque commit.
-2. `cs2` démarre depuis n'importe quel répertoire (pas seulement un repo git).
-3. `cs2` utilise `~/.cs2/` (vérifiable via `cs2 debug`) et ne touche plus
+2. `boulez` démarre depuis n'importe quel répertoire (pas seulement un repo git).
+3. `boulez` utilise `~/.boulez/` (vérifiable via `boulez debug`) et ne touche plus
    `~/.claude-squad/`.
 4. À la création d'une instance, un sélecteur de repo propose les repos
    enregistrés + un path libre.

@@ -1,4 +1,4 @@
-# Roadmap & Ideas — cs2
+# Roadmap & Ideas — boulez
 
 > Idées repoussées (pas au scope actuel), décisions produits en attente,
 > et choses implémentées. Ce fichier est un parking, pas un plan d'action.
@@ -10,7 +10,7 @@
 
 ### Import one-shot des repos depuis les IDE (VS Code et forks)
 
-**Commande.** `cs2 repo-import` (avec `--dry-run` et `--ide <name>`).
+**Commande.** `boulez repo-import` (avec `--dry-run` et `--ide <name>`).
 Code isolé dans le package `ideimport/`.
 
 **Contexte / idée reçue.** VS Code ne maintient PAS une liste de repos git.
@@ -24,7 +24,7 @@ repos git (`git.IsGitRepo`).
 (lecture à chaque démarrage interdite). Raisons : format non documenté et
 instable, dépendance à ce que l'utilisateur utilise un IDE VS Code-fork —
 tout cela contredirait le principe « standalone, agent-agnostic » du fork.
-Si le format IDE casse, l'import échoue ou se vide, mais cs2 tourne toujours.
+Si le format IDE casse, l'import échoue ou se vide, mais boulez tourne toujours.
 
 **Implémentation.**
 
@@ -50,7 +50,7 @@ Si le format IDE casse, l'import échoue ou se vide, mais cs2 tourne toujours.
 
 ## Richesse du registre de repos
 
-**Contexte.** Le registre cs2 (décision actuelle) stocke une liste de repos
+**Contexte.** Le registre boulez (décision actuelle) stocke une liste de repos
 connus. Question de forme : liste de paths nus, ou structure plus riche
 (alias, repo par défaut, tri par récence).
 
@@ -101,7 +101,7 @@ Voir `PLAN-ssh-support.md`, décision 8.)*
    multi-repo (deux repos, cwd neutre), routing via fakes, fallback orphelin.
 
 2. **Couplage `gh` (GitHub CLI) dans `PushChanges` / `OpenBranchURL` /
-   `checkGHCLI` (`session/git/worktree_git.go`).** Rend cs2 inopérant sur
+   `checkGHCLI` (`session/git/worktree_git.go`).** Rend boulez inopérant sur
    GitLab / local-host. Vrai problème, mais c'est un **autre feature**
    ("support non-GitHub"), pas du SSH. L'ouvrir maintenant = scope creep.
    Un plan séparé le traitera.
@@ -115,15 +115,15 @@ Voir `PLAN-ssh-support.md`, décision 8.)*
 *(Choses vues pendant v2 mais non corrigées, pour rester atomique. Reprend
 la décision 8 : la dette est persistée au fur et à mesure.)*
 
-1. **Master SSH managé par cs2 (décision B du plan, defer).** Chaque opération
+1. **Master SSH managé par boulez (décision B du plan, defer).** Chaque opération
    `git status` / `tmux has-session` ouvre une nouvelle connexion SSH. v2
    documente ControlMaster dans `~/.ssh/config` (recommandation utilisateur) ;
-   cs2 ne gère pas de master lui-même. À réévaluer si le polling distant
+   boulez ne gère pas de master lui-même. À réévaluer si le polling distant
    multi-instances devient trop lent. Forme possible : un master partagé par
-   host alias, démarré/tué par cs2.
+   host alias, démarré/tué par boulez.
 
 2. **Registre de repos per-host (décision D du plan, defer).** v2 ne maintient
-   qu'un registre d'aliases SSH (`~/.cs2/hosts.json`), pas de mapping
+   qu'un registre d'aliases SSH (`~/.boulez/hosts.json`), pas de mapping
    host → repos connus. La sélection d'un repo sur un host distant est du
    free-text path uniquement (validé via `ssh host git -C <path> rev-parse`).
    Un registre per-host deviendrait pertinent si l'on réutilise souvent les
@@ -143,7 +143,7 @@ la décision 8 : la dette est persistée au fur et à mesure.)*
    vers `InstanceData.Host` (bookkeeping local) + `host.Lookup` (résolution
    au restore) + `pendingHost` (flow de création). Il n'apparaît **jamais**
    dans : les commit messages (`pausedCommitMessage(title, t)` — signature
-   sans host), les noms de branche (`cs2/` + `sanitizeBranchName(title)`),
-   ni les noms de session tmux (`toClaudeSquadTmuxName(title)`). Invariant
+   sans host), les noms de branche (`boulez/` + `sanitizeBranchName(title)`),
+   ni les noms de session tmux (`toBoulezTmuxName(title)`). Invariant
    structurel, piné par `TestInstance_PII_HostAliasNotInArtifacts`. Pas une
    dette — un audit clôturé, consigné ici pour traçabilité.

@@ -5,9 +5,9 @@ import (
 	"path/filepath"
 	"testing"
 
-	cmdtest "claude-squad/cmd/cmd_test"
 	"github.com/stretchr/testify/assert"
 	"github.com/stretchr/testify/require"
+	cmdtest "github.com/yro7/boulez/cmd/cmd_test"
 )
 
 // TestResolveWorktreePaths_RelativePathPassedAsIs is the regression guard for
@@ -50,7 +50,7 @@ func TestResolveWorktreePaths_RelativePathPassedAsIs(t *testing.T) {
 }
 
 // TestResolveWorktreePaths_TildePathPassedAsIs pins that a ~-relative path
-// (the SSHHost worktree dir is "~/.cs2/worktrees") reaches git -C unmodified —
+// (the SSHHost worktree dir is "~/.boulez/worktrees") reaches git -C unmodified —
 // filepath.Abs would resolve ~ against the local $HOME, pointing at the wrong
 // machine. The remote shell must expand ~, not the local process.
 func TestResolveWorktreePaths_TildePathPassedAsIs(t *testing.T) {

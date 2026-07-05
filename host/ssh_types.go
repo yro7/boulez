@@ -5,7 +5,7 @@ import (
 	"time"
 )
 
-// minimalFileInfo is a minimal os.FileInfo for remote paths. cs2's callers
+// minimalFileInfo is a minimal os.FileInfo for remote paths. boulez's callers
 // (Pause, Cleanup, IsValidWorktree) only rely on existence and the
 // os.IsNotExist sentinel; IsDir is included for completeness. Size/ModTime
 // are not fetched over the network (no caller needs them).

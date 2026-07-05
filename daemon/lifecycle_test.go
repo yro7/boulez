@@ -9,9 +9,9 @@ import (
 	"github.com/stretchr/testify/require"
 )
 
-// setConfigDir points the cs2 config dir at a temp dir for the duration of a
+// setConfigDir points the boulez config dir at a temp dir for the duration of a
 // test, so ProbeSocket/ReadPID resolve against an isolated layout and never
-// touch the user's real ~/.cs2. GetConfigDir reads $HOME via os.UserHomeDir on
+// touch the user's real ~/.boulez. GetConfigDir reads $HOME via os.UserHomeDir on
 // every call (no caching), so t.Setenv alone is sufficient.
 func setConfigDir(t *testing.T, dir string) {
 	t.Helper()
@@ -38,7 +38,7 @@ func TestProbeSocket_StaleSocketFileNotServing(t *testing.T) {
 	dir := t.TempDir()
 	setConfigDir(t, dir)
 
-	socketPath := filepath.Join(dir, ".cs2", "ctl.sock")
+	socketPath := filepath.Join(dir, ".boulez", "ctl.sock")
 	require.NoError(t, os.MkdirAll(filepath.Dir(socketPath), 0o755))
 	// A regular file (not a listening socket) — dial must fail.
 	require.NoError(t, os.WriteFile(socketPath, []byte{}, 0644))
@@ -64,8 +64,8 @@ func TestReadPID_ParsesPID(t *testing.T) {
 	dir := t.TempDir()
 	setConfigDir(t, dir)
 
-	require.NoError(t, os.MkdirAll(filepath.Join(dir, ".cs2"), 0o755))
-	require.NoError(t, os.WriteFile(filepath.Join(dir, ".cs2", "daemon.pid"),
+	require.NoError(t, os.MkdirAll(filepath.Join(dir, ".boulez"), 0o755))
+	require.NoError(t, os.WriteFile(filepath.Join(dir, ".boulez", "daemon.pid"),
 		[]byte("4242"), 0644))
 
 	pid, exists, err := ReadPID()

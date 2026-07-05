@@ -7,12 +7,12 @@ import (
 	"sync"
 	"testing"
 
-	"claude-squad/cmd"
-	"claude-squad/cmd/cmd_test"
-	"claude-squad/config"
-	"claude-squad/host"
-	"claude-squad/session"
-	"claude-squad/session/tmux"
+	"github.com/yro7/boulez/cmd"
+	"github.com/yro7/boulez/cmd/cmd_test"
+	"github.com/yro7/boulez/config"
+	"github.com/yro7/boulez/host"
+	"github.com/yro7/boulez/session"
+	"github.com/yro7/boulez/session/tmux"
 
 	"github.com/stretchr/testify/assert"
 	"github.com/stretchr/testify/require"
@@ -51,7 +51,7 @@ func (m *memStorage) DeleteAllInstances() error {
 	return nil
 }
 
-func (m *memStorage) GetHelpScreensSeen() uint32      { return m.helpSeen }
+func (m *memStorage) GetHelpScreensSeen() uint32 { return m.helpSeen }
 func (m *memStorage) SetHelpScreensSeen(seen uint32) error {
 	m.helpSeen = seen
 	return nil
@@ -150,7 +150,7 @@ func TestKernel_Kill_LeavesSiblingInstancesAlone(t *testing.T) {
 // out elsewhere), the kernel MUST still remove the record from the fleet
 // and from storage. Before the fix, Kill returned the cleanup error early
 // without removing the record, so a Dead instance accumulated forever — only
-// `cs2 reset` could clear it.
+// `boulez reset` could clear it.
 func TestKernel_Kill_RemovesRecordEvenWhenCleanupFails(t *testing.T) {
 	k, spawner, state := newStorageKernel(t)
 

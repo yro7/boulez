@@ -7,7 +7,7 @@
 // (SRP — presets knows about presets and nothing else), a minimal JSON format,
 // and self-healing (a missing or corrupt file is treated as empty, never an
 // error that blocks startup). The file is read fresh on every call, so an
-// agent or editor can change it between two Ctrl+R opens and cs2 picks up the
+// agent or editor can change it between two Ctrl+R opens and boulez picks up the
 // new contents with no watcher (read-on-open reload — see PLAN-quick-session).
 //
 // A preset is an explicit, complete recipe: it does NOT reference the
@@ -17,15 +17,15 @@
 package presets
 
 import (
-	"claude-squad/config"
 	"encoding/json"
 	"fmt"
+	"github.com/yro7/boulez/config"
 	"os"
 	"path/filepath"
 	"sort"
 )
 
-// storeFileName is the name of the presets file inside the cs2 config dir.
+// storeFileName is the name of the presets file inside the boulez config dir.
 const storeFileName = "presets.json"
 
 // Preset is a complete recipe for starting an instance without the selector
@@ -41,14 +41,14 @@ type Preset struct {
 	// SSHHost regardless); the preset does not mutate the registry.
 	Host string `json:"host,omitempty"`
 	// Profile is the name of a config.Profile whose Program is used. Empty means
-	// "use the default program" (the cs2 --program flag / config default). A
+	// "use the default program" (the boulez --program flag / config default). A
 	// name that matches no profile is rejected at selection time, not here.
 	Profile string `json:"profile,omitempty"`
 	// Prompt is the initial task sent to the agent once it has started. Empty
 	// means no initial prompt (the instance starts in Ready).
 	Prompt string `json:"prompt,omitempty"`
 	// Branch is the existing branch to start on. Empty means a new branch from
-	// HEAD (the cs2/<title> convention). A name that does not exist is rejected
+	// HEAD (the boulez/<title> convention). A name that does not exist is rejected
 	// at Start time (the preset does not create branches).
 	Branch string `json:"branch,omitempty"`
 }
@@ -61,8 +61,8 @@ type Store struct {
 	path string
 }
 
-// NewStore returns a Store backed by presets.json inside the cs2 config
-// directory (~/.cs2/). The directory is created on demand by config.GetConfigDir.
+// NewStore returns a Store backed by presets.json inside the boulez config
+// directory (~/.boulez/). The directory is created on demand by config.GetConfigDir.
 func NewStore() (*Store, error) {
 	configDir, err := config.GetConfigDir()
 	if err != nil {

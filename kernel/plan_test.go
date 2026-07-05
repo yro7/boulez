@@ -4,9 +4,9 @@ import (
 	"os"
 	"testing"
 
-	"claude-squad/session"
 	"github.com/stretchr/testify/assert"
 	"github.com/stretchr/testify/require"
+	"github.com/yro7/boulez/session"
 )
 
 // withTempHome isolates HOME so plan files land under a temp dir.
@@ -26,16 +26,16 @@ func withTempHome(t *testing.T) func() {
 
 // TestPlan_SaveLoad_RoundTrip proves a plan survives save→load: the
 // resumability contract. An orchestrator's plan (workers + targets + state)
-// must persist across a cs2 restart.
+// must persist across a boulez restart.
 func TestPlan_SaveLoad_RoundTrip(t *testing.T) {
 	restore := withTempHome(t)
 	defer restore()
 
 	p := &OrchestratorPlan{
-		ID:        "orch-1",
-		WorkerIDs: []string{"w-1", "w-2"},
+		ID:           "orch-1",
+		WorkerIDs:    []string{"w-1", "w-2"},
 		MergeTargets: []MergeTarget{{Repo: "/r", Branch: "integration", Sources: []string{"feat-a"}}},
-		State:     PlanRunning,
+		State:        PlanRunning,
 	}
 	require.NoError(t, SavePlan(p))
 
@@ -137,7 +137,7 @@ func TestKernel_Spawn_RecordsWorkerInPlan(t *testing.T) {
 }
 
 // TestKernel_Spawn_TopLevelSpawnDoesNotTouchPlan proves a top-level spawn
-// (cs2 ctl) does NOT create a plan — plans are orchestrator-scoped.
+// (boulez ctl) does NOT create a plan — plans are orchestrator-scoped.
 func TestKernel_Spawn_TopLevelSpawnDoesNotTouchPlan(t *testing.T) {
 	restore := withTempHome(t)
 	defer restore()

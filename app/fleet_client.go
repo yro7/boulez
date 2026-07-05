@@ -5,10 +5,10 @@ import (
 	"fmt"
 	"time"
 
-	"claude-squad/kernel"
-	"claude-squad/log"
-	"claude-squad/session"
 	tea "github.com/charmbracelet/bubbletea"
+	"github.com/yro7/boulez/kernel"
+	"github.com/yro7/boulez/log"
+	"github.com/yro7/boulez/session"
 )
 
 // fleetClient is the TUI's seam over the daemon's control socket. The TUI is
@@ -161,7 +161,7 @@ func (m *home) resolveFleet() fleetClient {
 
 // fleetTickMsg triggers a fleet refresh from the kernel on a steady cadence
 // (C3.2). The TUI polls list_instances_full at human cadence so external
-// mutations (cs2 ctl, another TUI, an orchestrator) become visible without a
+// mutations (boulez ctl, another TUI, an orchestrator) become visible without a
 // per-keystroke round-trip. Mutations the TUI itself issues refresh the fleet
 // immediately on their ack (see refreshFleetAfterMutation).
 type fleetTickMsg struct{}

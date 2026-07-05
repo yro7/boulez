@@ -6,17 +6,17 @@ import (
 	"os/exec"
 	"strings"
 
-	"claude-squad/cmd"
-	"claude-squad/session/fs"
+	"github.com/yro7/boulez/cmd"
+	"github.com/yro7/boulez/session/fs"
 )
 
 // SSHHost runs an instance's environment on a remote machine via the system
 // ssh binary. It relies on the user's ssh config (~/.ssh/config), agent, and
-// keys — cs2 never stores credentials. Every command, filesystem operation,
+// keys — boulez never stores credentials. Every command, filesystem operation,
 // and PTY is routed over `ssh <alias> ...`.
 //
 // The alias is an entry the user has configured in their ssh config / known
-// hosts (e.g. "dev-machine", "gpu-box"). cs2 treats it as opaque; resolving
+// hosts (e.g. "dev-machine", "gpu-box"). boulez treats it as opaque; resolving
 // it to a host/user/port is ssh's job.
 type SSHHost struct {
 	alias string
@@ -51,9 +51,9 @@ func (h SSHHost) Executor() cmd.Executor { return sshExecutor{alias: h.alias} }
 // the remote shell expands them (no $HOME resolution round-trip).
 func (h SSHHost) FS() fs.FS { return sshFS{alias: h.alias} }
 
-// WorktreeDir implements Host: the literal ~/.cs2/worktrees, expanded by the
+// WorktreeDir implements Host: the literal ~/.boulez/worktrees, expanded by the
 // remote shell when used in an `ssh host git -C <dir> ...` command.
-func (h SSHHost) WorktreeDir() (string, error) { return "~/.cs2/worktrees", nil }
+func (h SSHHost) WorktreeDir() (string, error) { return "~/.boulez/worktrees", nil }
 
 // ResolveRepoPath implements Host: a remote repo path is returned unchanged so
 // the remote shell resolves it. Relative paths and ~ expand against the

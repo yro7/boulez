@@ -1,9 +1,9 @@
 package kernel
 
 import (
-	"claude-squad/session"
-	"claude-squad/session/git"
 	"errors"
+	"github.com/yro7/boulez/session"
+	"github.com/yro7/boulez/session/git"
 	"sync"
 	"testing"
 
@@ -58,11 +58,11 @@ type fakeMerger struct {
 }
 
 type mergeCall struct {
-	repoPath   string
-	target     string
-	sources    []string
-	strategy   git.Strategy
-	trunk      bool // true if called via MergeTrunk (Land path)
+	repoPath string
+	target   string
+	sources  []string
+	strategy git.Strategy
+	trunk    bool // true if called via MergeTrunk (Land path)
 }
 
 func (f *fakeMerger) Merge(repoPath, targetBranch string, sourceBranches []string, strategy git.Strategy) (git.MergeResult, error) {
@@ -406,7 +406,7 @@ func TestKernel_Land_HostCurrentBranchStillRefused(t *testing.T) {
 // contract (C2.2): the daemon can hot-swap the protected set without
 // reconstructing the kernel, and the new set takes effect immediately for
 // subsequent Merge/Land calls. This is the seam that lets the daemon read
-// ~/.cs2/protected.json on SIGHUP and push the union into the running kernel.
+// ~/.boulez/protected.json on SIGHUP and push the union into the running kernel.
 func TestKernel_SetProtectedBranches_ReloadsAtRuntime(t *testing.T) {
 	merger := &fakeMerger{result: git.MergeResult{Status: git.MergeMerged}}
 	k := New(nil, WithMerger(merger), WithoutAutosave())

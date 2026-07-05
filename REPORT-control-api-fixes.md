@@ -1,4 +1,4 @@
-# Report — cs2 control API hardening (PLAN-control-api-fixes.md)
+# Report — boulez control API hardening (PLAN-control-api-fixes.md)
 
 > Final report for the 6-step control-API hardening plan. All 6 steps are
 > implemented, each as a standalone atomic commit, `go build ./... &&
@@ -20,11 +20,11 @@ substrate step 4 builds on.)
 
 ## Summary of the 6 fixes
 
-### 1. `cs2 ctl` stdout is strictly JSON (Fix #6)
+### 1. `boulez ctl` stdout is strictly JSON (Fix #6)
 `log.Close()` no longer prints `wrote logs to ...` to stdout. The
 log-path-on-close behaviour is opt-in via `log.SetPrintPathOnClose`.
-`cs2 ctl` output is now a single parseable JSON document —
-`cs2 ctl list_instances | python3 -m json.tool` works without
+`boulez ctl` output is now a single parseable JSON document —
+`boulez ctl list_instances | python3 -m json.tool` works without
 post-processing.
 
 ### 2. Host-current-branch merge guard (Fix #3, spec decision 7)
@@ -37,7 +37,7 @@ checkout, so the post-checkout current branch doesn't self-allow). Merging
 into the branch the user is standing on is now non-contournable.
 
 ### 3. Single-instance daemon launch (Fix #5)
-`daemon.LaunchDaemon` takes an `O_EXCL` lock file (`~/.cs2/daemon.lock`)
+`daemon.LaunchDaemon` takes an `O_EXCL` lock file (`~/.boulez/daemon.lock`)
 with a PID; concurrent `ctl` storms launch exactly one daemon. A stale lock
 with a dead PID is reclaimed. `cmd_ctl.go` replaced the blind `sleep` with
 `daemon.WaitForSocket` (active poll, ~50 ms, ~3 s timeout) so a client that
@@ -49,7 +49,7 @@ derived from a per-connection `ctlSession` bound via the new `authenticate`
 syscall, which validates the instance exists and verifies its `Kind`. The
 kernel uses the instance's **recorded** Kind, so a client can no longer lie
 about its Kind to bypass the `WORKER_CANNOT_SPAWN` / `NESTED_ORCHESTRATOR`
-guards. New `cs2 ctl as <id> <syscall>` subcommand authenticates then
+guards. New `boulez ctl as <id> <syscall>` subcommand authenticates then
 issues a syscall on one connection (resolves finding #4: plan.json is now
 reachable from the CLI — an orchestrator's `spawn_worker` calls are
 attributed to it and recorded in its plan).
@@ -80,10 +80,10 @@ is also typed.
 
 ## Dogfooding smoke test (final)
 
-Isolated HOME under `/tmp/cs2-test-home`, throwaway repo under `/tmp`.
-Built `/tmp/cs2` from the worktree.
+Isolated HOME under `/tmp/boulez-test-home`, throwaway repo under `/tmp`.
+Built `/tmp/boulez` from the worktree.
 
-- **Pure JSON stdout:** `cs2 ctl list_instances` → `[]` (no log line).
+- **Pure JSON stdout:** `boulez ctl list_instances` → `[]` (no log line).
   Parseable by `python3 -m json.tool`. ✓
 - **Kind/Status as strings:** `list_instances` shows `"Kind": "worker"`,
   `"Status": "running"`, `"Kind": "orchestrator"`. ✓
@@ -94,12 +94,12 @@ Built `/tmp/cs2` from the worktree.
   `spawn_worker --branch ghost --branch-existing` →
   `{"code":"BRANCH_NOT_FOUND","message":"branch ghost not found locally or on remote"}`. ✓
 - **`as` records the plan:** spawned an orchestrator, then
-  `cs2 ctl as $ORCH spawn_worker ...` → worker created and recorded in
-  `~/.cs2/orchestrators/$ORCH/plan.json` (`worker_ids` lists it). ✓
+  `boulez ctl as $ORCH spawn_worker ...` → worker created and recorded in
+  `~/.boulez/orchestrators/$ORCH/plan.json` (`worker_ids` lists it). ✓
 
 ## Invariants pinned by tests
 
-7. `cs2 ctl` stdout is a single JSON document, parseable without
+7. `boulez ctl` stdout is a single JSON document, parseable without
    post-processing. (Step 1)
 8. A syscall's caller comes from the transport (authenticated session),
    never from client params — a client cannot declare a worker identity to

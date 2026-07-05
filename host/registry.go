@@ -1,5 +1,5 @@
 // Package host provides the storage layer for the set of ssh hosts known to
-// cs2 (the "host registry").
+// boulez (the "host registry").
 //
 // The registry is a minimal, permissive list of ssh aliases. It is used to
 // pre-populate the host selector at instance creation. An alias typed freely
@@ -13,17 +13,17 @@
 package host
 
 import (
-	"claude-squad/config"
 	"encoding/json"
+	"github.com/yro7/boulez/config"
 	"os"
 	"path/filepath"
 )
 
-// registryFileName is the name of the registry file inside the cs2 config dir.
+// registryFileName is the name of the registry file inside the boulez config dir.
 const registryFileName = "hosts.json"
 
 // LocalAlias is the canonical alias for the local host (the machine running
-// cs2). Stored in InstanceData.Host when an instance runs locally; never
+// boulez). Stored in InstanceData.Host when an instance runs locally; never
 // stored in the registry (it is always available implicitly).
 const LocalAlias = "local"
 
@@ -36,8 +36,8 @@ type Registry struct {
 	path string
 }
 
-// NewRegistry returns a Registry backed by hosts.json inside the cs2 config
-// directory (~/.cs2/).
+// NewRegistry returns a Registry backed by hosts.json inside the boulez config
+// directory (~/.boulez/).
 func NewRegistry() (*Registry, error) {
 	configDir, err := config.GetConfigDir()
 	if err != nil {

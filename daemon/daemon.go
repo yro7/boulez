@@ -1,12 +1,12 @@
 package daemon
 
 import (
-	"claude-squad/config"
-	"claude-squad/kernel"
-	"claude-squad/log"
-	"claude-squad/program"
-	"claude-squad/protected"
 	"fmt"
+	"github.com/yro7/boulez/config"
+	"github.com/yro7/boulez/kernel"
+	"github.com/yro7/boulez/log"
+	"github.com/yro7/boulez/program"
+	"github.com/yro7/boulez/protected"
 	"os"
 	"os/exec"
 	"os/signal"
@@ -37,13 +37,13 @@ func RunDaemon(cfg *config.Config) error {
 	// truth) every tick. The kernel persists every mutation itself (autosave).
 
 	// The kernel is the single-writer control authority. The daemon owns it
-	// and serves the control socket so `cs2 ctl` (and future LLM tools) can
+	// and serves the control socket so `boulez ctl` (and future LLM tools) can
 	// drive the fleet. The auto-yes loop below runs alongside.
 	//
 	// Protected branches (spec decision 7): the daemon has no cwd and no repo
 	// of its own (it is a service, C2.2), so it cannot derive "the branch the
 	// user is standing on." Instead, protected branches are declared
-	// explicitly per repo in the protected store (~/.cs2/protected.json) and
+	// explicitly per repo in the protected store (~/.boulez/protected.json) and
 	// fed to the kernel as a flat, kernel-wide guard. The store is reloaded
 	// on SIGHUP (see reloadProtected below) without reconstructing the kernel.
 	// The conventional main/master guard in the Merger remains as defense in
@@ -66,7 +66,7 @@ func RunDaemon(cfg *config.Config) error {
 	// periodic EnsureLive probe) never worked reliably and is gone. An
 	// orchestrator is now spawned explicitly by the user from the TUI via the
 	// O key (app.spawnOrchestrator) — same as any other instance. The daemon
-	// still owns the kernel/control socket so `cs2 ctl` works; it just no
+	// still owns the kernel/control socket so `boulez ctl` works; it just no
 	// longer has any orchestrator-specific policy.
 
 	socketPath, err := kernel.SocketPath()
@@ -155,10 +155,10 @@ func RunDaemon(cfg *config.Config) error {
 // daemon is already running OR another launcher is in the middle of starting
 // one, LaunchDaemon returns nil without launching a second process. This
 // fixes the auto-launch race found in dogfooding: a storm of concurrent
-// 'cs2 ctl' calls (with the daemon down) each saw the socket missing and
+// 'boulez ctl' calls (with the daemon down) each saw the socket missing and
 // each launched its own daemon — up to 5+ processes.
 //
-// The guard is a lock file (~/.cs2/daemon.lock) created with O_EXCL (atomic
+// The guard is a lock file (~/.boulez/daemon.lock) created with O_EXCL (atomic
 // across processes). The lock carries the launcher's PID so a stale lock
 // (from a crashed launcher) is reclaimed. The daemon itself writes the real
 // PID to daemon.pid on startup (StopDaemon consumes that).
@@ -185,7 +185,7 @@ func LaunchDaemon() error {
 		return fmt.Errorf("failed to get executable path: %w", err)
 	}
 
-	// `cs2 daemon run` is the canonical daemon entrypoint (decision D2): the
+	// `boulez daemon run` is the canonical daemon entrypoint (decision D2): the
 	// OS service (Phase 2) and the auto-start both invoke it.
 	cmd := exec.Command(execPath, "daemon", "run")
 

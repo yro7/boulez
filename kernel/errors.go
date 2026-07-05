@@ -33,7 +33,7 @@ func (ErrNestedOrchestrator) Error() string {
 }
 
 // ErrNonTopLevelLand is the topology guard for the Land syscall: only a
-// top-level caller (`cs2 ctl` / TUI) may land onto a trunk. Workers and
+// top-level caller (`boulez ctl` / TUI) may land onto a trunk. Workers and
 // orchestrators must use Merge, which refuses trunks in depth. This mirrors
 // the recursion guard's intent: the v1 topology forbids instances from
 // touching the trunk.

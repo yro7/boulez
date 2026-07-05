@@ -1,6 +1,6 @@
 package kernel
 
-import "claude-squad/session/git"
+import "github.com/yro7/boulez/session/git"
 
 // recordWorkerInPlan appends a worker ID to the orchestrator's plan, creating
 // the plan in Running state if it doesn't exist yet. Best-effort: callers

@@ -10,9 +10,9 @@ import (
 	"github.com/stretchr/testify/assert"
 	"github.com/stretchr/testify/require"
 
-	"claude-squad/config"
-	"claude-squad/session"
-	"claude-squad/ui"
+	"github.com/yro7/boulez/config"
+	"github.com/yro7/boulez/session"
+	"github.com/yro7/boulez/ui"
 )
 
 // TestHomeBootsFromNonRepoCWD is the C3.6 regression guard: the TUI's home

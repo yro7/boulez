@@ -26,7 +26,7 @@ func TestPiAdapter_Detect(t *testing.T) {
 		wantKind PromptKind
 	}{
 		{
-			name:     "idle footer with cs2 sentinel -> Ready",
+			name:     "idle footer with boulez sentinel -> Ready",
 			content:  "0.0%/1.0M (auto)                                        <provider> <model> • high\n" + PiReadySentinel,
 			wantStat: StatusReady,
 			wantKind: PromptReady,
@@ -66,9 +66,9 @@ func TestPiAdapter_Detect(t *testing.T) {
 
 func TestPiReadySentinelIsStable(t *testing.T) {
 	// Guard against accidental edits to the sentinel string: it is a shared
-	// contract with the pi-cs2 Pi extension. If this test breaks, update both
-	// sides (program/pi.go and extensions/pi-cs2.ts) together.
-	assert.Equal(t, "⟦cs2:ready⟧", PiReadySentinel)
+	// contract with the pi-boulez Pi extension. If this test breaks, update both
+	// sides (program/pi.go and extensions/pi-boulez.ts) together.
+	assert.Equal(t, "⟦boulez:ready⟧", PiReadySentinel)
 }
 
 func TestPiAdapter_Registered(t *testing.T) {

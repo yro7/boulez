@@ -2,7 +2,7 @@
 
 > Réduit la friction du workflow « 3 agents en parallèle → tout ramener sur
 > main ». Aujourd'hui chaque instance demande : `p` (commit+push) puis un
-> changement de contexte vers `cs2 ctl merge` côté shell, le tout ×3. Ce plan
+> changement de contexte vers `boulez ctl merge` côté shell, le tout ×3. Ce plan
 > introduit une action TUI unique qui enchaîne les trois, derrière une garde
 > explicite qui lève la protection `main`/`master` **uniquement** pour ce
 > syscall top-level.
@@ -18,7 +18,7 @@ Ce qui existe déjà :
   (`kernel/kernel.go:324`) + `session/git.Merger` (`session/git/merge.go`) sont
   implémentés, testés, et défendus (garde `main`/`master` côté Merger +
   garde branche-courante-du-repo-hôte côté kernel). Reachable uniquement via
-  `cs2 ctl merge` (transport `kernel/transport.go:188`).
+  `boulez ctl merge` (transport `kernel/transport.go:188`).
 
 Le trou : `Merge` refuse `main`/`master` **par construction**
 (`session/git/merge.go:171` `protectedBranches`), doublé côté kernel
@@ -35,7 +35,7 @@ les orchestrators Shape B).
    sur `Merge` : cela ouvrirait la porte à un client forgé. `Land` est un
    syscall séparé, dans le wire (`"land"`), qui peut cibler `main`/`master`.
 2. **`Land` n'est autorisé que pour un caller top-level.** `IsTopLevel()`
-   doit être vrai (caller = `cs2 ctl` / TUI, pas un worker ni un
+   doit être vrai (caller = `boulez ctl` / TUI, pas un worker ni un
    orchestrator). Un worker/orchestrator qui tente `land` → erreur typée,
    comme `ErrWorkerCannotSpawn`. C'est le miroir exact de la garde de
    récursion : la topologie v1 interdit aux instances de toucher le tronc.
@@ -52,7 +52,7 @@ les orchestrators Shape B).
    `--target-branch integration` est aussi valide : `Land` ne refuse que si
    la cible est la branche courante du repo hôte (garde kernel inchangée).
 6. **Commit message configurable** mais avec un défaut sensé (réutilise le
-   pattern `[claudesquad] update from '<title>' on <date>`). v1 ne propose
+   pattern `[boulez] update from '<title>' on <date>`). v1 ne propose
    pas d'éditeur ; v1.1 pourrait ouvrir une modale de saisie.
 7. **Une seule instance à la fois en v1.** Pas de « land all ready » dans ce
    plan — c'est l'étape 6 (optionnelle, différée) car le merge séquentiel de
@@ -179,17 +179,17 @@ d'enregistrement `RecordMerge` (réservé aux orchestrators).
 
 ---
 
-### Étape 3 — Wire `land` dans le transport + `cs2 ctl land`
+### Étape 3 — Wire `land` dans le transport + `boulez ctl land`
 
 **Problème.** `Land` doit être reachable. Deux consommateurs : la TUI (étape
-4) et le shell (`cs2 ctl land`, utile pour scripting / reprise).
+4) et le shell (`boulez ctl land`, utile pour scripting / reprise).
 
 **Changement.**
 - `kernel/transport.go` : nouveau `case "land"` qui parse `landParams`,
   dérive le caller depuis la session (jamais depuis les params, comme
   `merge`), appelle `k.Land(caller, ...)`. Refuse si la session n'est pas
   top-level (renvoie `NON_TOP_LEVEL_LAND`).
-- `cmd_ctl.go` : nouveau sous-mode `cs2 ctl land --target-repo <path>
+- `cmd_ctl.go` : nouveau sous-mode `boulez ctl land --target-repo <path>
   --target-branch main --source <branch> [--strategy default]`. Réutilise
   `rawCtl`. Documenté dans le long help.
 - `kernel/errors.go` : mapper `ErrNonTopLevelLand` → code wire
@@ -207,10 +207,10 @@ type landParams struct {
 **Tests** :
 - `kernel/transport_test.go` : `land` top-level réussit et appelle le fake ;
   `land` depuis une session worker → `NON_TOP_LEVEL_LAND`.
-- `cmd/cmd_test.go` : round-trip `cs2 ctl land` renvoie un JSON pur et
+- `cmd/cmd_test.go` : round-trip `boulez ctl land` renvoie un JSON pur et
   exécute le Land (fake spawner/merger injectés).
 
-**Commit :** `feat(transport): expose land syscall + cs2 ctl land`
+**Commit :** `feat(transport): expose land syscall + boulez ctl land`
 
 ---
 

@@ -10,7 +10,7 @@ import (
 )
 
 // TestLocalFS_MirrorsOs verifies that LocalFS behaves identically to the os
-// package for the operations cs2 relies on. This is the contract v2's remote
+// package for the operations boulez relies on. This is the contract v2's remote
 // FS must preserve (modulo acting on the right host).
 func TestLocalFS_MirrorsOs(t *testing.T) {
 	lfs := LocalFS{}

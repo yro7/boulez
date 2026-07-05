@@ -10,7 +10,7 @@ import (
 )
 
 // newTestRegistry creates a Registry backed by a temp file, isolated from the
-// real ~/.cs2/ state.
+// real ~/.boulez/ state.
 func newTestRegistry(t *testing.T) *Registry {
 	t.Helper()
 	return &Registry{path: filepath.Join(t.TempDir(), "repos.json")}
@@ -199,8 +199,8 @@ func TestNewRegistryUsesConfigDir(t *testing.T) {
 	r, err := NewRegistry()
 	require.NoError(t, err)
 
-	// The backing file lives under the cs2 config dir.
+	// The backing file lives under the boulez config dir.
 	assert.True(t, filepath.IsAbs(r.path))
-	assert.True(t, filepath.HasPrefix(r.path, filepath.Join(tempHome, ".cs2")))
+	assert.True(t, filepath.HasPrefix(r.path, filepath.Join(tempHome, ".boulez")))
 	assert.Equal(t, "repos.json", filepath.Base(r.path))
 }

@@ -3,7 +3,7 @@ package session
 import (
 	"fmt"
 
-	"claude-squad/session/git"
+	"github.com/yro7/boulez/session/git"
 )
 
 // LandCaller is the seam LandInstance uses to perform the kernel Land
@@ -12,7 +12,7 @@ import (
 // session does not depend on kernel) and testable in isolation.
 //
 // The caller identity is constructed by LandInstance as a top-level
-// CallerContext (empty) — LandInstance is invoked only from the TUI / `cs2
+// CallerContext (empty) — LandInstance is invoked only from the TUI / `boulez
 // ctl`, which are top-level callers. The concrete kernel enforces that the
 // session reaching it is top-level.
 type LandCaller interface {

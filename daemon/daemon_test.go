@@ -1,9 +1,9 @@
 package daemon
 
 import (
-	"claude-squad/kernel"
-	"claude-squad/log"
-	"claude-squad/protected"
+	"github.com/yro7/boulez/kernel"
+	"github.com/yro7/boulez/log"
+	"github.com/yro7/boulez/protected"
 	"os"
 	"path/filepath"
 	"sync"
@@ -25,7 +25,7 @@ func TestMain(m *testing.M) {
 
 // TestAcquireLaunchLock_FirstCallerWins proves the concurrency core of the
 // auto-launch fix: when N goroutines race to acquire the launch lock (the
-// scenario from dogfooding — a storm of `cs2 ctl` calls each launching a
+// scenario from dogfooding — a storm of `boulez ctl` calls each launching a
 // daemon), exactly ONE wins. Before the fix, all N launched their own daemon.
 func TestAcquireLaunchLock_FirstCallerWins(t *testing.T) {
 	lock := filepath.Join(t.TempDir(), "daemon.lock")
@@ -127,7 +127,6 @@ func itoa(pid int) string {
 	}
 	return string(b[i:])
 }
-
 
 // TestReloadProtected_PushesNewSetIntoKernel proves the SIGHUP reload contract
 // (C2.2): reloadProtected reads the protected store and pushes the union into

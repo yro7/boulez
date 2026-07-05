@@ -1,16 +1,16 @@
 package session
 
 import (
-	"claude-squad/host"
-	"claude-squad/log"
-	"claude-squad/program"
-	"claude-squad/session/git"
-	"claude-squad/session/tmux"
 	"crypto/rand"
 	"crypto/sha256"
 	"encoding/hex"
 	"encoding/json"
 	"fmt"
+	"github.com/yro7/boulez/host"
+	"github.com/yro7/boulez/log"
+	"github.com/yro7/boulez/program"
+	"github.com/yro7/boulez/session/git"
+	"github.com/yro7/boulez/session/tmux"
 	"regexp"
 	"strings"
 	"time"
@@ -130,7 +130,7 @@ func (k Kind) String() string {
 }
 
 // MarshalJSON renders Kind as a human-readable string on the wire
-// ("worker"/"orchestrator"), so a consumer parsing 'cs2 ctl list_instances'
+// ("worker"/"orchestrator"), so a consumer parsing 'boulez ctl list_instances'
 // sees self-documenting values instead of opaque ints (0/1). This resolves
 // finding #2 from dogfooding (enums exposed as raw ints).
 func (k Kind) MarshalJSON() ([]byte, error) {
@@ -468,7 +468,7 @@ func (i *Instance) SetAutoYes(on bool) {
 // no host can be threaded in, so a remote host's alias can never leak into git
 // history via the pause commit. Tested by TestInstance_PII_HostAliasNotInArtifacts.
 func pausedCommitMessage(title string, t time.Time) string {
-	return fmt.Sprintf("[claudesquad] update from '%s' on %s (paused)", title, t.Format(time.RFC822))
+	return fmt.Sprintf("[boulez] update from '%s' on %s (paused)", title, t.Format(time.RFC822))
 }
 
 // buildWorktree is the SINGLE factory point that branches on Kind to pick
@@ -544,7 +544,7 @@ func (i *Instance) Start(firstTimeSetup bool) error {
 		// Use existing tmux session (useful for testing)
 		tmuxSession = i.tmuxSession
 	} else {
-	// Create new tmux session bound to this instance's host (local today;
+		// Create new tmux session bound to this instance's host (local today;
 		// v2 SSHHost swaps in ssh-backed deps here). The session name is derived
 		// from i.Title — never the host alias — so a remote host never
 		// appears in tmux session names (PII discipline, decision 5).
@@ -1005,7 +1005,7 @@ func (i *Instance) GetDiffStats() *git.DiffStats {
 // This is agent-agnostic: every TUI agent echoes typed characters into its
 // input area, so "text appeared" / "text disappeared" are universal signals
 // that the input handler accepted the keystrokes. No per-agent boot marker is
-// needed (Pi's cs2:ready sentinel only fires after a turn; Claude has no boot
+// needed (Pi's boulez:ready sentinel only fires after a turn; Claude has no boot
 // ready marker at all).
 //
 // The loop is bounded by `promptBootTimeout` (generous: some agents take a

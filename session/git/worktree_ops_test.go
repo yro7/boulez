@@ -1,9 +1,9 @@
 package git
 
 import (
-	"claude-squad/cmd"
-	cmdtest "claude-squad/cmd/cmd_test"
-	"claude-squad/session/fs"
+	"github.com/yro7/boulez/cmd"
+	cmdtest "github.com/yro7/boulez/cmd/cmd_test"
+	"github.com/yro7/boulez/session/fs"
 	"os"
 	"os/exec"
 	"path/filepath"
@@ -38,7 +38,7 @@ func TestSetupFromExistingBranch_RemovesOrphanedDirectory(t *testing.T) {
 	mustRunGit(t, repoPath, "commit", "-m", "initial")
 	mustRunGit(t, repoPath, "branch", "feature/test")
 
-	worktreeDir := filepath.Join(tempHome, ".claude-squad", "worktrees")
+	worktreeDir := filepath.Join(tempHome, ".boulez", "worktrees")
 	worktreePath := filepath.Join(worktreeDir, "feature-test")
 	if err := os.MkdirAll(worktreePath, 0755); err != nil {
 		t.Fatalf("mkdir orphaned worktree: %v", err)
@@ -128,7 +128,7 @@ func anyCmdContains(cmds []string, needle string) bool {
 // TestCleanupWorktrees_MultiRepoDeletesBranchFromEachRepo is the regression
 // test for dette #1: the old CleanupWorktrees ran `git worktree list` and
 // `git branch -D` WITHOUT -C, operating on whatever repo was in the cwd — a
-// latent multi-repo bug. With two independent repos each holding a cs2
+// latent multi-repo bug. With two independent repos each holding a boulez
 // worktree under a shared worktrees dir, the sweep must delete each worktree's
 // branch from its OWN repo, not cwd's. We run it from a neutral non-repo cwd
 // so any -C-less `git` would fail to find a repo (the old behaviour deleted
@@ -138,8 +138,8 @@ func TestCleanupWorktrees_MultiRepoDeletesBranchFromEachRepo(t *testing.T) {
 	repoA := makeTempRepoWithCommit(t, "repoA")
 	repoB := makeTempRepoWithCommit(t, "repoB")
 
-	branchA := "cs2/task-a"
-	branchB := "cs2/task-b"
+	branchA := "boulez/task-a"
+	branchB := "boulez/task-b"
 	wtA := filepath.Join(worktreesDir, "wtA")
 	wtB := filepath.Join(worktreesDir, "wtB")
 	mustRunGit(t, repoA, "worktree", "add", "-b", branchA, wtA)
@@ -172,7 +172,7 @@ func TestCleanupWorktrees_RoutesThroughDeps(t *testing.T) {
 	repo := makeTempRepoWithCommit(t, "repo")
 	worktreesDir := t.TempDir()
 	wt := filepath.Join(worktreesDir, "wt")
-	branch := "cs2/task"
+	branch := "boulez/task"
 	mustRunGit(t, repo, "worktree", "add", "-b", branch, wt)
 
 	fsys := &fakeFS{}

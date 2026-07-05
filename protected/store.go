@@ -15,18 +15,18 @@
 package protected
 
 import (
-	"claude-squad/config"
 	"encoding/json"
 	"fmt"
+	"github.com/yro7/boulez/config"
 	"os"
 	"path/filepath"
 	"sort"
 )
 
 // Store is a deep module: a small surface (Load/Add/Remove/Flat) over a
-// per-repo protected-branch map persisted to ~/.cs2/protected.json. It is
+// per-repo protected-branch map persisted to ~/.boulez/protected.json. It is
 // the single source of truth for declared protected branches. Both the daemon
-// (boot + SIGHUP reload) and the `cs2 daemon protect|unprotect|list-protected`
+// (boot + SIGHUP reload) and the `boulez daemon protect|unprotect|list-protected`
 // commands operate through it.
 type Store struct {
 	// path is the filesystem location of the store file. Injected so tests
@@ -34,11 +34,11 @@ type Store struct {
 	path string
 }
 
-// FileName is the store file name inside the cs2 config dir.
+// FileName is the store file name inside the boulez config dir.
 const FileName = "protected.json"
 
-// New returns a Store backed by protected.json inside the cs2 config dir
-// (~/.cs2/). The directory is created on demand by config.GetConfigDir.
+// New returns a Store backed by protected.json inside the boulez config dir
+// (~/.boulez/). The directory is created on demand by config.GetConfigDir.
 func New() (*Store, error) {
 	dir, err := config.GetConfigDir()
 	if err != nil {

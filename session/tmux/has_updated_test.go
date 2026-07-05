@@ -4,8 +4,8 @@ import (
 	"os/exec"
 	"testing"
 
-	"claude-squad/cmd/cmd_test"
-	"claude-squad/program"
+	"github.com/yro7/boulez/cmd/cmd_test"
+	"github.com/yro7/boulez/program"
 
 	"github.com/stretchr/testify/assert"
 )
@@ -16,8 +16,8 @@ type stubAdapter struct {
 	status program.Status
 }
 
-func (s stubAdapter) Name() string                                { return "stub" }
-func (s stubAdapter) Matches(string) bool                         { return true }
+func (s stubAdapter) Name() string        { return "stub" }
+func (s stubAdapter) Matches(string) bool { return true }
 func (s stubAdapter) Detect(string) (program.Status, *program.Prompt) {
 	return s.status, nil
 }

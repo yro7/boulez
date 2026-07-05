@@ -15,13 +15,13 @@ qui skip les sélecteurs host/repo/prompt. Il ne reste que le nom de l'instance
    reproductibilité totale, zéro indirection. Si tu veux la magie prefs
    (« utilise mon profil préféré pour ce repo »), tu utilises le flow `N`
    normal. Les deux coexistent, rôles différents.
-2. **Read-on-open.** Le fichier `~/.cs2/presets.json` est relu frais à chaque
+2. **Read-on-open.** Le fichier `~/.boulez/presets.json` est relu frais à chaque
    ouverture du picker (pas de watcher fsnotify). Un agent ou éditeur peut le
-   modifier entre deux Ctrl+R, cs2 prend le nouveau contenu au prochain coup.
+   modifier entre deux Ctrl+R, boulez prend le nouveau contenu au prochain coup.
 3. **Voie TUI (Option 1), pas Spawn.** Ctrl+R → picker → submit → `stateNew`
    (name entry) avec instance pré-construite (host/repo/profile/branch déjà
    appliqués) → `Start`. `Spawn` reste réservé à l'orchestrator headless.
-4. **Nom toujours demandé.** Le nom drive le nom de branche `cs2/<title>` et
+4. **Nom toujours demandé.** Le nom drive le nom de branche `boulez/<title>` et
    doit être unique ; un preset ne peut pas le fixer.
 5. **Prompt auto-sent, pas d'overlay.** Un preset avec un prompt le stash sur
    l'instance (`instance.Prompt`) et l'envoie après `Start` via le handler
@@ -41,12 +41,12 @@ qui skip les sélecteurs host/repo/prompt. Il ne reste que le nom de l'instance
 
 ## Format du fichier
 
-`~/.cs2/presets.json` :
+`~/.boulez/presets.json` :
 
 ```json
 {
   "CS2 Work": {
-    "repo": "/Users/me/cs2",
+    "repo": "/Users/me/boulez",
     "host": "local",
     "profile": "Pi",
     "prompt": "",
@@ -133,7 +133,7 @@ branche appliquée.
 ## Critères de succès (vérifiables)
 
 1. `go build ./...` et `go test ./...` verts.
-2. `Ctrl+R` avec `~/.cs2/presets.json` vide → erreur pointant le fichier.
+2. `Ctrl+R` avec `~/.boulez/presets.json` vide → erreur pointant le fichier.
 3. `Ctrl+R` avec presets → picker filtrable (fzf) ; Enter sur un preset →
    name entry direct, host/repo/profile/branch déjà appliqués.
 4. Un preset avec un prompt l'envoie après Start (pas d'overlay prompt).
@@ -146,7 +146,7 @@ branche appliquée.
 ## Exemple d'usage agent
 
 Un agent peut dire : « crée un profil rapide "CS2 Work" avec Pi, prompt vide,
-nouvelle branche, host local » → écrire dans `~/.cs2/presets.json` :
+nouvelle branche, host local » → écrire dans `~/.boulez/presets.json` :
 
 ```json
 {

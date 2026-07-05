@@ -1,5 +1,5 @@
 // Package ideimport scans IDE state files for recently-opened folders and
-// reports the ones that are git repositories, so they can be added to the cs2
+// reports the ones that are git repositories, so they can be added to the boulez
 // repo registry as a one-shot, manual import.
 //
 // The IDE state format (VS Code's storage.json and its forks) is undocumented
@@ -10,7 +10,7 @@
 // avoid false positives and to never surface sensitive identifiers
 // (AGENTS.md: no sensitive leaks).
 //
-// This package does NOT touch the cs2 registry. Importer.Scan returns
+// This package does NOT touch the boulez registry. Importer.Scan returns
 // discovered paths; the caller (the CLI) is responsible for Registry.Add.
 package ideimport
 

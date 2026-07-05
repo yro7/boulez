@@ -5,11 +5,11 @@ import (
 	"encoding/hex"
 	"fmt"
 
-	"claude-squad/session"
+	"github.com/yro7/boulez/session"
 )
 
 // ctlSession is the transport-level identity of one control connection. A
-// connection starts unauthenticated (top-level, like `cs2 ctl`) and may bind
+// connection starts unauthenticated (top-level, like `boulez ctl`) and may bind
 // to an instance via the `authenticate` syscall. Once bound, every syscall
 // the connection issues is attributed to that instance — the authoritative
 // caller identity. A client cannot set this from request params, so it cannot

@@ -1,4 +1,4 @@
-// Package prefs stores per-repo preferences that cs2 learns to apply at instance
+// Package prefs stores per-repo preferences that boulez learns to apply at instance
 // creation. Today the only preference is repo → profile: which program profile
 // to preselect in the prompt overlay when creating an instance in a given repo.
 //
@@ -10,9 +10,9 @@
 package prefs
 
 import (
-	"claude-squad/config"
 	"encoding/json"
 	"fmt"
+	"github.com/yro7/boulez/config"
 	"os"
 	"path/filepath"
 )
@@ -40,8 +40,8 @@ type Store struct {
 
 const storeFileName = "preferences.json"
 
-// NewStore returns a Store backed by preferences.json inside the cs2 config
-// directory (~/.cs2/). The directory is created on demand by config.GetConfigDir.
+// NewStore returns a Store backed by preferences.json inside the boulez config
+// directory (~/.boulez/). The directory is created on demand by config.GetConfigDir.
 func NewStore() (*Store, error) {
 	configDir, err := config.GetConfigDir()
 	if err != nil {

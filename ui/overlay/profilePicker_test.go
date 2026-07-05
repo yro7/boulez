@@ -3,7 +3,7 @@ package overlay
 import (
 	"testing"
 
-	"claude-squad/config"
+	"github.com/yro7/boulez/config"
 
 	"github.com/stretchr/testify/assert"
 )

@@ -1,10 +1,10 @@
 package ui
 
 import (
-	"claude-squad/keys"
+	"github.com/yro7/boulez/keys"
 	"strings"
 
-	"claude-squad/session"
+	"github.com/yro7/boulez/session"
 
 	"github.com/charmbracelet/lipgloss"
 )

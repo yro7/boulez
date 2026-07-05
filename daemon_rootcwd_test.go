@@ -34,7 +34,7 @@ func TestDaemon_BootsFromRootCwd(t *testing.T) {
 
 	// Build a throwaway binary.
 	binDir := t.TempDir()
-	binPath := filepath.Join(binDir, "cs2-rootcwd-test")
+	binPath := filepath.Join(binDir, "boulez-rootcwd-test")
 	if runtime.GOOS == "windows" {
 		binPath += ".exe"
 	}
@@ -43,13 +43,13 @@ func TestDaemon_BootsFromRootCwd(t *testing.T) {
 	out, err := build.CombinedOutput()
 	require.NoErrorf(t, err, "go build: %s", out)
 
-	// Isolate HOME so we don't touch the user's real ~/.cs2 state. Use a
+	// Isolate HOME so we don't touch the user's real ~/.boulez state. Use a
 	// short path under /tmp (not t.TempDir()) because the kernel's unix
-	// domain socket lives at $HOME/.cs2/ctl.sock, and on macOS a socket path
+	// domain socket lives at $HOME/.boulez/ctl.sock, and on macOS a socket path
 	// longer than ~104 chars fails to bind with EINVAL. t.TempDir() nests
 	// under /var/folders/<long-hash>/T/<TestName><rand>/... which blows the
 	// limit; a short /tmp path keeps it well under.
-	home := filepath.Join(os.TempDir(), "cs2-rootcwd-home")
+	home := filepath.Join(os.TempDir(), "boulez-rootcwd-home")
 	_ = os.RemoveAll(home)
 	require.NoError(t, os.MkdirAll(home, 0o755))
 	t.Setenv("HOME", home)
@@ -72,7 +72,7 @@ func TestDaemon_BootsFromRootCwd(t *testing.T) {
 	})
 
 	// Wait for the control socket (the kernel server binds it at boot).
-	socket := filepath.Join(home, ".cs2", "ctl.sock")
+	socket := filepath.Join(home, ".boulez", "ctl.sock")
 	require.Eventually(t, func() bool {
 		// If the daemon died, surface its output immediately rather than
 		// waiting out the full timeout.
@@ -84,7 +84,7 @@ func TestDaemon_BootsFromRootCwd(t *testing.T) {
 	}, 5*time.Second, 50*time.Millisecond, "daemon socket must come up from cwd /")
 
 	// The socket file existing is not enough (could be a crashed daemon's
-	// leftover). Drive a real syscall through `cs2 ctl list_instances`,
+	// leftover). Drive a real syscall through `boulez ctl list_instances`,
 	// ALSO from cwd "/" to be strict: the client must work from a non-repo
 	// cwd too.
 	list := exec.Command(binPath, "ctl", "list_instances")

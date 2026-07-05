@@ -1,21 +1,21 @@
 package app
 
 import (
-	"claude-squad/config"
-	"claude-squad/host"
-	"claude-squad/keys"
-	"claude-squad/log"
-	"claude-squad/orchestrator"
-	"claude-squad/prefs"
-	"claude-squad/presets"
-	"claude-squad/program"
-	"claude-squad/repo"
-	"claude-squad/session"
-	"claude-squad/session/git"
-	"claude-squad/ui"
-	"claude-squad/ui/overlay"
 	"context"
 	"fmt"
+	"github.com/yro7/boulez/config"
+	"github.com/yro7/boulez/host"
+	"github.com/yro7/boulez/keys"
+	"github.com/yro7/boulez/log"
+	"github.com/yro7/boulez/orchestrator"
+	"github.com/yro7/boulez/prefs"
+	"github.com/yro7/boulez/presets"
+	"github.com/yro7/boulez/program"
+	"github.com/yro7/boulez/repo"
+	"github.com/yro7/boulez/session"
+	"github.com/yro7/boulez/session/git"
+	"github.com/yro7/boulez/ui"
+	"github.com/yro7/boulez/ui/overlay"
 	"os"
 	"os/exec"
 	"runtime"
@@ -157,7 +157,7 @@ type home struct {
 
 	// presetStore is the persistent named-preset store for quick sessions
 	// (Ctrl+R). Read fresh on every open so an agent or editor can change
-	// ~/.cs2/presets.json between two opens with no watcher.
+	// ~/.boulez/presets.json between two opens with no watcher.
 	presetStore *presets.Store
 	// presetSelector displays the named-preset picker at instance creation
 	// (Ctrl+R). On submit the chosen preset's host/repo/profile/branch/prompt
@@ -199,21 +199,21 @@ func newHome(ctx context.Context, program string, autoYes bool) *home {
 	presetStore, _ := presets.NewStore()
 
 	h := &home{
-		ctx:          ctx,
-		spinner:      spinner.New(spinner.WithSpinner(spinner.MiniDot)),
-		menu:         ui.NewMenu(),
-		tabbedWindow: ui.NewTabbedWindow(ui.NewPreviewPane(), ui.NewDiffPane(), ui.NewTerminalPane()),
-		errBox:       ui.NewErrBox(),
-		appConfig:    appConfig,
-		repoRegistry: repoRegistry,
-		hostRegistry: hostRegistry,
-		prefs:        prefStore,
-		presetStore:  presetStore,
-		program:          program,
-		autoYes:          autoYes,
-		state:            stateDefault,
-		appState:         appState,
-		pendingDraftIDs:  make(map[string]struct{}),
+		ctx:             ctx,
+		spinner:         spinner.New(spinner.WithSpinner(spinner.MiniDot)),
+		menu:            ui.NewMenu(),
+		tabbedWindow:    ui.NewTabbedWindow(ui.NewPreviewPane(), ui.NewDiffPane(), ui.NewTerminalPane()),
+		errBox:          ui.NewErrBox(),
+		appConfig:       appConfig,
+		repoRegistry:    repoRegistry,
+		hostRegistry:    hostRegistry,
+		prefs:           prefStore,
+		presetStore:     presetStore,
+		program:         program,
+		autoYes:         autoYes,
+		state:           stateDefault,
+		appState:        appState,
+		pendingDraftIDs: make(map[string]struct{}),
 	}
 	h.list = ui.NewList(&h.spinner, autoYes)
 
@@ -838,7 +838,7 @@ func (m *home) handleKeyPress(msg tea.KeyMsg) (mod tea.Model, cmd tea.Cmd) {
 		// Create the push action as a tea.Cmd
 		pushAction := func() tea.Msg {
 			// Default commit message with timestamp
-			commitMsg := fmt.Sprintf("[claudesquad] update from '%s' on %s", selected.Title, time.Now().Format(time.RFC822))
+			commitMsg := fmt.Sprintf("[boulez] update from '%s' on %s", selected.Title, time.Now().Format(time.RFC822))
 			worktree, err := selected.GetGitWorktree()
 			if err != nil {
 				return err
@@ -863,7 +863,7 @@ func (m *home) handleKeyPress(msg tea.KeyMsg) (mod tea.Model, cmd tea.Cmd) {
 		targetBranch := "main"
 		// Default commit message mirrors the push action's pattern so the two
 		// gestures stay consistent.
-		commitMsg := fmt.Sprintf("[claudesquad] update from '%s' on %s", inst.Title, time.Now().Format(time.RFC822))
+		commitMsg := fmt.Sprintf("[boulez] update from '%s' on %s", inst.Title, time.Now().Format(time.RFC822))
 		caller := m.landCaller
 		if caller == nil {
 			caller = newSocketLandCaller()
@@ -880,7 +880,7 @@ func (m *home) handleKeyPress(msg tea.KeyMsg) (mod tea.Model, cmd tea.Cmd) {
 						files = append(files, c.File)
 					}
 					return fmt.Errorf("merge conflict on %s — repo left in merging state. Resolve and `git commit`: %s",
-							targetBranch, strings.Join(files, ", "))
+						targetBranch, strings.Join(files, ", "))
 				}
 				return err
 			}
@@ -1027,7 +1027,6 @@ type previewTickMsg struct{}
 
 type instanceChangedMsg struct{}
 
-
 // branchSearchDebounceMsg fires after the debounce interval to trigger a search.
 type branchSearchDebounceMsg struct {
 	repoPath string
@@ -1170,7 +1169,7 @@ func (m *home) handleError(err error) tea.Cmd {
 // missing notification must never break the TUI loop. Runs in a background
 // goroutine so the shell-out never blocks rendering.
 func (m *home) notifyReady(instance *session.Instance) {
-	title := fmt.Sprintf("cs2: %s ready", instance.Title)
+	title := fmt.Sprintf("boulez: %s ready", instance.Title)
 	body := fmt.Sprintf("Instance '%s' finished and is waiting for input.", instance.Title)
 	go func() {
 		var c *exec.Cmd
@@ -1617,7 +1616,7 @@ func deriveOrchestratorTitle() string {
 }
 
 // openPresetSelector opens the named-preset picker (Ctrl+R). Presets are read
-// fresh from ~/.cs2/presets.json on every open, so an agent or editor can
+// fresh from ~/.boulez/presets.json on every open, so an agent or editor can
 // change the file between two opens with no watcher. An empty store is shown
 // as an error pointing at the file rather than an empty picker.
 func (m *home) openPresetSelector() tea.Cmd {
@@ -1626,7 +1625,7 @@ func (m *home) openPresetSelector() tea.Cmd {
 		names, _ = m.presetStore.List()
 	}
 	if len(names) == 0 {
-		path := "~/.cs2/presets.json"
+		path := "~/.boulez/presets.json"
 		if m.presetStore != nil {
 			path = m.presetStore.Path()
 		}
@@ -1710,7 +1709,7 @@ func (m *home) startNewInstanceFromPreset(name string, p presets.Preset) tea.Cmd
 	}
 
 	// Resolve the profile name to a program string. An empty profile means
-	// "use the default program" (the cs2 --program flag). A name that matches
+	// "use the default program" (the boulez --program flag). A name that matches
 	// no profile is rejected so a stale preset does not start a wrong agent.
 	program := m.program
 	if p.Profile != "" {
@@ -1810,7 +1809,7 @@ func (m *home) View() string {
 // pinOrchestratorsFirst performs a stable partition of the loaded instances:
 // all KindOrchestrator instances come first, then all workers, with the
 // relative order within each group preserved. This guarantees the
-// orchestrator (cs2's "instance 0") is at the head of the list on cs2 open,
+// orchestrator (boulez's "instance 0") is at the head of the list on boulez open,
 // so the default selection (index 0) lands on it and the user can interact
 // with it immediately. A simple two-slice split+concat is stable by
 // construction and avoids pulling in sort.Slice (whose stability is not

@@ -3,7 +3,7 @@ package overlay
 // PresetSelector is a thin configuration of ListSelector for choosing a named
 // quick-session preset at instance creation (Ctrl+R). Unlike the repo/host
 // selectors it does not accept free-text: a preset must already exist in
-// ~/.cs2/presets.json (authored by the user or an agent). An empty preset list
+// ~/.boulez/presets.json (authored by the user or an agent). An empty preset list
 // is handled by the caller, which shows an error pointing at the file.
 //
 // All list behaviour (cursor, typing to filter, submit, cancel) lives in the

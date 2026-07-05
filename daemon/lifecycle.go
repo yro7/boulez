@@ -1,9 +1,9 @@
 package daemon
 
 import (
-	"claude-squad/config"
-	"claude-squad/kernel"
 	"fmt"
+	"github.com/yro7/boulez/config"
+	"github.com/yro7/boulez/kernel"
 	"net"
 	"os"
 	"path/filepath"
@@ -70,7 +70,7 @@ func EnsureRunning(timeout time.Duration) error {
 	return nil
 }
 
-// PIDFile returns the path to the daemon's PID file under the cs2 config dir.
+// PIDFile returns the path to the daemon's PID file under the boulez config dir.
 func PIDFile() (string, error) {
 	dir, err := config.GetConfigDir()
 	if err != nil {

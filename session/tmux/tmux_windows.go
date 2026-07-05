@@ -3,7 +3,7 @@
 package tmux
 
 import (
-	"claude-squad/log"
+	"github.com/yro7/boulez/log"
 	"os"
 	"time"
 
