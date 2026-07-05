@@ -1037,15 +1037,29 @@ const promptBootTimeout = 30 * time.Second
 // that contains the typed text means the TUI rendered it into the input box.
 // We strip ANSI escapes before substring matching so colour codes wrapping
 // the input don't break the echo check.
+//
+// Echo detection uses a short prefix of the prompt (promptEchoMarker), not
+// the full prompt: a multi-line prompt is rendered by the TUI with line
+// wraps, prompt prefixes per row, and cursor artefacts, so a full-string
+// match is fragile. Worse, a failed match makes Phase 1 re-type the ENTIRE
+// prompt every 100ms — which for a multi-line prompt floods the agent with
+// duplicate input and crashes it. Re-typing is gated on the marker being
+// ABSENT (proof the first SendKeys was swallowed mid-boot), so a live input
+// handler never receives a duplicate.
 func sendPromptReliably(t paneTyper, prompt string) error {
 	deadline := time.Now().Add(promptBootTimeout)
 	interval := 100 * time.Millisecond
+	marker := promptEchoMarker(prompt)
 
-	// Phase 1 — type and wait for the echo.
+	// Phase 1 — type and wait for the echo. Re-type ONLY when none of the
+	// prompt is visible yet (the first SendKeys was swallowed while the agent
+	// CLI was still booting). Once the marker is visible the input handler is
+	// live; re-typing then would duplicate the input and, for multi-line
+	// prompts, flood the agent.
+	_ = t.SendKeys(prompt)
 	for {
-		_ = t.SendKeys(prompt)
 		content, _ := t.CapturePaneContent()
-		if containsPlain(content, prompt) {
+		if containsPlain(content, marker) {
 			break // echoed -> input handler is live
 		}
 		if !deadline.After(time.Now()) {
@@ -1054,6 +1068,13 @@ func sendPromptReliably(t paneTyper, prompt string) error {
 			break
 		}
 		time.Sleep(interval)
+		// Re-type only if the marker is STILL absent: the previous SendKeys was
+		// genuinely swallowed mid-boot. If it landed in the meantime (capture
+		// lag on the previous poll), do nothing — re-typing would duplicate.
+		content, _ = t.CapturePaneContent()
+		if !containsPlain(content, marker) {
+			_ = t.SendKeys(prompt)
+		}
 	}
 
 	// Brief pause so the Enter isn't interpreted as a newline by a TUI still
@@ -1061,13 +1082,15 @@ func sendPromptReliably(t paneTyper, prompt string) error {
 	// now only after the echo is confirmed rather than blind).
 	time.Sleep(100 * time.Millisecond)
 
-	// Phase 2 — submit and wait for the text to leave the input area.
+	// Phase 2 — submit and wait for the text to leave the input area. We
+	// poll for the marker (not the full prompt) disappearing so a multi-line
+	// prompt whose lines drain row-by-row is detected as submitted.
 	for {
 		if err := t.TapEnter(); err != nil {
 			return fmt.Errorf("error tapping enter: %w", err)
 		}
 		content, _ := t.CapturePaneContent()
-		if !containsPlain(content, prompt) {
+		if !containsPlain(content, marker) {
 			return nil // text gone -> prompt submitted
 		}
 		if !deadline.After(time.Now()) {
@@ -1075,6 +1098,29 @@ func sendPromptReliably(t paneTyper, prompt string) error {
 		}
 		time.Sleep(interval)
 	}
+}
+
+// promptEchoMarker returns a stable, plain-text substring of the prompt used
+// to detect that the agent TUI has echoed the typed text. The full prompt is a
+// poor marker for multi-line prompts: the input box renders newlines as line
+// wraps, may prefix each row (e.g. `> `), and interleaves with the cursor, so
+// a full-string match is fragile. The first non-empty line, trimmed and
+// length-capped, is a reliable "the text arrived" signal for every TUI that
+// echoes typed chars, and crucially its absence is a safe gate for re-typing
+// (a present marker means the input handler is live, so never re-type).
+func promptEchoMarker(prompt string) string {
+	for _, line := range strings.Split(prompt, "\n") {
+		s := strings.TrimSpace(line)
+		if s == "" {
+			continue
+		}
+		const max = 40
+		if len(s) > max {
+			s = s[:max]
+		}
+		return s
+	}
+	return prompt
 }
 
 // paneTyper is the minimal tmux surface sendPromptReliably needs: send keys,

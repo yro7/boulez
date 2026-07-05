@@ -236,6 +236,21 @@ func (m *home) reconcileFleet(data []session.InstanceData) {
 		out = append(out, inst)
 	}
 
+	// Preserve TUI-local drafts (name entry / spawn in-flight) that the
+	// kernel does not yet know about. Without this, the periodic fleet tick
+	// would drop the draft mid-name-entry and the stateNew handler would
+	// panic on the next keypress (index out of range). Drafts are appended
+	// after the kernel's instances; pinOrchestratorsFirst below moves any
+	// orchestrator draft to the front so the view ordering stays stable.
+	for _, inst := range existing {
+		if _, seen := seen[inst.GetID()]; seen {
+			continue
+		}
+		if _, draft := m.pendingDraftIDs[inst.GetID()]; draft {
+			out = append(out, inst)
+		}
+	}
+
 	// Pin orchestrators to the front of the view (stable partition). This is a
 	// view-only concern: the kernel's ordering is insertion order, but the
 	// TUI's default selection is index 0, so the orchestrator must be first.
@@ -245,6 +260,25 @@ func (m *home) reconcileFleet(data []session.InstanceData) {
 }
 
 // --- spawn routing (C3.3) ---
+
+// trackDraft marks an instance ID as a TUI-local draft: held in the list
+// during name entry or while a spawn syscall is in flight, but not yet
+// known to the kernel. reconcileFleet preserves tracked drafts against the
+// fleet snapshot so the periodic fleet tick does not wipe a name-entry
+// draft (which would panic the stateNew handler).
+func (m *home) trackDraft(id string) {
+	if m.pendingDraftIDs == nil {
+		m.pendingDraftIDs = make(map[string]struct{})
+	}
+	m.pendingDraftIDs[id] = struct{}{}
+}
+
+// untrackDraft removes an ID from the pending-draft set. Idempotent. Called
+// when a draft leaves the list: spawn ack (success or error) or name-entry
+// cancel.
+func (m *home) untrackDraft(id string) {
+	delete(m.pendingDraftIDs, id)
+}
 
 // spawnDoneMsg is sent when a fleet.Spawn syscall completes (C3.3). The TUI
 // routes spawn through the kernel (single writer); the syscall returns the new
