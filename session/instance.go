@@ -1231,12 +1231,29 @@ func (i *Instance) SetTmuxSession(session *tmux.TmuxSession) {
 	i.tmuxSession = session
 }
 
-// SendKeys sends keys to the tmux session
+// SendKeys sends the given text to the instance's tmux pane as literal
+// keystrokes (no tmux key-name interpretation). It does NOT append a newline:
+// callers that need to submit input must call TapEnter afterwards. Works
+// whether or not a PTY is attached and over SSH, since it routes through the
+// host executor — the same channel Preview uses for reading.
 func (i *Instance) SendKeys(keys string) error {
 	if !i.started || i.Status == Paused {
 		return fmt.Errorf("cannot send keys to instance that has not been started or is paused")
 	}
 	return i.tmuxSession.SendKeys(keys)
+}
+
+// SendEnter presses the Enter key on the instance's tmux pane. Unlike
+// TapEnter (which is gated on AutoYes for the orchestrator's approval-tapping
+// path), this unconditionally sends the key — it is the submit counterpart to
+// SendKeys' literal text. Used by the TUI's insert mode to submit a typed
+// line. Same host-executor channel as SendKeys, so it works over SSH and
+// without an attached PTY.
+func (i *Instance) SendEnter() error {
+	if !i.started || i.Status == Paused {
+		return fmt.Errorf("cannot send enter to instance that has not been started or is paused")
+	}
+	return i.tmuxSession.TapEnter()
 }
 
 // MarkStartedForTest sets the started flag without running tmux. It is a test
