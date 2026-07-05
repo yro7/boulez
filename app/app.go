@@ -176,6 +176,19 @@ type home struct {
 	// global, so landin two different instances concurrently is allowed.
 	landInFlight map[string]struct{}
 
+	// workingStreak is the per-instance hysteresis counter for the
+	// Ready→Running transition. A single "pane changed" tick is not enough to
+	// demote a Ready instance: the pane chrome (Pi's animated spinner, the
+	// context-usage percentage, the cursor) keeps hashing differently even
+	// when the agent is idle, so without hysteresis an idle instance flickers
+	// Ready↔Running every 500ms tick. The counter accumulates consecutive
+	// "really working" ticks (pane changed AND no authoritative Ready signal)
+	// and only flips Ready→Running once it reaches readyToWorkingTicks. A Ready
+	// signal (adapter StatusReady) or a stable pane resets it. Pure TUI view
+	// state — not persisted, not on the wire. Keyed by instance ID; pruned in
+	// reconcileFleet to IDs no longer in the kernel's snapshot.
+	workingStreak map[string]int
+
 	// fleet is the TUI's seam over the daemon's control socket (C3.1). The
 	// TUI is a pure client of the kernel: it owns the VIEW (a read-only cache
 	// of the fleet), not the TRUTH. Every fleet mutation goes through this
@@ -215,6 +228,7 @@ func newHome(ctx context.Context, program string, autoYes bool) *home {
 		appState:        appState,
 		pendingDraftIDs: make(map[string]struct{}),
 		landInFlight:    make(map[string]struct{}),
+		workingStreak:   make(map[string]int),
 	}
 	h.list = ui.NewList(&h.spinner, autoYes)
 
@@ -343,8 +357,14 @@ func (m *home) Update(msg tea.Msg) (tea.Model, tea.Cmd) {
 			// because the pane content changed, leaving finished agents stuck on
 			// the running spinner forever.
 			prevStatus := r.instance.Status
+			if m.workingStreak == nil {
+				m.workingStreak = make(map[string]int)
+			}
 			switch {
 			case r.status == program.StatusReady:
+				// An authoritative Ready signal (e.g. the Pi sentinel) resets the
+				// working hysteresis: the next working phase starts counting from 1.
+				delete(m.workingStreak, r.instance.GetID())
 				r.instance.SetStatus(session.Ready)
 			case r.status == program.StatusPermission:
 				// A resolvable permission/trust prompt. Only auto-resolve when
@@ -366,9 +386,44 @@ func (m *home) Update(msg tea.Msg) (tea.Model, tea.Cmd) {
 				// harness without a dedicated adapter. A transient false Ready
 				// (long silent tool run) self-corrects as soon as output resumes.
 				if r.updated {
-					r.instance.SetStatus(session.Running)
+					// Hysteresis on Ready→Running: a single "pane changed" tick is
+					// not enough to demote a Ready instance. The pane chrome (Pi's
+					// animated spinner, the context-usage percentage, the cursor)
+					// keeps hashing differently even when the agent is idle, so
+					// without this gate an idle instance flickers Ready↔Running
+					// every 500ms tick. Require `readyToWorkingTicks` consecutive
+					// working ticks before flipping. A Running instance stays
+					// Running on a single tick (no gate needed there); a Ready
+					// signal or a stable pane resets the streak.
+					if prevStatus == session.Ready {
+						m.workingStreak[r.instance.GetID()]++
+						if m.workingStreak[r.instance.GetID()] < readyToWorkingTicks {
+							// Hold Ready: not enough consecutive working ticks yet.
+							r.instance.SetStatus(session.Ready)
+						} else {
+							delete(m.workingStreak, r.instance.GetID())
+							r.instance.SetStatus(session.Running)
+						}
+					} else {
+						// Running (or other) → stay Running; no streak accumulated.
+						delete(m.workingStreak, r.instance.GetID())
+						r.instance.SetStatus(session.Running)
+					}
 				} else if r.stableFor >= stableReadyThreshold {
+					// Stable pane: idle. Resets the working streak.
+					delete(m.workingStreak, r.instance.GetID())
 					r.instance.SetStatus(session.Ready)
+				} else if prevStatus != session.Ready {
+					// Running and no change: keep Running, keep the streak clear.
+					delete(m.workingStreak, r.instance.GetID())
+				}
+				// If prevStatus == Ready, r.updated == false, stableFor < threshold:
+				// the pane hasn't changed but not long enough to be idle. Hold
+				// Ready (no SetStatus call) and reset the streak — a stable tick
+				// means the agent isn't actively working, so the next working
+				// phase starts counting from 1.
+				if prevStatus == session.Ready && !r.updated && r.stableFor < stableReadyThreshold {
+					delete(m.workingStreak, r.instance.GetID())
 				}
 			}
 			// Notify on the Ready transition when configured.
@@ -925,6 +980,18 @@ type metadataUpdateDoneMsg struct {
 // on long silent tool runs (build/test with no output); the false-positive
 // self-corrects the moment the tool emits a line.
 const stableReadyThreshold = 60 * time.Second
+
+// readyToWorkingTicks is the hysteresis threshold for the Ready→Running
+// transition: a Ready instance is only demoted to Running after this many
+// CONSECUTIVE "pane changed" ticks (each tick is ~500ms, so a value of 3 ≈
+// 1.5s of sustained work). This suppresses the Ready↔Running flicker an idle
+// instance shows because its pane chrome (Pi's animated spinner, the
+// context-usage percentage, the cursor) keeps hashing differently every
+// tick even though the agent is producing nothing. A single jitter tick does
+// not flip; the streak resets on an authoritative Ready signal or a stable
+// pane. A Running→Ready transition is NOT gated (a Ready signal is
+// immediate). See the reconciliation loop in handleMetadataUpdate.
+const readyToWorkingTicks = 3
 
 // snapshotActiveInstances returns the currently active (started, not paused)
 // instances. Called on the main thread so the filtering doesn't race with
