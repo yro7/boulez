@@ -13,7 +13,7 @@ import (
 // identifier that install/uninstall both key off. A drift here would mean
 // install writes one label and uninstall tries to remove another.
 func TestServiceLabel_Stable(t *testing.T) {
-	assert.Equal(t, "ai.smtg.cs2", ServiceLabel)
+	assert.Equal(t, "ai.smtg.boulez", ServiceLabel)
 }
 
 // TestServiceManager_ReportsPlatform proves ServiceManager returns a non-empty
@@ -32,8 +32,8 @@ func TestServiceManager_ReportsPlatform(t *testing.T) {
 }
 
 // TestDaemonRedirectLog_UnderConfigDir proves the redirect log lives under the
-// cs2 config dir's logs/ subdir, so a crash-before-logging is diagnosable in a
-// predictable place (and `cs2 daemon status` already points at this area).
+// boulez config dir's logs/ subdir, so a crash-before-logging is diagnosable in a
+// predictable place (and `boulez daemon status` already points at this area).
 func TestDaemonRedirectLog_UnderConfigDir(t *testing.T) {
 	t.Setenv("HOME", t.TempDir())
 
@@ -43,8 +43,8 @@ func TestDaemonRedirectLog_UnderConfigDir(t *testing.T) {
 	require.NoError(t, err)
 
 	home, _ := os.UserHomeDir()
-	assert.Equal(t, filepath.Join(home, ".cs2", "logs", "daemon.out.log"), out)
-	assert.Equal(t, filepath.Join(home, ".cs2", "logs", "daemon.err.log"), errLog)
+	assert.Equal(t, filepath.Join(home, ".boulez", "logs", "daemon.out.log"), out)
+	assert.Equal(t, filepath.Join(home, ".boulez", "logs", "daemon.err.log"), errLog)
 
 	// The dir was created.
 	_, err = os.Stat(filepath.Dir(out))
@@ -55,5 +55,5 @@ func TestDaemonRedirectLog_UnderConfigDir(t *testing.T) {
 // the error message, so the install command surfaces it without extra logic.
 func TestErrServiceUnsupported_Message(t *testing.T) {
 	err := ErrServiceUnsupported{}
-	assert.Contains(t, err.Error(), "nohup cs2 daemon run")
+	assert.Contains(t, err.Error(), "nohup boulez daemon run")
 }

@@ -1,4 +1,4 @@
-module claude-squad
+module github.com/yro7/boulez
 
 go 1.23.0
 

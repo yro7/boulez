@@ -1,10 +1,10 @@
 package kernel
 
 import (
-	"claude-squad/config"
-	"claude-squad/session"
 	"encoding/json"
 	"fmt"
+	"github.com/yro7/boulez/config"
+	"github.com/yro7/boulez/session"
 )
 
 // Storage is the kernel's persistence layer for the fleet. It is the ONLY

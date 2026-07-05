@@ -1,8 +1,8 @@
 package git
 
 import (
-	"claude-squad/cmd"
 	"fmt"
+	"github.com/yro7/boulez/cmd"
 	"os/exec"
 )
 

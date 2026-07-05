@@ -1,9 +1,9 @@
 package config
 
 import (
-	"claude-squad/log"
 	"encoding/json"
 	"fmt"
+	"github.com/yro7/boulez/log"
 	"os"
 	"os/exec"
 	"path/filepath"
@@ -16,14 +16,14 @@ const (
 	defaultProgram = "claude"
 )
 
-// configDirName is the dedicated config directory for cs2. It is intentionally
-// separate from the official `cs` (`.claude-squad`) so the two binaries can run
-// side by side without sharing state.
-const configDirName = ".cs2"
+// configDirName is the dedicated config directory for boulez. It is a fresh
+// directory, not migrated from any predecessor (the upstream `cs` used
+// `~/.claude-squad/`). Cold start: empty.
+const configDirName = ".boulez"
 
 // GetConfigDir returns the path to the application's configuration directory and
 // ensures it exists (creating it on demand). On a cold start the directory is
-// empty — no migration from the official `cs` is performed.
+// empty.
 func GetConfigDir() (string, error) {
 	homeDir, err := os.UserHomeDir()
 	if err != nil {
@@ -37,7 +37,7 @@ func GetConfigDir() (string, error) {
 }
 
 // OrchestratorsDir returns the path to the directory holding all orchestrator
-// control dirs (~/.cs2/orchestrators/<id>/). It is the single source of truth
+// control dirs (~/.boulez/orchestrators/<id>/). It is the single source of truth
 // for this path: shared by the headless worktree (session), the plan store
 // (kernel), and the orchestrator bootstrap package. Ensures the directory
 // exists.
@@ -135,10 +135,10 @@ func DefaultConfig() *Config {
 		DefaultProgram:     program,
 		AutoYes:            false,
 		DaemonPollInterval: 1000,
-		// BranchPrefix is a neutral, non-personal prefix for cs2-created branches.
+		// BranchPrefix is a neutral, non-personal prefix for boulez-created branches.
 		// It must NOT derive from the OS username: branches get pushed to remotes
 		// (e.g. a public fork) where the name would leak the user's identity.
-		BranchPrefix: "cs2/",
+		BranchPrefix: "boulez/",
 	}
 }
 

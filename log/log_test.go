@@ -10,7 +10,7 @@ import (
 )
 
 // TestClose_SilentByDefault proves the foundational property for machine
-// consumers: Close() writes NOTHING to stdout by default. `cs2 ctl` relies on
+// consumers: Close() writes NOTHING to stdout by default. `boulez ctl` relies on
 // this — its stdout must be pure JSON (a single document) so consumers can
 // parse it without stripping a trailing "wrote logs to ..." line.
 func TestClose_SilentByDefault(t *testing.T) {

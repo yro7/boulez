@@ -4,24 +4,24 @@ import (
 	"context"
 	"testing"
 
-	"claude-squad/config"
-	"claude-squad/session"
-	"claude-squad/session/git"
-	"claude-squad/ui"
 	"github.com/charmbracelet/bubbles/spinner"
 	tea "github.com/charmbracelet/bubbletea"
 	"github.com/stretchr/testify/assert"
 	"github.com/stretchr/testify/require"
+	"github.com/yro7/boulez/config"
+	"github.com/yro7/boulez/session"
+	"github.com/yro7/boulez/session/git"
+	"github.com/yro7/boulez/ui"
 )
 
 // fakeLandCaller is an app-package test double for session.LandCaller.
 type fakeLandCaller struct {
-	called  bool
-	repo    string
-	target  string
-	source  string
-	result  git.MergeResult
-	err     error
+	called bool
+	repo   string
+	target string
+	source string
+	result git.MergeResult
+	err    error
 }
 
 func (f *fakeLandCaller) Land(repoPath, targetBranch, sourceBranch string, strategy git.Strategy) (git.MergeResult, error) {
@@ -47,12 +47,12 @@ func newLandTestHome(t *testing.T, inst *session.Instance, caller session.LandCa
 	_ = list.AddInstance(inst)
 	list.SetSelectedInstance(0)
 	return &home{
-		ctx:         context.Background(),
-		state:       stateDefault,
-		appConfig:   config.DefaultConfig(),
-		list:        list,
-		menu:        ui.NewMenu(),
-		landCaller:  caller,
+		ctx:        context.Background(),
+		state:      stateDefault,
+		appConfig:  config.DefaultConfig(),
+		list:       list,
+		menu:       ui.NewMenu(),
+		landCaller: caller,
 	}
 }
 

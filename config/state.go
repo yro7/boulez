@@ -1,9 +1,9 @@
 package config
 
 import (
-	"claude-squad/log"
 	"encoding/json"
 	"fmt"
+	"github.com/yro7/boulez/log"
 	"os"
 	"path/filepath"
 )

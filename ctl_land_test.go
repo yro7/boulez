@@ -4,14 +4,14 @@ import (
 	"encoding/json"
 	"testing"
 
-	"claude-squad/kernel"
 	"github.com/stretchr/testify/assert"
 	"github.com/stretchr/testify/require"
+	"github.com/yro7/boulez/kernel"
 )
 
-// TestCtl_Land_BuildsCorrectRequest verifies `cs2 ctl land` constructs the
+// TestCtl_Land_BuildsCorrectRequest verifies `boulez ctl land` constructs the
 // correct wire request (method "land", single source branch) WITHOUT going
-// to the daemon. It uses the captureHook that `cs2 ctl as` already uses to
+// to the daemon. It uses the captureHook that `boulez ctl as` already uses to
 // intercept rawCtlSession. This is the unit-level pin for the round-trip;
 // the end-to-end stdout purity is covered by TestCtl_StdoutIsPureJSON.
 func TestCtl_Land_BuildsCorrectRequest(t *testing.T) {

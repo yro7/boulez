@@ -13,12 +13,12 @@ import (
 
 // TestRenderPlist_ContainsRequiredKeys proves the generated launchd plist has
 // the keys the acceptance criteria depend on: RunAtLoad + KeepAlive (survives
-// reboot / crash), the stable Label, and ProgramArguments = `cs2 daemon run`.
-// This is the testable core of `cs2 daemon install` on macOS — the launchctl
+// reboot / crash), the stable Label, and ProgramArguments = `boulez daemon run`.
+// This is the testable core of `boulez daemon install` on macOS — the launchctl
 // bootstrap itself is an integration step we don't exercise here.
 func TestRenderPlist_ContainsRequiredKeys(t *testing.T) {
 	var buf bytes.Buffer
-	require.NoError(t, renderPlist(&buf, "/usr/local/bin/cs2",
+	require.NoError(t, renderPlist(&buf, "/usr/local/bin/boulez",
 		"/tmp/out.log", "/tmp/err.log"))
 
 	xml := buf.String()
@@ -29,7 +29,7 @@ func TestRenderPlist_ContainsRequiredKeys(t *testing.T) {
 	assert.Contains(t, xml, "<key>KeepAlive</key>")
 	assert.Contains(t, xml, "<true/>")
 	// ProgramArguments = <exe> daemon run
-	assert.Contains(t, xml, "/usr/local/bin/cs2")
+	assert.Contains(t, xml, "/usr/local/bin/boulez")
 	assert.Contains(t, xml, "<string>daemon</string>")
 	assert.Contains(t, xml, "<string>run</string>")
 	// Redirect logs so a crash is diagnosable.

@@ -20,20 +20,20 @@ export const viewport: Viewport = {
 };
 
 export const metadata: Metadata = {
-  title: "Claude Squad - Manage Multiple AI Code Assistants",
-  description: "A terminal app that manages multiple AI code assistants (Claude Code, Codex, Aider, etc.) in separate workspaces, allowing you to work on multiple tasks simultaneously.",
-  keywords: ["claude", "claude squad", "ai", "code assistant", "terminal", "tmux", "claude code", "codex", "aider"],
-  authors: [{ name: "smtg-ai" }],
+  title: "Boulez - Orchestrate Multiple AI Coding Agents",
+  description: "A kernel and daemon that orchestrates multiple AI coding agents (Claude Code, Codex, Pi, Aider, …) in isolated git worktrees, local or over SSH.",
+  keywords: ["boulez", "ai", "code assistant", "terminal", "tmux", "orchestration", "claude code", "codex", "aider"],
+  authors: [{ name: "yro7" }],
   openGraph: {
-    title: "Claude Squad",
-    description: "A terminal app that manages multiple AI code assistants in separate workspaces",
-    url: "https://github.com/smtg-ai/claude-squad",
+    title: "Boulez",
+    description: "A kernel and daemon that orchestrates multiple AI coding agents in isolated git worktrees, local or over SSH.",
+    url: "https://github.com/yro7/boulez",
     type: "website",
   },
   twitter: {
     card: "summary_large_image",
-    title: "Claude Squad",
-    description: "A terminal app that manages multiple AI code assistants in separate workspaces",
+    title: "Boulez",
+    description: "A kernel and daemon that orchestrates multiple AI coding agents in isolated git worktrees, local or over SSH.",
   },
 };
 

@@ -1,6 +1,6 @@
 # Contributor License Agreement
 
-Thank you for your interest in contributing to [Claude Squad](https://github.com/smtg-ai/claude-squad) ("the Project"). This Contributor License Agreement ("CLA") ensures that your Contributions can be used in the Project while allowing you to retain ownership of your work.
+Thank you for your interest in contributing to [Boulez](https://github.com/yro7/boulez) ("the Project"). This Contributor License Agreement ("CLA") ensures that your Contributions can be used in the Project while allowing you to retain ownership of your work.
 
 By signing this CLA, you accept and agree to the following terms for your present and future Contributions to the Project.
 
@@ -10,7 +10,7 @@ By signing this CLA, you accept and agree to the following terms for your presen
 
 **"Contribution"**: Any original work of authorship, including source code, documentation, configuration files, or other materials, that you intentionally submit to the Project.
 
-**"Project"**: [Claude Squad](https://github.com/smtg-ai/claude-squad).
+**"Project"**: [Boulez](https://github.com/yro7/boulez).
 
 ## 1. Grant of Rights
 
@@ -48,4 +48,4 @@ By submitting a Contribution to the Project, you agree to be bound by the terms 
 
 <br />
 
-*Questions? Contact [mufeez.amjad@outlook.com](mailto:mufeez.amjad@outlook.com) or [jshrivastava03@gmail.com](mailto:jshrivastava03@gmail.com)*
+*Questions? Open an issue at [https://github.com/yro7/boulez/issues](https://github.com/yro7/boulez/issues)*

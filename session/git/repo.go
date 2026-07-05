@@ -1,8 +1,8 @@
 package git
 
 import (
-	"claude-squad/cmd"
 	"fmt"
+	"github.com/yro7/boulez/cmd"
 	"os/exec"
 	"strings"
 	"sync"
@@ -13,11 +13,11 @@ const MaxBranchSearchResults = 50
 
 // Repo wraps a repository path with an injectable command executor. It owns
 // repo-level operations (branches, fetch, root resolution) that have no
-// dependency on a cs2 worktree. Adding SSH = swap the Executor; Repo itself
+// dependency on a boulez worktree. Adding SSH = swap the Executor; Repo itself
 // is transport-agnostic.
 //
 // Cohesion: these operations all act on a repository identified by a path,
-// independent of any worktree cs2 may create inside it. Callers that need
+// independent of any worktree boulez may create inside it. Callers that need
 // worktree-specific state (diff, commit, dirty check) use GitWorktree instead.
 type Repo struct {
 	path    string

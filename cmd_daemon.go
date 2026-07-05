@@ -2,12 +2,12 @@ package main
 
 import (
 	"bufio"
-	"claude-squad/config"
-	"claude-squad/daemon"
-	"claude-squad/kernel"
-	"claude-squad/log"
-	"claude-squad/protected"
 	"fmt"
+	"github.com/yro7/boulez/config"
+	"github.com/yro7/boulez/daemon"
+	"github.com/yro7/boulez/kernel"
+	"github.com/yro7/boulez/log"
+	"github.com/yro7/boulez/protected"
 	"os"
 	"sort"
 	"strings"
@@ -16,22 +16,22 @@ import (
 	"github.com/spf13/cobra"
 )
 
-// newDaemonCmd builds the `cs2 daemon` subcommand: the first-class lifecycle
+// newDaemonCmd builds the `boulez daemon` subcommand: the first-class lifecycle
 // interface to the daemon (the kernel / control authority). Phase 1 of the
 // hierarchy inversion: the daemon's lifecycle is detached from the TUI at the
 // command level, so it can be installed as an OS service (Phase 2) and so the
 // TUI can become a pure client (Phase 3).
 //
-// `cs2 daemon run` is the canonical foreground entrypoint — the service unit
+// `boulez daemon run` is the canonical foreground entrypoint — the service unit
 // (Phase 2) and the TUI/ctl auto-start both invoke this under the hood. The
 // other subcommands manage a background daemon.
 func newDaemonCmd() *cobra.Command {
 	cmd := &cobra.Command{
 		Use:   "daemon",
-		Short: "Manage the cs2 daemon (the kernel / control authority)",
-		Long: `cs2 daemon manages the daemon process that owns the kernel and serves
+		Short: "Manage the boulez daemon (the kernel / control authority)",
+		Long: `boulez daemon manages the daemon process that owns the kernel and serves
 the control socket. The daemon is the single writer over fleet state; the
-TUI and cs2 ctl are its clients.
+TUI and boulez ctl are its clients.
 
 Subcommands:
   run     Run the daemon in the foreground (dev / debug). This is the
@@ -51,8 +51,8 @@ Subcommands:
                                (launchd on macOS, systemd on Linux).
   uninstall                    Stop and remove the OS service.
 
-The daemon is normally started automatically by the TUI (cs2 / cs2 tui) and
-by cs2 ctl when the socket is absent. These subcommands exist for explicit
+The daemon is normally started automatically by the TUI (boulez / boulez tui) and
+by boulez ctl when the socket is absent. These subcommands exist for explicit
 control and for service installation.`,
 	}
 	cmd.AddCommand(newDaemonRunCmd())
@@ -88,8 +88,8 @@ is visible directly.`,
 }
 
 // runDaemon is the single foreground-daemon entrypoint invoked by
-// `cs2 daemon run` (and, before C4.6, the now-removed `--daemon` alias).
-// It owns logger setup so a foreground daemon logs to the claudesquad log
+// `boulez daemon run` (and, before C4.6, the now-removed `--daemon` alias).
+// It owns logger setup so a foreground daemon logs to the boulez log
 // with the [DAEMON] prefix.
 func runDaemon() error {
 	log.Initialize(true)
@@ -114,11 +114,11 @@ func ensureDaemonRunning() error {
 
 // printDaemonFailureHint is the TUI boot failure surface (decision D2): when
 // the daemon cannot come up, the TUI does not start. This writes the tail of
-// the daemon log and the path to `cs2 daemon log` to stderr so the user can
+// the daemon log and the path to `boulez daemon log` to stderr so the user can
 // see why without grepping tmp dirs. The caller returns a non-nil error so
 // cobra exits non-zero.
 func printDaemonFailureHint() {
-	fmt.Fprintln(os.Stderr, "cs2: the daemon could not come up; the TUI will not start.")
+	fmt.Fprintln(os.Stderr, "boulez: the daemon could not come up; the TUI will not start.")
 	fmt.Fprintln(os.Stderr, "Tail of the daemon log:")
 	if tail, err := readTail(log.LogFilePath(), 30); err == nil {
 		if tail == "" {
@@ -129,7 +129,7 @@ func printDaemonFailureHint() {
 	} else {
 		fmt.Fprintf(os.Stderr, "(could not read log: %v)\n", err)
 	}
-	fmt.Fprintf(os.Stderr, "Full log: %s  (cs2 daemon log)\n", log.LogFilePath())
+	fmt.Fprintf(os.Stderr, "Full log: %s  (boulez daemon log)\n", log.LogFilePath())
 }
 
 // newDaemonStartCmd launches the daemon detached in the background. Reuses
@@ -162,7 +162,7 @@ func newDaemonStartCmd() *cobra.Command {
 			}
 			socketPath, _ := kernel.SocketPath()
 			if err := daemon.WaitForSocket(socketPath, 5*time.Second); err != nil {
-				return fmt.Errorf("daemon did not come up (see `cs2 daemon log`): %w", err)
+				return fmt.Errorf("daemon did not come up (see `boulez daemon log`): %w", err)
 			}
 			pid, _, _ := daemon.ReadPID()
 			fmt.Print("daemon started")
@@ -231,7 +231,7 @@ func newDaemonStatusCmd() *cobra.Command {
 	}
 }
 
-// newDaemonLogCmd prints the tail of the daemon (claudesquad) log. The log is
+// newDaemonLogCmd prints the tail of the daemon (boulez) log. The log is
 // shared by the daemon and clients; the tail is the fastest way to see why a
 // daemon refused to come up.
 func newDaemonLogCmd() *cobra.Command {
@@ -263,9 +263,9 @@ func newDaemonLogCmd() *cobra.Command {
 	return cmd
 }
 
-// readTail returns the last n lines of the file at path. Used by `cs2 daemon
+// readTail returns the last n lines of the file at path. Used by `boulez daemon
 // log` and by printDaemonFailureHint (TUI boot failure, C1.3). Reads the
-// whole file and slices; the claudesquad log is small and this is a
+// whole file and slices; the boulez log is small and this is a
 // human-facing path, not a hot one.
 func readTail(path string, n int) (string, error) {
 	f, err := os.Open(path)
@@ -397,12 +397,12 @@ func newDaemonListProtectedCmd() *cobra.Command {
 
 // newDaemonInstallCmd installs the daemon as an OS service (C2.3/C2.4): a
 // launchd LaunchAgent on macOS, a systemd user unit on Linux. The service runs
-// `cs2 daemon run` and is kept alive (RunAtLoad+KeepAlive / Restart=on-failure)
+// `boulez daemon run` and is kept alive (RunAtLoad+KeepAlive / Restart=on-failure)
 // so the kernel comes back after a reboot or a crash. After install, the
 // daemon is the persistent, repo-free authority (Phase 2 goal).
 //
 // C2.5 dev fallback: on platforms without launchd/systemd the command errors
-// out and points the user at `nohup cs2 daemon run &`. No custom supervisor.
+// out and points the user at `nohup boulez daemon run &`. No custom supervisor.
 func newDaemonInstallCmd() *cobra.Command {
 	return &cobra.Command{
 		Use:   "install",
@@ -410,13 +410,13 @@ func newDaemonInstallCmd() *cobra.Command {
 		Long: `Installs the daemon as an OS service so it starts at login and survives
 reboots/crashes. On macOS this writes a LaunchAgent (RunAtLoad + KeepAlive);
 on Linux a systemd user unit (Restart=on-failure). The service runs
-` + "`cs2 daemon run`" + `.
+` + "`boulez daemon run`" + `.
 
 After install, the daemon is the persistent, repo-free authority: the TUI
-and ` + "`cs2 ctl`" + ` connect to it over the control socket on every launch.
+and ` + "`boulez ctl`" + ` connect to it over the control socket on every launch.
 
 If neither launchd nor systemd is available, this command exits non-zero
-and points you at the dev fallback: ` + "`nohup cs2 daemon run &`" + `.`,
+and points you at the dev fallback: ` + "`nohup boulez daemon run &`" + `.`,
 		RunE: func(cmd *cobra.Command, args []string) error {
 			log.Initialize(false)
 			log.SetPrintPathOnClose(false)
@@ -424,15 +424,15 @@ and points you at the dev fallback: ` + "`nohup cs2 daemon run &`" + `.`,
 
 			if err := daemon.Install(); err != nil {
 				if _, ok := err.(daemon.ErrServiceUnsupported); ok {
-					fmt.Fprintln(os.Stderr, "cs2 daemon install: no launchd/systemd on this platform.")
-					fmt.Fprintln(os.Stderr, "Dev fallback: run `nohup cs2 daemon run >/dev/null 2>&1 &` to keep the daemon up without a service manager.")
+					fmt.Fprintln(os.Stderr, "boulez daemon install: no launchd/systemd on this platform.")
+					fmt.Fprintln(os.Stderr, "Dev fallback: run `nohup boulez daemon run >/dev/null 2>&1 &` to keep the daemon up without a service manager.")
 					return err
 				}
 				return fmt.Errorf("install daemon service: %w", err)
 			}
-			fmt.Printf("daemon installed via %s (runs `cs2 daemon run`, starts at login)\n", daemon.ServiceManager())
-			fmt.Println("manage it with: `cs2 daemon start|stop|status|log`")
-			fmt.Println("verify with:     `cs2 ctl list_instances`")
+			fmt.Printf("daemon installed via %s (runs `boulez daemon run`, starts at login)\n", daemon.ServiceManager())
+			fmt.Println("manage it with: `boulez daemon start|stop|status|log`")
+			fmt.Println("verify with:     `boulez ctl list_instances`")
 			return nil
 		},
 	}

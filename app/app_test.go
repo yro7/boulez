@@ -1,16 +1,16 @@
 package app
 
 import (
-	"claude-squad/config"
-	"claude-squad/host"
-	"claude-squad/log"
-	"claude-squad/prefs"
-	"claude-squad/repo"
-	"claude-squad/session"
-	"claude-squad/ui"
-	"claude-squad/ui/overlay"
 	"context"
 	"fmt"
+	"github.com/yro7/boulez/config"
+	"github.com/yro7/boulez/host"
+	"github.com/yro7/boulez/log"
+	"github.com/yro7/boulez/prefs"
+	"github.com/yro7/boulez/repo"
+	"github.com/yro7/boulez/session"
+	"github.com/yro7/boulez/ui"
+	"github.com/yro7/boulez/ui/overlay"
 	"os"
 	"os/exec"
 	"path/filepath"
@@ -557,7 +557,7 @@ func newRepoSelectHome(t *testing.T) *home {
 		appConfig:    config.DefaultConfig(),
 		program:      "claude",
 		repoRegistry: repo.NewRegistryAt(filepath.Join(t.TempDir(), "repos.json")),
-		prefs:         prefs.NewStoreAt(filepath.Join(t.TempDir(), "preferences.json")),
+		prefs:        prefs.NewStoreAt(filepath.Join(t.TempDir(), "preferences.json")),
 		list:         ui.NewList(&sp, false),
 		menu:         ui.NewMenu(),
 		errBox:       ui.NewErrBox(),

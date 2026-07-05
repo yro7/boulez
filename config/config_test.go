@@ -1,7 +1,7 @@
 package config
 
 import (
-	"claude-squad/log"
+	"github.com/yro7/boulez/log"
 	"os"
 	"path/filepath"
 	"regexp"
@@ -124,7 +124,7 @@ func TestGetConfigDir(t *testing.T) {
 
 		assert.NoError(t, err)
 		assert.NotEmpty(t, configDir)
-		assert.True(t, strings.HasSuffix(configDir, ".cs2"))
+		assert.True(t, strings.HasSuffix(configDir, ".boulez"))
 
 		// Must live under the home directory.
 		assert.True(t, strings.HasPrefix(configDir, tempHome))
@@ -139,7 +139,7 @@ func TestGetConfigDir(t *testing.T) {
 		os.Setenv("HOME", tempHome)
 		defer os.Setenv("HOME", originalHome)
 
-		expectedDir := filepath.Join(tempHome, ".cs2")
+		expectedDir := filepath.Join(tempHome, ".boulez")
 		// Sanity: not present yet.
 		_, statErr := os.Stat(expectedDir)
 		assert.True(t, os.IsNotExist(statErr))
@@ -174,7 +174,7 @@ func TestLoadConfig(t *testing.T) {
 	t.Run("loads valid config file", func(t *testing.T) {
 		// Create a temporary config directory
 		tempHome := t.TempDir()
-		configDir := filepath.Join(tempHome, ".cs2")
+		configDir := filepath.Join(tempHome, ".boulez")
 		err := os.MkdirAll(configDir, 0755)
 		require.NoError(t, err)
 
@@ -206,7 +206,7 @@ func TestLoadConfig(t *testing.T) {
 	t.Run("returns default config on invalid JSON", func(t *testing.T) {
 		// Create a temporary config directory
 		tempHome := t.TempDir()
-		configDir := filepath.Join(tempHome, ".cs2")
+		configDir := filepath.Join(tempHome, ".boulez")
 		err := os.MkdirAll(configDir, 0755)
 		require.NoError(t, err)
 
@@ -319,7 +319,7 @@ func TestSaveConfig(t *testing.T) {
 		assert.NoError(t, err)
 
 		// Verify the file was created
-		configDir := filepath.Join(tempHome, ".cs2")
+		configDir := filepath.Join(tempHome, ".boulez")
 		configPath := filepath.Join(configDir, ConfigFileName)
 
 		assert.FileExists(t, configPath)

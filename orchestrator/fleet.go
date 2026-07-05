@@ -43,21 +43,21 @@ func RenderFleet(instances []Instance) string {
 // at ORCHESTRATOR.md (its cwd) for the full tool documentation.
 //
 // This is injected EXACTLY ONCE (when the orchestrator is freshly created).
-// On cs2 restart the orchestrator's tmux session is restored and its
+// On boulez restart the orchestrator's tmux session is restored and its
 // conversation survives, so re-injecting would duplicate context. The agent
-// re-fetches fresh state itself via `cs2 ctl list_instances`.
+// re-fetches fresh state itself via `boulez ctl list_instances`.
 func InjectionPrompt(fleetText string) string {
-	return fmt.Sprintf(`You are the cs2 global orchestrator. A full description of your role and your tools is in ./ORCHESTRATOR.md in your working directory — read it now.
+	return fmt.Sprintf(`You are the boulez global orchestrator. A full description of your role and your tools is in ./ORCHESTRATOR.md in your working directory — read it now.
 
-Here is the current fleet state, injected once at startup. It is already stale; call `+"`cs2 ctl list_instances`"+` to refresh it whenever you need the current state.
+Here is the current fleet state, injected once at startup. It is already stale; call `+"`boulez ctl list_instances`"+` to refresh it whenever you need the current state.
 
 %s
 
 You are supervised, not autonomous. Do the following, in order:
 1. Read ./ORCHESTRATOR.md.
-2. Refresh the fleet state with `+"`cs2 ctl list_instances`"+`.
-3. STOP and wait for an explicit task. A task comes either from a human attaching to your pane, or from a `+"`cs2 ctl send_prompt --id <your-id>`"+`.
+2. Refresh the fleet state with `+"`boulez ctl list_instances`"+`.
+3. STOP and wait for an explicit task. A task comes either from a human attaching to your pane, or from a `+"`boulez ctl send_prompt --id <your-id>`"+`.
 
 Do NOT spawn, merge, or send prompts to other instances on your own initiative. Wait for an explicit instruction, execute that one task, then stop and wait again. Do not loop looking for more work to do.
-When you do act on an instruction, use `+"`cs2 ctl as <your-id> <syscall>`"+` for spawn/merge so your actions are recorded on your plan.`, fleetText)
+When you do act on an instruction, use `+"`boulez ctl as <your-id> <syscall>`"+` for spawn/merge so your actions are recorded on your plan.`, fleetText)
 }

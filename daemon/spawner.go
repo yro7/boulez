@@ -1,11 +1,11 @@
 package daemon
 
 import (
-	"claude-squad/app"
-	"claude-squad/cmd"
-	"claude-squad/kernel"
-	"claude-squad/session"
-	"claude-squad/session/git"
+	"github.com/yro7/boulez/app"
+	"github.com/yro7/boulez/cmd"
+	"github.com/yro7/boulez/kernel"
+	"github.com/yro7/boulez/session"
+	"github.com/yro7/boulez/session/git"
 )
 
 // kernelSpawner adapts app.Spawn to the kernel.Spawner interface. It is the
