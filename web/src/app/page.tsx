@@ -12,7 +12,7 @@ export default function Home() {
   return (
     <div className={styles.page}>
       <header className={styles.header}>
-        <h1 className={styles.title}>claude squad</h1>
+        <h1 className={styles.title}>boulez</h1>
         <div className={styles.headerActions}>
           <a
             className={styles.headerButton}

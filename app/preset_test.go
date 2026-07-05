@@ -48,7 +48,7 @@ func TestPresetSelectorOpensWithPresets(t *testing.T) {
 	h := newPresetHome(t)
 	repo := t.TempDir()
 	makeTestRepo(t, repo)
-	require.NoError(t, h.presetStore.Set("CS2 Work", presets.Preset{Repo: repo, Host: "local", Profile: "Claude"}))
+	require.NoError(t, h.presetStore.Set("Boulez Work", presets.Preset{Repo: repo, Host: "local", Profile: "Claude"}))
 
 	h.openPresetSelector()
 
@@ -65,7 +65,7 @@ func TestPresetSelectorSubmitStartsNameEntry(t *testing.T) {
 	h := newPresetHome(t)
 	repo := t.TempDir()
 	makeTestRepo(t, repo)
-	require.NoError(t, h.presetStore.Set("CS2 Work", presets.Preset{
+	require.NoError(t, h.presetStore.Set("Boulez Work", presets.Preset{
 		Repo:    repo,
 		Host:    "local",
 		Profile: "Pi",
