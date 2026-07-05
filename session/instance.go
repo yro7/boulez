@@ -11,6 +11,7 @@ import (
 	"encoding/hex"
 	"encoding/json"
 	"fmt"
+	"regexp"
 	"strings"
 	"time"
 
@@ -983,7 +984,33 @@ func (i *Instance) GetDiffStats() *git.DiffStats {
 	return i.diffStats
 }
 
-// SendPrompt sends a prompt to the tmux session
+// SendPrompt sends a prompt to the tmux session.
+//
+// It is reliable across agent boot states: rather than typing the text and
+// tapping Enter on a fixed timer (which races the agent CLI's boot — the
+// Enter is swallowed while the welcome banner / MCP init / input-box render
+// is in flight, leaving the prompt text sitting in the input box unsent), it
+// drives a closed feedback loop:
+//
+//  1. Type the prompt WITHOUT Enter.
+//  2. Capture the pane; if the typed text is NOT yet visible in the input
+//     area, the TUI hasn't rendered it yet — wait and retype. Repeat until
+//     the text is echoed (proof the input handler is live).
+//  3. Tap Enter.
+//  4. Capture again; if the text is STILL in the input area, the Enter was
+//     swallowed (e.g. a re-render mid-boot) — retry the Enter. Repeat until
+//     the input area no longer contains the text (proof the prompt was
+//     submitted).
+//
+// This is agent-agnostic: every TUI agent echoes typed characters into its
+// input area, so "text appeared" / "text disappeared" are universal signals
+// that the input handler accepted the keystrokes. No per-agent boot marker is
+// needed (Pi's cs2:ready sentinel only fires after a turn; Claude has no boot
+// ready marker at all).
+//
+// The loop is bounded by `promptBootTimeout` (generous: some agents take a
+// few seconds to init MCP). On timeout the last Enter is assumed to have
+// landed — best-effort, never blocks forever.
 func (i *Instance) SendPrompt(prompt string) error {
 	if !i.started {
 		return fmt.Errorf("instance not started")
@@ -991,69 +1018,91 @@ func (i *Instance) SendPrompt(prompt string) error {
 	if i.tmuxSession == nil {
 		return fmt.Errorf("tmux session not initialized")
 	}
-	if err := i.tmuxSession.SendKeys(prompt); err != nil {
-		return fmt.Errorf("error sending keys to tmux session: %w", err)
-	}
-
-	// Brief pause to prevent carriage return from being interpreted as newline
-	time.Sleep(100 * time.Millisecond)
-	if err := i.tmuxSession.TapEnter(); err != nil {
-		return fmt.Errorf("error tapping enter: %w", err)
-	}
-
-	return nil
+	return sendPromptReliably(i.tmuxSession, prompt)
 }
 
-// WaitForPaneStable polls the tmux pane content until it stops changing, then
-// returns. Spawn uses it to defer the initial prompt until the agent CLI has
-// finished its boot animation: keystrokes — and especially the carriage
-// return that submits the prompt — sent while the CLI is still rendering its
-// welcome banner / initializing MCP / drawing the input box are routinely
-// swallowed or consumed by the boot sequence, so the prompt text lands in the
-// input box but never gets submitted, as if Enter had never been pressed.
-// Waiting for the pane to settle guarantees the input handler is live before
-// we type.
+// promptBootTimeout is the upper bound SendPrompt will spend waiting for the
+// agent CLI to echo typed text and to accept Enter. It is generous on purpose:
+// agents that initialize MCP servers can take several seconds before their
+// input handler is live. The loop normally resolves in well under this; the
+// timeout is only a safety cap so a misbehaving agent can't hang a spawn.
+const promptBootTimeout = 30 * time.Second
+
+// sendPromptReliably implements the closed-loop SendPrompt strategy described
+// on Instance.SendPrompt. It is pure I/O against a tmux session — extracted so
+// it can be unit-tested with a fake Responder/Capturer.
 //
-// Stability is defined as `stableSamples` consecutive identical captures
-// spaced `interval` apart. This is deliberately agent-agnostic: it needs no
-// per-agent "ready" marker (the adapters do not reliably emit one at boot —
-// Pi's cs2:ready sentinel only appears after a completed turn, and Claude's
-// ready marker only appears in refusal dialogs). A timeout is NOT an error:
-// if the pane never settles (e.g. an animated spinner that updates every
-// tick), we fall back to the previous best-effort behaviour and let the caller
-// send the prompt anyway. Capture errors during very early boot are treated
-// as "not stable yet" rather than aborting.
-func (i *Instance) WaitForPaneStable(timeout time.Duration) error {
-	if !i.started || i.tmuxSession == nil {
-		return nil
-	}
-	const (
-		interval      = 150 * time.Millisecond
-		stableSamples = 3
-	)
-	deadline := time.Now().Add(timeout)
-	prev := ""
-	stable := 0
+// "Visible in the input area" is approximated by "present in the captured
+// pane content". A TUI's input box is part of the pane, so a captured pane
+// that contains the typed text means the TUI rendered it into the input box.
+// We strip ANSI escapes before substring matching so colour codes wrapping
+// the input don't break the echo check.
+func sendPromptReliably(t paneTyper, prompt string) error {
+	deadline := time.Now().Add(promptBootTimeout)
+	interval := 100 * time.Millisecond
+
+	// Phase 1 — type and wait for the echo.
 	for {
-		content, err := i.tmuxSession.CapturePaneContent()
-		switch {
-		case err != nil:
-			// Transient capture failure (pane not ready yet) — keep waiting.
-			stable = 0
-		case content == prev:
-			stable++
-		default:
-			prev = content
-			stable = 1
-		}
-		if stable >= stableSamples {
-			return nil
+		_ = t.SendKeys(prompt)
+		content, _ := t.CapturePaneContent()
+		if containsPlain(content, prompt) {
+			break // echoed -> input handler is live
 		}
 		if !deadline.After(time.Now()) {
-			return nil
+			// Boot never echoed the text. Fall through and attempt Enter
+			// best-effort rather than hang.
+			break
 		}
 		time.Sleep(interval)
 	}
+
+	// Brief pause so the Enter isn't interpreted as a newline by a TUI still
+	// mid-render of the just-echoed text (preserves the original 100ms guard,
+	// now only after the echo is confirmed rather than blind).
+	time.Sleep(100 * time.Millisecond)
+
+	// Phase 2 — submit and wait for the text to leave the input area.
+	for {
+		if err := t.TapEnter(); err != nil {
+			return fmt.Errorf("error tapping enter: %w", err)
+		}
+		content, _ := t.CapturePaneContent()
+		if !containsPlain(content, prompt) {
+			return nil // text gone -> prompt submitted
+		}
+		if !deadline.After(time.Now()) {
+			return nil // best-effort: assume it landed
+		}
+		time.Sleep(interval)
+	}
+}
+
+// paneTyper is the minimal tmux surface sendPromptReliably needs: send keys,
+// tap Enter, capture the pane. *tmux.TmuxSession satisfies it; tests inject a
+// fake. Keeping this narrow lets the loop be unit-tested without a real PTY.
+type paneTyper interface {
+	SendKeys(keys string) error
+	TapEnter() error
+	CapturePaneContent() (string, error)
+}
+
+// containsPlain reports whether needle appears in haystack after stripping
+// ANSI escape sequences. We compare on plain text so colour codes the TUI wraps
+// around the input box don't defeat the echo check.
+func containsPlain(haystack, needle string) bool {
+	if needle == "" {
+		return true
+	}
+	return strings.Contains(stripANSI(haystack), needle)
+}
+
+// ansiRegexp matches CSI escape sequences (the kind TUIs emit for colour /
+// cursor moves). Stripping them gives the plain text actually visible in the
+// pane, which is what we want to substring-match against the typed prompt.
+var ansiRegexp = regexp.MustCompile(`\x1b\[[0-9;]*[A-Za-z]`)
+
+func stripANSI(s string) string {
+	return ansiRegexp.ReplaceAllString(s, "")
 }
 
 // PreviewFullHistory captures the entire tmux pane output including full scrollback history
