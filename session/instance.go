@@ -658,9 +658,9 @@ func (i *Instance) Preview() (string, error) {
 	return i.tmuxSession.CapturePaneContent()
 }
 
-func (i *Instance) HasUpdated() (updated bool, status program.Status) {
+func (i *Instance) HasUpdated() (updated bool, status program.Status, stableFor time.Duration) {
 	if !i.started {
-		return false, program.StatusUnknown
+		return false, program.StatusUnknown, 0
 	}
 	return i.tmuxSession.HasUpdated()
 }
