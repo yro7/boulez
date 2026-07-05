@@ -99,8 +99,12 @@ func TestKeyLand_ConfirmRunsLand(t *testing.T) {
 	require.Equal(t, stateConfirm, h.state)
 	require.NotNil(t, h.confirmationOverlay.OnConfirm)
 
-	// Confirm the modal — this synchronously runs the landAction.
-	h.confirmationOverlay.OnConfirm()
+	// Confirm the modal — OnConfirm returns the landAction Cmd (not yet
+	// executed; tea dispatches it). Invoke the Cmd to mimic the program loop
+	// and prove the action runs.
+	cmd := h.confirmationOverlay.OnConfirm()
+	require.NotNil(t, cmd)
+	_ = cmd()
 
 	assert.True(t, caller.called, "confirming the modal must invoke the LandCaller")
 	assert.Equal(t, "main", caller.target)
