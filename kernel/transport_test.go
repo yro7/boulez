@@ -6,7 +6,9 @@ import (
 	"fmt"
 	"net"
 	"os"
+	"os/exec"
 	"path/filepath"
+	"strings"
 	"sync"
 	"testing"
 	"time"
@@ -481,4 +483,82 @@ func TestCallSession_AbortsOnAuthError_NoSpawnSideEffect(t *testing.T) {
 	// No spawn side-effect: the spawner was never invoked for the would-be
 	// worker. (No top-level spawn happened either.)
 	assert.Empty(t, spawner.spawned, "no instance created after a failed authenticate")
+}
+
+// TestTransport_Land_HostOnTargetBranchDirty_ErrCode proves the host-on-target
+// refusal surfaces on the wire as HOST_ON_TARGET_BRANCH_DIRTY (not INTERNAL),
+// with an actionable message. This is the regression pin for the land-fallback
+// divergence bug: a land onto a trunk the host has checked out, with a dirty
+// working tree, must REFUSE (mutating nothing) rather than update-ref the ref
+// and leave HEAD diverged from the worktree.
+//
+// Setup: a real repo whose trunk is a non-protected branch ("integration"),
+// checked out in the host working tree, with an uncommitted tracked file
+// (dirty). Landing a non-ff source → the fast-path refuses (dirty) → the
+// fallback refuses with ErrHostOnTargetBranchDirty → the wire maps it to
+// HOST_ON_TARGET_BRANCH_DIRTY.
+func TestTransport_Land_HostOnTargetBranchDirty_ErrCode(t *testing.T) {
+	repo := t.TempDir()
+	mrun2(t, "", "init", "-b", "integration", repo)
+	mrun2(t, repo, "config", "user.name", "Test")
+	mrun2(t, repo, "config", "user.email", "t@e.com")
+	mrun2(t, repo, "commit", "--allow-empty", "-m", "init")
+	// feat diverges (non-ff) so the fast-path ff-only cannot apply.
+	mrun2(t, repo, "checkout", "-b", "feat")
+	writeCommit2(t, repo, "a.txt", "feat\n", "feat work")
+	mrun2(t, repo, "checkout", "integration")
+	writeCommit2(t, repo, "b.txt", "main\n", "main work")
+	// Dirty the host working tree (uncommitted tracked work to protect).
+	require.NoError(t, os.WriteFile(filepath.Join(repo, "uncommitted.txt"), []byte("x"), 0644))
+
+	integrationBefore := strings.TrimSpace(mrun2Out(t, repo, "rev-parse", "integration"))
+
+	socketPath, stop := startTestKernel(t, &fakeSpawner{}, realGitMerger{})
+	defer stop()
+
+	params, _ := json.Marshal(map[string]interface{}{
+		"target_repo":   repo,
+		"target_branch": "integration",
+		"source":        "feat",
+	})
+	resp, err := Call(socketPath, Request{Method: "land", Params: params})
+	require.NoError(t, err)
+	require.NotNil(t, resp.Error, "dirty host on targetBranch must refuse")
+	assert.Equal(t, CodeHostOnTargetBranchDirty, resp.Error.Code,
+		"refusal must map to HOST_ON_TARGET_BRANCH_DIRTY, not INTERNAL")
+	assert.Contains(t, resp.Error.Message, "commit, stash, or switch branches",
+		"error message must be actionable")
+
+	// Nothing mutated: integration did not move.
+	integrationAfter := strings.TrimSpace(mrun2Out(t, repo, "rev-parse", "integration"))
+	assert.Equal(t, integrationBefore, integrationAfter, "refusal must not move the target ref")
+}
+
+// mrun2 / writeCommit2 / mrun2Out mirror the session/git test helpers but
+// local to the kernel package (kernel cannot import session/git's internal
+// test helpers). Kept minimal for the land-refusal test.
+func mrun2(t *testing.T, dir string, args ...string) {
+	t.Helper()
+	cmdArgs := args
+	if dir != "" {
+		cmdArgs = append([]string{"-C", dir}, args...)
+	}
+	cmdArgs = append([]string{"git"}, cmdArgs...)
+	out, err := exec.Command(cmdArgs[0], cmdArgs[1:]...).CombinedOutput()
+	require.NoErrorf(t, err, "git %v: %s", args, out)
+}
+
+func mrun2Out(t *testing.T, dir string, args ...string) string {
+	t.Helper()
+	cmdArgs := append([]string{"-C", dir}, args...)
+	out, err := exec.Command("git", cmdArgs...).Output()
+	require.NoErrorf(t, err, "git %v: %s", args, out)
+	return string(out)
+}
+
+func writeCommit2(t *testing.T, repo, file, content, msg string) {
+	t.Helper()
+	require.NoError(t, os.WriteFile(filepath.Join(repo, file), []byte(content), 0644))
+	mrun2(t, repo, "add", file)
+	mrun2(t, repo, "commit", "-m", msg)
 }
