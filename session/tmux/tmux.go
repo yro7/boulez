@@ -328,14 +328,29 @@ func (t *TmuxSession) Attach() (chan struct{}, error) {
 	t.wg.Add(1)
 	t.ctx, t.cancel = context.WithCancel(context.Background())
 
-	// The first goroutine should terminate when the ptmx is closed. We use the
-	// waitgroup to wait for it to finish.
-	// The 2nd one returns when you press escape to Detach. It doesn't need to be
-	// in the waitgroup because is the goroutine doing the Detaching; it waits for
-	// all the other ones.
+	// The first goroutine copies tmux output to stdout while attached. We
+	// abort it on context cancellation (detach) rather than waiting for its
+	// blocked read() to return: on macOS, closing the ptmx master from
+	// another goroutine does NOT interrupt a pending read() on that fd, so
+	// io.Copy would otherwise block until the lingering old tmux client
+	// finally exits (~4.5s when the pane is idle and the client isn't
+	// writing). The orphaned inner io.Copy self-resolves within that same
+	// ~4.5s window once the old client notices its master is gone — bounded,
+	// and no longer on the user's critical path.
+	// The 2nd goroutine returns when you press Ctrl-Q to Detach. It doesn't
+	// need to be in the waitgroup because it is the goroutine doing the
+	// Detaching; it waits for all the other ones.
 	go func() {
 		defer t.wg.Done()
-		_, _ = io.Copy(os.Stdout, t.ptmx)
+		done := make(chan struct{})
+		go func() {
+			_, _ = io.Copy(os.Stdout, t.ptmx)
+			close(done)
+		}()
+		select {
+		case <-done:
+		case <-t.ctx.Done():
+		}
 		// When io.Copy returns, it means the connection was closed
 		// This could be due to normal detach or Ctrl-D
 		// Check if the context is done to determine if it was a normal detach
