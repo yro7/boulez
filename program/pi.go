@@ -18,8 +18,12 @@ import "strings"
 // is intentionally left as a no-op until a stable signature is confirmed.
 //
 // This is deliberately conservative: a wrong "Ready" badge is worse than no
-// badge. Pi still gets full lifecycle (worktree, attach, diff, preview) via
-// the agent-agnostic core; only auto-yes and the Ready badge are silent.
+// badge. The agent-agnostic stability fallback in session/tmux (stableFor)
+// catches the case where the extension is absent: a Pi pane that has been
+// stable for longer than the threshold is presumed idle by the caller, so
+// boulez still shows a Ready badge (just delayed) and the Land button
+// reappears. Pi still gets full lifecycle (worktree, attach, diff, preview)
+// via the agent-agnostic core regardless.
 type PiAdapter struct{}
 
 // PiReadySentinel is the marker string the pi-boulez Pi extension appends to the
