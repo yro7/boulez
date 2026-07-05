@@ -11,7 +11,7 @@ import (
 	"testing"
 	"time"
 
-	"claude-squad/session/git"
+	"github.com/yro7/boulez/session/git"
 	"github.com/stretchr/testify/assert"
 	"github.com/stretchr/testify/require"
 )
@@ -345,7 +345,7 @@ func TestTransport_PipelineMultipleRequests(t *testing.T) {
 
 // TestTransport_Authenticate_TopLevelCanSpawn proves an unauthenticated
 // connection (no `authenticate` call) is top-level and CAN spawn. This is
-// the `cs2 ctl` path: a human/LLM at the console bootstraps the fleet.
+// the `boulez ctl` path: a human/LLM at the console bootstraps the fleet.
 func TestTransport_Authenticate_TopLevelCanSpawn(t *testing.T) {
 	spawner := &fakeSpawner{}
 	socketPath, stop := startTestKernel(t, spawner, &fakeMerger{})
@@ -394,7 +394,7 @@ func TestTransport_AuthenticateAsWorker_BarSpawning(t *testing.T) {
 }
 
 // TestTransport_AuthenticateAsOrchestrator_RecordsPlan proves the happy path
-// that was unreachable from `cs2 ctl` before (finding #4): an orchestrator
+// that was unreachable from `boulez ctl` before (finding #4): an orchestrator
 // authenticated on the connection spawns a worker, and the plan is recorded.
 // This is the substrate for resumable orchestration (step 7 of Shape A).
 func TestTransport_AuthenticateAsOrchestrator_RecordsPlan(t *testing.T) {
@@ -421,7 +421,7 @@ func TestTransport_AuthenticateAsOrchestrator_RecordsPlan(t *testing.T) {
 	require.Nil(t, resps[1].Error, "orchestrator can spawn a worker: %+v", resps[1].Error)
 
 	// The plan.json should now list the new worker. The kernel's plan store
-	// writes under ~/.cs2/orchestrators/<id>/plan.json — but with autosave off
+	// writes under ~/.boulez/orchestrators/<id>/plan.json — but with autosave off
 	// and no storage, the plan is in-memory. Assert via the kernel's plan API.
 	// (The in-process test kernel has no storage; we assert the plan record
 	// exists in memory via the exported LoadPlan, if available.)
@@ -438,7 +438,7 @@ func (r Response) resultID() string {
 }
 
 // TestCallSession_AbortsOnAuthError_NoSpawnSideEffect is the C4.2 (Bug C)
-// regression: `cs2 ctl as <unknown-id> spawn_worker` must surface
+// regression: `boulez ctl as <unknown-id> spawn_worker` must surface
 // UNKNOWN_INSTANCE and must NOT issue the spawn. Before the fix,
 // CallSession sent the whole batch and rawCtlSession only showed the LAST
 // response — so the auth error was swallowed and spawn_worker ran as an

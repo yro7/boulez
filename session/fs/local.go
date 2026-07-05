@@ -3,7 +3,7 @@ package fs
 import "os"
 
 // LocalFS implements FS by delegating to the os package. This is the
-// behaviour cs2 has always had; it is the default for all v1 code paths.
+// behaviour boulez has always had; it is the default for all v1 code paths.
 // v2 adds a remote FS implementation alongside this one.
 type LocalFS struct{}
 

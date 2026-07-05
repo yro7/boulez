@@ -7,8 +7,8 @@ import (
 	"testing"
 	"time"
 
-	"claude-squad/kernel"
-	"claude-squad/session"
+	"github.com/yro7/boulez/kernel"
+	"github.com/yro7/boulez/session"
 	"github.com/stretchr/testify/assert"
 	"github.com/stretchr/testify/require"
 )

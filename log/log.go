@@ -43,7 +43,7 @@ func Initialize(daemon bool) {
 }
 
 // printPathOnClose controls whether Close prints the log file path to stdout.
-// It is off by default: machine-facing commands (notably `cs2 ctl`) must keep
+// It is off by default: machine-facing commands (notably `boulez ctl`) must keep
 // stdout pure JSON so consumers can parse the response without post-processing.
 // Human-facing commands that want to surface the log path set this to true.
 var printPathOnClose bool

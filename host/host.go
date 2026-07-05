@@ -1,8 +1,8 @@
-// Package host bundles the three execution seams a cs2 instance needs
+// Package host bundles the three execution seams a boulez instance needs
 // (command Executor, filesystem FS, PTY factory) behind a single interface,
 // plus host-level metadata (name, worktree directory, AutoYes default).
 //
-// Today cs2 runs everything locally: the Executor calls os/exec directly, the
+// Today boulez runs everything locally: the Executor calls os/exec directly, the
 // FS calls os.* directly, and the PTY is a local pseudo-terminal. For an
 // instance whose environment lives on a remote machine, all three must act on
 // that remote host instead — silently doing them locally would be a bug, not
@@ -15,8 +15,8 @@
 package host
 
 import (
-	"claude-squad/cmd"
-	"claude-squad/session/fs"
+	"github.com/yro7/boulez/cmd"
+	"github.com/yro7/boulez/session/fs"
 )
 
 // Host is the execution environment of an instance: how to run commands,
@@ -25,7 +25,7 @@ import (
 // the remote transport.
 type Host interface {
 	// Name is the human/engineering identifier of the host: "local" for the
-	// machine running cs2, or an ssh alias like "dev-machine". Used for
+	// machine running boulez, or an ssh alias like "dev-machine". Used for
 	// InstanceData persistence and TUI display. Never appears in commit
 	// messages, branch names, or tmux session names (PII discipline).
 	Name() string
@@ -42,7 +42,7 @@ type Host interface {
 	// creack/pty directly; SSHHost starts `ssh -t <alias> ...` under a PTY.
 	PtyFactory() PtyFactory
 
-	// WorktreeDir is the directory under which cs2 worktrees for this host
+	// WorktreeDir is the directory under which boulez worktrees for this host
 	// are created. LocalHost returns an absolute local path; SSHHost returns
 	// a ~-relative literal expanded by the remote shell (no $HOME resolution
 	// round-trip).

@@ -4,7 +4,7 @@ import (
 	"path/filepath"
 	"testing"
 
-	"claude-squad/session/git"
+	"github.com/yro7/boulez/session/git"
 	"github.com/stretchr/testify/assert"
 	"github.com/stretchr/testify/require"
 )

@@ -2,10 +2,10 @@ package tmux
 
 import (
 	"bytes"
-	"claude-squad/cmd"
-	"claude-squad/host"
-	"claude-squad/log"
-	"claude-squad/program"
+	"github.com/yro7/boulez/cmd"
+	"github.com/yro7/boulez/host"
+	"github.com/yro7/boulez/log"
+	"github.com/yro7/boulez/program"
 	"context"
 	"crypto/sha256"
 	"errors"
@@ -273,7 +273,7 @@ func (t *TmuxSession) SendKeys(keys string) error {
 // Callers branch on the precise Status rather than a lossy "has prompt" bool:
 // a definitive StatusReady/StatusPermission from the adapter MUST take
 // priority over the content-change heuristic. When an agent finishes a turn
-// it emits its ready marker (e.g. Pi's cs2:ready sentinel), which changes the
+// it emits its ready marker (e.g. Pi's boulez:ready sentinel), which changes the
 // pane content; classifying that as "working" just because the pane changed
 // would leave a finished agent stuck showing the running spinner forever.
 // Agent-specific detection is delegated to program.Adapter; this function

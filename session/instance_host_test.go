@@ -7,11 +7,11 @@ import (
 	"testing"
 	"time"
 
-	"claude-squad/cmd"
-	"claude-squad/config"
-	"claude-squad/host"
-	"claude-squad/session/fs"
-	"claude-squad/session/git"
+	"github.com/yro7/boulez/cmd"
+	"github.com/yro7/boulez/config"
+	"github.com/yro7/boulez/host"
+	"github.com/yro7/boulez/session/fs"
+	"github.com/yro7/boulez/session/git"
 	"github.com/stretchr/testify/assert"
 	"github.com/stretchr/testify/require"
 )
@@ -45,14 +45,14 @@ func TestInstance_RoutesWorktreeThroughHost(t *testing.T) {
 	data := InstanceData{
 		Title:   "stored",
 		Path:    repoPath,
-		Branch:  "cs2/stored",
+		Branch:  "boulez/stored",
 		Status:  Paused, // Paused so FromInstanceData doesn't call Start()
 		Program: "claude",
 		Worktree: GitWorktreeData{
 			RepoPath:      repoPath,
 			WorktreePath:  filepath.Join(t.TempDir(), "wt"),
 			SessionName:   "stored",
-			BranchName:    "cs2/stored",
+			BranchName:    "boulez/stored",
 			BaseCommitSHA: "HEAD",
 		},
 	}
@@ -98,7 +98,7 @@ func runGit(t *testing.T, dir string, args ...string) {
 // TestInstance_UsesHostWorktreeDir proves the path-generation seam: an
 // Instance built from storage uses its Host's WorktreeDir, not the local
 // config dir baked into the git package. With LocalHost this is the local
-// ~/.cs2/worktrees (non-regression); the point is that the dir comes from the
+// ~/.boulez/worktrees (non-regression); the point is that the dir comes from the
 // host, so an SSHHost's ~-relative dir would flow through to Setup.
 func TestInstance_UsesHostWorktreeDir(t *testing.T) {
 	repoPath := makeTempGitRepo(t)
@@ -112,14 +112,14 @@ func TestInstance_UsesHostWorktreeDir(t *testing.T) {
 	data := InstanceData{
 		Title:   "stored",
 		Path:    repoPath,
-		Branch:  "cs2/stored",
+		Branch:  "boulez/stored",
 		Status:  Paused,
 		Program: "claude",
 		Worktree: GitWorktreeData{
 			RepoPath:      repoPath,
 			WorktreePath:  filepath.Join(t.TempDir(), "wt"),
 			SessionName:   "stored",
-			BranchName:    "cs2/stored",
+			BranchName:    "boulez/stored",
 			BaseCommitSHA: "HEAD",
 		},
 	}
@@ -127,17 +127,17 @@ func TestInstance_UsesHostWorktreeDir(t *testing.T) {
 	inst, err := FromInstanceData(data)
 	require.NoError(t, err)
 
-	// The host's WorktreeDir is the local ~/.cs2/worktrees. The instance was
+	// The host's WorktreeDir is the local ~/.boulez/worktrees. The instance was
 	// built from the host's dir (not a stale local-derived one).
 	wantDir, err := inst.Host().WorktreeDir()
 	require.NoError(t, err)
-	assert.Equal(t, filepath.Join(tempHome, ".cs2", "worktrees"), wantDir)
+	assert.Equal(t, filepath.Join(tempHome, ".boulez", "worktrees"), wantDir)
 }
 
 // TestInstance_HostRoundTrip proves persistence: serializing an instance with
 // an SSHHost and restoring it yields an instance whose host is an SSHHost
 // bound to the same alias. This is the contract the creation flow + storage
-// rely on: the host survives a cs2 restart.
+// rely on: the host survives a boulez restart.
 func TestInstance_HostRoundTrip(t *testing.T) {
 	repoPath := makeTempGitRepo(t)
 
@@ -237,7 +237,7 @@ func TestInstance_PII_HostAliasNotInArtifacts(t *testing.T) {
 	assert.NotContains(t, pausedCommitMessage(title, time.Now()), alias,
 		"pause commit message must not contain the host alias")
 
-	// 2. Branch name: built from the title (cs2/<sanitized title>) via
+	// 2. Branch name: built from the title (boulez/<sanitized title>) via
 	// NewGitWorktreeWithDeps, which never receives the host.
 	repoPath := makeTempGitRepo(t)
 	worktreeDir := t.TempDir()

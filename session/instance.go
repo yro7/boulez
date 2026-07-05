@@ -1,11 +1,11 @@
 package session
 
 import (
-	"claude-squad/host"
-	"claude-squad/log"
-	"claude-squad/program"
-	"claude-squad/session/git"
-	"claude-squad/session/tmux"
+	"github.com/yro7/boulez/host"
+	"github.com/yro7/boulez/log"
+	"github.com/yro7/boulez/program"
+	"github.com/yro7/boulez/session/git"
+	"github.com/yro7/boulez/session/tmux"
 	"crypto/rand"
 	"crypto/sha256"
 	"encoding/hex"
@@ -130,7 +130,7 @@ func (k Kind) String() string {
 }
 
 // MarshalJSON renders Kind as a human-readable string on the wire
-// ("worker"/"orchestrator"), so a consumer parsing 'cs2 ctl list_instances'
+// ("worker"/"orchestrator"), so a consumer parsing 'boulez ctl list_instances'
 // sees self-documenting values instead of opaque ints (0/1). This resolves
 // finding #2 from dogfooding (enums exposed as raw ints).
 func (k Kind) MarshalJSON() ([]byte, error) {
@@ -1005,7 +1005,7 @@ func (i *Instance) GetDiffStats() *git.DiffStats {
 // This is agent-agnostic: every TUI agent echoes typed characters into its
 // input area, so "text appeared" / "text disappeared" are universal signals
 // that the input handler accepted the keystrokes. No per-agent boot marker is
-// needed (Pi's cs2:ready sentinel only fires after a turn; Claude has no boot
+// needed (Pi's boulez:ready sentinel only fires after a turn; Claude has no boot
 // ready marker at all).
 //
 // The loop is bounded by `promptBootTimeout` (generous: some agents take a

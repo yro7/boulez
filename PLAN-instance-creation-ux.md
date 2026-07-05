@@ -163,7 +163,7 @@ câble l'appel au registre.
 **Décision couverte :** 4 (MRU).
 
 Le roadmap diffère le tri par récence « selon volume réel » ; l'usage est
-confirmé (cs2 revient souvent). On l'active, **sans changer le format de
+confirmé (boulez revient souvent). On l'active, **sans changer le format de
 stockage** : le tri se fait par réordonnancement de la liste sauvegardée.
 
 **Fichiers :**
@@ -218,7 +218,7 @@ stockage** : le tri se fait par réordonnancement de la liste sauvegardée.
 **Décision couverte :** 3 (préférence).
 
 **Nouveau package `prefs`** (SRP : connaît les préférences repo, rien d'autre).
-Format minimal `~/.cs2/preferences.json` : `{ "<absRepoPath>": {"profile": "<name>", "program": "<program>"} }`.
+Format minimal `~/.boulez/preferences.json` : `{ "<absRepoPath>": {"profile": "<name>", "program": "<program>"} }`.
 
 **Fichiers :**
 - `prefs/prefs.go` — `Store` avec `Get(repoPath) (Profile, bool)` et
@@ -267,11 +267,11 @@ Format minimal `~/.cs2/preferences.json` : `{ "<absRepoPath>": {"profile": "<nam
    le sélecteur ; `local` n'est jamais supprimable.
 4. Sélectionner un repo/host le fait remonter en tête du registre au prochain
    lancement (MRU).
-5. Au lancement de `cs2` avec un registre host vide, `KeyNew`/`KeyPrompt` va
+5. Au lancement de `boulez` avec un registre host vide, `KeyNew`/`KeyPrompt` va
    directement au sélecteur de repo (étape host sautée) ; idem avec un seul
    alias.
-6. Après avoir `ctrl+s` sur le profile picker pour le repo `cs2`, relancer un
-  `KeyPrompt` sur `cs2` pré-sélectionne ce profil dans le prompt overlay.
+6. Après avoir `ctrl+s` sur le profile picker pour le repo `boulez`, relancer un
+  `KeyPrompt` sur `boulez` pré-sélectionne ce profil dans le prompt overlay.
 7. Aucune duplication de la logique de liste : `HostSelector` et `RepoSelector`
    délèguent à `ListSelector`.
 8. Le format de stockage des registres reste `[]string` (pas de migration), seuls

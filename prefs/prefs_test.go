@@ -107,6 +107,6 @@ func TestNewStoreUsesConfigDir(t *testing.T) {
 	require.NoError(t, err)
 
 	assert.True(t, filepath.IsAbs(s.Path()))
-	assert.True(t, filepath.HasPrefix(s.Path(), filepath.Join(tempHome, ".cs2")))
+	assert.True(t, filepath.HasPrefix(s.Path(), filepath.Join(tempHome, ".boulez")))
 	assert.Equal(t, "preferences.json", filepath.Base(s.Path()))
 }

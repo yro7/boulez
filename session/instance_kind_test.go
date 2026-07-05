@@ -5,7 +5,7 @@ import (
 	"path/filepath"
 	"testing"
 
-	"claude-squad/config"
+	"github.com/yro7/boulez/config"
 	"github.com/stretchr/testify/assert"
 	"github.com/stretchr/testify/require"
 )
@@ -23,7 +23,7 @@ func TestInstance_Kind_DefaultsToWorker(t *testing.T) {
 
 // TestInstance_Kind_PersistsAcrossRoundTrip proves the Kind survives a
 // save→load round-trip, so an orchestrator instance is still an orchestrator
-// after a cs2 restart.
+// after a boulez restart.
 func TestInstance_Kind_PersistsAcrossRoundTrip(t *testing.T) {
 	repoPath := makeTempGitRepo(t)
 
@@ -61,7 +61,7 @@ func TestInstance_Kind_LegacyDataRestoresAsWorker(t *testing.T) {
 			RepoPath:      repoPath,
 			WorktreePath:  filepath.Join(t.TempDir(), "wt"),
 			SessionName:   "legacy",
-			BranchName:    "cs2/legacy",
+			BranchName:    "boulez/legacy",
 			BaseCommitSHA: "HEAD",
 		},
 		// Kind omitted → zero value KindWorker.

@@ -3,7 +3,7 @@
 package daemon
 
 // On platforms without launchd or systemd (e.g. Windows, *BSD), install is
-// not supported — the dev fallback (C2.5) is `nohup cs2 daemon run &`. No
+// not supported — the dev fallback (C2.5) is `nohup boulez daemon run &`. No
 // custom supervisor is built.
 
 func serviceManager() string { return "" }

@@ -1,7 +1,7 @@
 package git
 
 import (
-	"claude-squad/cmd"
+	"github.com/yro7/boulez/cmd"
 	"fmt"
 	"os"
 	"os/exec"
@@ -169,7 +169,7 @@ func (m *defaultMerger) mergeInto(repoPath, targetBranch string, sourceBranches 
 	// user's main checkout). A detached worktree at the branch's commit has
 	// the same content but does not "check out" the branch, so it coexists
 	// with the user's checkout.
-	tmpDir, err := os.MkdirTemp("", "cs2-merge-*")
+	tmpDir, err := os.MkdirTemp("", "boulez-merge-*")
 	if err != nil {
 		return MergeResult{}, fmt.Errorf("merge: create temp worktree dir: %w", err)
 	}

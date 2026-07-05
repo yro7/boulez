@@ -1,8 +1,8 @@
 package kernel
 
 import (
-	"claude-squad/session"
-	"claude-squad/session/git"
+	"github.com/yro7/boulez/session"
+	"github.com/yro7/boulez/session/git"
 )
 
 // InstanceSummary is the list-view projection of an instance: enough to

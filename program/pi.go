@@ -22,18 +22,18 @@ import "strings"
 // the agent-agnostic core; only auto-yes and the Ready badge are silent.
 type PiAdapter struct{}
 
-// PiReadySentinel is the marker string the pi-cs2 Pi extension appends to the
+// PiReadySentinel is the marker string the pi-boulez Pi extension appends to the
 // end of every completed assistant turn. CS2 detects this string in the tmux
 // pane content to know Pi is idle and waiting for input (StatusReady).
 //
 // This is a shared contract between two codebases:
-//   - emitter: the pi-cs2 extension (~/cs-multirepo/extensions/pi-cs2.ts) prints
+//   - emitter: the pi-boulez extension (~/cs-multirepo/extensions/pi-boulez.ts) prints
 //     this exact string via sendMessage with display:true after each turn.
 //   - detector: program.PiAdapter.Detect looks for it in the captured pane.
 //
 // Keep them in sync. The string is deliberately distinctive and unlikely to
 // appear in normal output.
-const PiReadySentinel = "⟦cs2:ready⟧"
+const PiReadySentinel = "⟦boulez:ready⟧"
 
 func (PiAdapter) Name() string { return "pi" }
 
@@ -55,8 +55,8 @@ func (PiAdapter) Detect(content string) (Status, *Prompt) {
 	if !isPiFooter(content) {
 		return StatusUnknown, nil
 	}
-	// First, check for the CS2 sentinel emitted by the pi-cs2 extension (see
-	// pi-cs2.ts). This is the most reliable ready signal: Pi prints it at the
+	// First, check for the CS2 sentinel emitted by the pi-boulez extension (see
+	// pi-boulez.ts). This is the most reliable ready signal: Pi prints it at the
 	// end of each completed assistant turn, so its presence means Pi is idle
 	// and waiting for input.
 	if strings.Contains(content, PiReadySentinel) {

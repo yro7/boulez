@@ -1,12 +1,12 @@
 package git
 
 import (
-	"claude-squad/session/fs"
+	"github.com/yro7/boulez/session/fs"
 	"os/exec"
 	"path/filepath"
 	"testing"
 
-	cmdtest "claude-squad/cmd/cmd_test"
+	cmdtest "github.com/yro7/boulez/cmd/cmd_test"
 	"github.com/stretchr/testify/assert"
 	"github.com/stretchr/testify/require"
 )
@@ -28,12 +28,12 @@ func TestGitWorktree_RunGitCommand_RoutesViaExecutor(t *testing.T) {
 	// Construct directly (in-package test) with the mock executor.
 	g := &GitWorktree{
 		repoPath:     "/repo",
-		worktreePath: "/repo/.cs2/worktrees/wt",
-		branchName:   "cs2/feat",
+		worktreePath: "/repo/.boulez/worktrees/wt",
+		branchName:   "boulez/feat",
 		cmdExec:      executor,
 	}
 
-	out, err := g.runGitCommand("/repo/.cs2/worktrees/wt", "status", "--porcelain")
+	out, err := g.runGitCommand("/repo/.boulez/worktrees/wt", "status", "--porcelain")
 	require.NoError(t, err)
 	assert.Equal(t, "ok\n", out)
 
@@ -45,7 +45,7 @@ func TestGitWorktree_RunGitCommand_RoutesViaExecutor(t *testing.T) {
 	// extra args are appended verbatim — so an SSH transport that wraps
 	// `git -C path ...` as `ssh host git -C path ...` works unchanged.
 	assert.Equal(t,
-		[]string{"git", "-C", "/repo/.cs2/worktrees/wt", "status", "--porcelain"},
+		[]string{"git", "-C", "/repo/.boulez/worktrees/wt", "status", "--porcelain"},
 		got.Args)
 }
 

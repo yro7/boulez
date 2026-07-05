@@ -4,9 +4,9 @@ import (
 	"context"
 	"testing"
 
-	"claude-squad/config"
-	"claude-squad/session"
-	"claude-squad/ui"
+	"github.com/yro7/boulez/config"
+	"github.com/yro7/boulez/session"
+	"github.com/yro7/boulez/ui"
 	"github.com/charmbracelet/bubbles/spinner"
 	"github.com/stretchr/testify/assert"
 	"github.com/stretchr/testify/require"

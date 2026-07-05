@@ -1,9 +1,9 @@
 package session
 
 import (
-	"claude-squad/config"
-	"claude-squad/session/fs"
-	"claude-squad/session/git"
+	"github.com/yro7/boulez/config"
+	"github.com/yro7/boulez/session/fs"
+	"github.com/yro7/boulez/session/git"
 	"os"
 	"path/filepath"
 )
@@ -13,7 +13,7 @@ import (
 // a supervised repo, so it has no git worktree, no branch, no base commit,
 // and no diff. Every git operation is a no-op.
 //
-// What it DOES have is a control directory (~/.cs2/orchestrators/<id>/):
+// What it DOES have is a control directory (~/.boulez/orchestrators/<id>/):
 // the working dir the orchestrator's tmux session runs in, and where its
 // plan.json lives (persisted by the kernel, not here). Setup creates it;
 // the no-op cleanups deliberately never delete it (plan data outlives a
@@ -30,7 +30,7 @@ type headlessWorktree struct {
 }
 
 // newHeadlessWorktree builds a headless worktree for the given instance ID.
-// The control dir is derived from the cs2 config dir + id, so it is stable
+// The control dir is derived from the boulez config dir + id, so it is stable
 // across restarts (the same ID always maps to the same control dir).
 func newHeadlessWorktree(id string) (Worktree, error) {
 	orchDir, err := config.OrchestratorsDir()

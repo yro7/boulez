@@ -1,6 +1,6 @@
 # Plan : support SSH (instances sur un host distant)
 
-> Objectif : permettre à une instance cs2 de tourner sur un **host distant**
+> Objectif : permettre à une instance boulez de tourner sur un **host distant**
 > (ex. `dev-machine`, `gpu-box`) tout en restant supervisée depuis le TUI
 > local. Le TUI devient un dashboard unifié d'instances réparties sur
 > plusieurs machines — ex. `(A, local)`, `(A, L40S)`, `(A, H100)`, `(B, H100)`.
@@ -24,7 +24,7 @@
 
 ## Contexte technique (pourquoi v1 est un refactor, pas une feature)
 
-L'environnement d'une instance cs2 est **tout-ou-rien par machine** : le
+L'environnement d'une instance boulez est **tout-ou-rien par machine** : le
 repo, le worktree, le serveur tmux et le process de l'agent doivent être sur
 le **même host** (l'agent édite des fichiers dans son CWD = le worktree).
 Pas de « git distant + agent local ». Donc « remote » = déplacer
@@ -78,7 +78,7 @@ impliquera de rendre AutoYes *vraiment* par-instance en v2. **Hors scope v1**
 
 1. **Host primaire, pas produit cartésien.** Le flow de création est
    `host → repo-sur-ce-host → branch`. Un path n'a de sens que relatif à un
-   host ; cs2 ne maintient pas de mapping spéculatif « même repo logique
+   host ; boulez ne maintient pas de mapping spéculatif « même repo logique
    entre hosts ». Le « produit cartésien » apparaît dans la **liste des
    instances**, pas dans la **sélection**. Chaque host a sa propre liste de
    repos connus (paths valides sur CE host).
@@ -104,7 +104,7 @@ impliquera de rendre AutoYes *vraiment* par-instance en v2. **Hors scope v1**
    regroupe Executor + FS + PtyFactory) est la **première étape de v2**,
    quand `SSHHost` (2e implémentation) arrive pour de vrai.
 7. **Discipline PII étendue aux hostnames.** Le commit `8103394` a statiqué
-   le préfixe `cs2/` pour empêcher la fuite PII dans les noms de branches.
+   le préfixe `boulez/` pour empêcher la fuite PII dans les noms de branches.
    Les noms de hosts (`dev-machine`, `L40S`, `H100`) sont la même classe de
    risque : **jamais dans les commit messages / noms de branche / noms de
    session tmux**. Le host vit uniquement dans `InstanceData.Host`
@@ -153,7 +153,7 @@ il faut `CombinedOutput` sur l'interface. Additif, tmux non affecté.
 `Executor`) mais n'ont aucune cohésion au worktree. On les regroupe dans un
 type `Repo` qui porte l'Executor. C'est le split SRP honnête : `Repo` = ops
 sur un repo git existant (branches, fetch, racine), `GitWorktree` = ops sur
-un worktree cs2 spécifique (diff, commit, dirty). Le branch-picker de
+un worktree boulez spécifique (diff, commit, dirty). Le branch-picker de
 `PLAN-multi-repo.md` (qui scanne les branches *avant* qu'un worktree existe)
 devient un client naturel de `Repo` — cohérence avec l'existant.
 
@@ -162,7 +162,7 @@ devient un client naturel de `Repo` — cohérence avec l'existant.
   ```go
   // Repo wraps a repository path with an injectable command executor. It
   // owns repo-level operations (branches, fetch, root resolution) that have
-  // no dependency on a cs2 worktree. Adding SSH = swap the Executor; Repo
+  // no dependency on a boulez worktree. Adding SSH = swap the Executor; Repo
   // itself is transport-agnostic.
   type Repo struct {
       path    string
@@ -326,7 +326,7 @@ redécouvrir la dette en pleine tempête SSH.
    émerger les vrais besoins : cleanup distant, multi-repo, multi-host — la
    forme correcte dépend du package `Host` qui n'existe pas encore).
 2. **Couplage `gh` (GitHub CLI) dans `PushChanges` / `OpenBranchURL` /
-   `checkGHCLI`.** Rend cs2 inopérant sur GitLab/local-host. Vrai problème,
+   `checkGHCLI`.** Rend boulez inopérant sur GitLab/local-host. Vrai problème,
    mais c'est un **autre feature** ("support non-GitHub"), pas du SSH. Ouvert
    maintenant = scope creep. Noté pour ne pas l'oublier ; un plan séparé le
    traitera.
@@ -339,7 +339,7 @@ redécouvrir la dette en pleine tempête SSH.
 ## Critères de succès v1 (vérifiables)
 
 1. `go build ./...` et `go test ./...` verts après chaque commit.
-2. **Aucun changement de comportement** : depuis l'extérieur, cs2 se comporte
+2. **Aucun changement de comportement** : depuis l'extérieur, boulez se comporte
    exactement comme avant (toutes les opérations git/FS passent par
    `LocalFS`/`Exec` local via les constructeurs par défaut).
 3. `session/git/` ne contient plus **aucun** appel direct à
@@ -373,11 +373,11 @@ Ce que v1 rend possible, dans l'ordre probable :
    endroit** (module profond, DRY/SRP).
 2. **Couplage path generation.** `getWorktreeDirectory()` /
    `resolveWorktreePaths` retourne un path **local** aujourd'hui. v2 doit
-   demander au `Host` son répertoire de worktrees (le `~/.cs2/worktrees` du
+   demander au `Host` son répertoire de worktrees (le `~/.boulez/worktrees` du
    distant, résolu via une commande `ssh host sh -c 'echo $HOME'` cacheable,
    ou en gardant des paths `~`-relatifs que le shell distant étend).
 3. **Registre d'hosts + sélecteur.** `host.Registry` (miroir de
-   `repo.Registry`), `~/.cs2/hosts.json`, `HostSelector` (copie du
+   `repo.Registry`), `~/.boulez/hosts.json`, `HostSelector` (copie du
    `RepoSelector`). Flow de création : `host → repo-sur-ce-host → branch`.
 4. **`InstanceData.Host`.** Persistance du host sur l'instance. À la
    restauration, lookup du host → injection du bon `Host` (Local ou SSH).
@@ -389,7 +389,7 @@ Ce que v1 rend possible, dans l'ordre probable :
 6. **Attach distant.** `SSHHost.Attach()` via une `PtyFactory` qui lance
    `ssh host -t tmux attach -t <session>`. Le seam `PtyFactory` existe déjà.
 7. **Sécurité / PII.** Validation des `repoPath` saisis librement (paths
-   avec espaces/quotes via ssh-shell) ; les `worktreePath` générés par cs2
+   avec espaces/quotes via ssh-shell) ; les `worktreePath` générés par boulez
    restent contrôlés (`sanitizeBranchName` + hex). Hostnames jamais dans
    commit messages / noms de branche / noms de session tmux.
 8. **`CleanupWorktrees` rendu host+repo-aware** (corrige le bug latent

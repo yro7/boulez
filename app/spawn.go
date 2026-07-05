@@ -1,10 +1,10 @@
 package app
 
 import (
-	"claude-squad/host"
-	"claude-squad/session"
-	"claude-squad/session/git"
-	"claude-squad/session/tmux"
+	"github.com/yro7/boulez/host"
+	"github.com/yro7/boulez/session"
+	"github.com/yro7/boulez/session/git"
+	"github.com/yro7/boulez/session/tmux"
 	"fmt"
 	"time"
 )
@@ -18,7 +18,7 @@ type SpawnOptions struct {
 	// Required.
 	Repo string
 	// Branch is the branch to start on. Empty = a new branch from HEAD
-	// (the cs2/<title> convention). When set, the branch is created from HEAD
+	// (the boulez/<title> convention). When set, the branch is created from HEAD
 	// if absent (unless BranchMustExist is set, which requires it to pre-exist).
 	Branch string
 	// Prompt is the initial task to send to the agent once it has started.
@@ -40,7 +40,7 @@ type SpawnOptions struct {
 	Kind session.Kind
 
 	// BranchMustExist controls what happens when Branch is set but does not
-	// exist in the repo. The default (false) makes cs2 create the branch from
+	// exist in the repo. The default (false) makes boulez create the branch from
 	// HEAD — the orchestrator-friendly behaviour (deterministic branch names
 	// without pre-creating them). When true, Spawn refuses with
 	// git.ErrBranchNotFound (mapped to BRANCH_NOT_FOUND on the wire) — this
@@ -141,7 +141,7 @@ func Spawn(opts SpawnOptions) (*session.Instance, error) {
 }
 
 // deriveSpawnTitle builds a title when SpawnOptions.Title is empty. The title
-// also drives the branch name (cs2/<sanitized title>), so it must be unique
+// also drives the branch name (boulez/<sanitized title>), so it must be unique
 // across concurrent spawns to avoid branch collisions. We suffix with a
 // monotonic-enough timestamp; the instance ID (allocated inside NewInstance)
 // is the true unique handle, but the title must already be unique at Start

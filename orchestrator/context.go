@@ -1,17 +1,17 @@
 // Package orchestrator holds the context an orchestrator instance needs at
 // spawn time: the ORCHESTRATOR.md tool documentation and the one-time fleet
 // snapshot injected into the agent's pane. The orchestrator is an ordinary
-// fleet instance (KindOrchestrator, headless worktree) that consumes cs2's
+// fleet instance (KindOrchestrator, headless worktree) that consumes boulez's
 // control API (the kernel syscalls) to supervise the fleet. It is spawned
 // on demand by the user from the TUI (O key), NOT auto-spawned at startup.
 //
-// cs2 is agent-agnostic: the orchestrator runs some agent program (Pi by
+// boulez is agent-agnostic: the orchestrator runs some agent program (Pi by
 // user choice, but any terminal agent works). This package does NOT know
 // which agent is running — it only (a) writes a context file (ORCHESTRATOR.md)
-// into the orchestrator's control dir documenting the `cs2 ctl` tool surface
+// into the orchestrator's control dir documenting the `boulez ctl` tool surface
 // + the orchestrator's own ID, and (b) injects a one-time fleet snapshot
 // into the agent's pane via RenderFleet + InjectionPrompt. After that the
-// agent is supervised: it calls `cs2 ctl` shell tools to drive the fleet at
+// agent is supervised: it calls `boulez ctl` shell tools to drive the fleet at
 // its own pace.
 //
 // The package is deliberately decoupled from the kernel and from session:
@@ -20,7 +20,7 @@
 package orchestrator
 
 import (
-	"claude-squad/config"
+	"github.com/yro7/boulez/config"
 	"fmt"
 	"os"
 	"path/filepath"
@@ -33,7 +33,7 @@ import (
 const ContextFileName = "ORCHESTRATOR.md"
 
 // ControlDir returns the orchestrator's control directory
-// (~/.cs2/orchestrators/<id>/). It is the cwd of the orchestrator's tmux
+// (~/.boulez/orchestrators/<id>/). It is the cwd of the orchestrator's tmux
 // session and where ORCHESTRATOR.md + plan.json live.
 func ControlDir(id string) (string, error) {
 	orchDir, err := config.OrchestratorsDir()
@@ -44,9 +44,9 @@ func ControlDir(id string) (string, error) {
 }
 
 // WriteContextFile writes ORCHESTRATOR.md into the orchestrator's control dir.
-// Safe to call repeatedly (on every cs2 restart): it overwrites with the
+// Safe to call repeatedly (on every boulez restart): it overwrites with the
 // current documentation, so the agent always sees the up-to-date tool surface
-// even across cs2 version upgrades. The control dir is created by the
+// even across boulez version upgrades. The control dir is created by the
 // headless worktree at instance start; this function ensures it exists too
 // (defensive).
 func WriteContextFile(id string) error {
@@ -66,34 +66,34 @@ func WriteContextFile(id string) error {
 
 // ContextContent builds the body of ORCHESTRATOR.md. It documents:
 //   - the orchestrator's role and its own instance ID (so it can
-//     `cs2 ctl as <self> ...`),
-//   - the full `cs2 ctl` tool surface (the syscalls as shell commands),
+//     `boulez ctl as <self> ...`),
+//   - the full `boulez ctl` tool surface (the syscalls as shell commands),
 //   - the structured error codes it should branch on,
 //   - a reminder that the fleet snapshot was injected once and that it can
 //     re-fetch state with `list_instances`.
 //
-// This is documentation, kept agent-agnostic. It describes the `cs2 ctl` CLI
+// This is documentation, kept agent-agnostic. It describes the `boulez ctl` CLI
 // surface (what the agent actually shells out to), not the kernel's JSON-RPC
 // surface.
 func ContextContent(id string) string {
 	var b strings.Builder
-	fmt.Fprintf(&b, "# cs2 orchestrator\n\n")
-	fmt.Fprintf(&b, "You are the **cs2 global orchestrator**. You supervise a fleet of\n")
+	fmt.Fprintf(&b, "# boulez orchestrator\n\n")
+	fmt.Fprintf(&b, "You are the **boulez global orchestrator**. You supervise a fleet of\n")
 	fmt.Fprintf(&b, "worker instances (coding agents in isolated git worktrees): you spawn\n")
 	fmt.Fprintf(&b, "them, give them tasks, observe their progress, and merge their branches.\n\n")
 
 	fmt.Fprintf(&b, "## Your identity\n\n")
 	fmt.Fprintf(&b, "Your instance ID is:\n\n")
 	fmt.Fprintf(&b, "```\n%s\n```\n\n", id)
-	fmt.Fprintf(&b, "Use it with `cs2 ctl as <id> <syscall>` so your actions are attributed to\n")
-	fmt.Fprintf(&b, "your plan (this is how cs2 records what you spawned/merged, for resumability).\n\n")
+	fmt.Fprintf(&b, "Use it with `boulez ctl as <id> <syscall>` so your actions are attributed to\n")
+	fmt.Fprintf(&b, "your plan (this is how boulez records what you spawned/merged, for resumability).\n\n")
 
 	fmt.Fprintf(&b, "## Your tools\n\n")
-	fmt.Fprintf(&b, "You drive the fleet by shelling out to `cs2 ctl`. Every command prints a\n")
+	fmt.Fprintf(&b, "You drive the fleet by shelling out to `boulez ctl`. Every command prints a\n")
 	fmt.Fprintf(&b, "single JSON document on stdout (parseable with `jq` or your language's JSON\n")
 	fmt.Fprintf(&b, "parser). Errors are printed to stderr as `{\"code\": \"...\", \"message\": \"...\"}`\n")
 	fmt.Fprintf(&b, "and exit non-zero.\n\n")
-	fmt.Fprintf(&b, "If the daemon is down, `cs2 ctl` auto-launches it and retries — you do not\n")
+	fmt.Fprintf(&b, "If the daemon is down, `boulez ctl` auto-launches it and retries — you do not\n")
 	fmt.Fprintf(&b, "need to manage the daemon.\n\n")
 
 	fmt.Fprintf(&b, "### Read (observe the fleet)\n\n")
@@ -122,7 +122,7 @@ func ContextContent(id string) string {
 	fmt.Fprintf(&b, "```\ncs2 ctl list_instances\n```\n\n")
 	fmt.Fprintf(&b, "You are supervised, not autonomous. After refreshing the fleet state above,\n")
 	fmt.Fprintf(&b, "STOP and wait for an explicit task (a human attaching to your pane, or a\n")
-	fmt.Fprintf(&b, "`cs2 ctl send_prompt --id <your-id>`). Do NOT spawn, merge, or send prompts\n")
+	fmt.Fprintf(&b, "`boulez ctl send_prompt --id <your-id>`). Do NOT spawn, merge, or send prompts\n")
 	fmt.Fprintf(&b, "to other instances on your own initiative. Execute the one task you are\n")
 	fmt.Fprintf(&b, "given, then stop and wait again. Do not loop looking for more work to do.\n")
 

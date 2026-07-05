@@ -12,7 +12,7 @@ import (
 	"text/template"
 )
 
-// launchAgentPath is the macOS LaunchAgent plist location for the cs2 daemon.
+// launchAgentPath is the macOS LaunchAgent plist location for the boulez daemon.
 // User-level (LaunchAgent, not LaunchDaemon) so it runs without root and
 // survives reboot for the logged-in user (RunAtLoad + KeepAlive).
 func launchAgentPath() (string, error) {
@@ -25,9 +25,9 @@ func launchAgentPath() (string, error) {
 
 // plistTpl is the launchd plist. RunAtLoad starts the daemon at login;
 // KeepAlive restarts it if it exits (crash, OOM, reboot). ProgramArguments
-// invokes `cs2 daemon run` (the canonical foreground entrypoint, D2/C1.1).
+// invokes `boulez daemon run` (the canonical foreground entrypoint, D2/C1.1).
 // Standard{Out,Error}Path capture the daemon's stdout/stderr so a crash is
-// diagnosable without `cs2 daemon log` (which tails the claudesquad log).
+// diagnosable without `boulez daemon log` (which tails the claudesquad log).
 const plistTpl = `<?xml version="1.0" encoding="UTF-8"?>
 <!DOCTYPE plist PUBLIC "-//Apple//DTD PLIST 1.0//EN" "http://www.apple.com/DTDs/PropertyList-1.0.dtd">
 <plist version="1.0">

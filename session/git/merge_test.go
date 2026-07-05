@@ -7,8 +7,8 @@ import (
 	"strings"
 	"testing"
 
-	"claude-squad/cmd/cmd_test"
-	cmd2 "claude-squad/cmd"
+	"github.com/yro7/boulez/cmd/cmd_test"
+	cmd2 "github.com/yro7/boulez/cmd"
 	"github.com/stretchr/testify/assert"
 	"github.com/stretchr/testify/require"
 )

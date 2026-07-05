@@ -1,10 +1,10 @@
 package ui
 
 import (
-	"claude-squad/cmd/cmd_test"
-	"claude-squad/log"
-	"claude-squad/session"
-	"claude-squad/session/tmux"
+	"github.com/yro7/boulez/cmd/cmd_test"
+	"github.com/yro7/boulez/log"
+	"github.com/yro7/boulez/session"
+	"github.com/yro7/boulez/session/tmux"
 	"fmt"
 	"os/exec"
 	"strings"

@@ -1,9 +1,9 @@
 package git
 
 import (
-	"claude-squad/cmd"
-	"claude-squad/config"
-	"claude-squad/session/fs"
+	"github.com/yro7/boulez/cmd"
+	"github.com/yro7/boulez/config"
+	"github.com/yro7/boulez/session/fs"
 	"fmt"
 	"path/filepath"
 	"time"
@@ -40,7 +40,7 @@ type GitWorktree struct {
 	// swap in a remote FS; defaults to the local FS in the public constructors.
 	fs fs.FS
 	// worktreeDir is the directory under which this worktree lives. Owned by
-	// the Host (LocalHost: ~/.cs2/worktrees; SSHHost: ~/.cs2/worktrees literal,
+	// the Host (LocalHost: ~/.boulez/worktrees; SSHHost: ~/.boulez/worktrees literal,
 	// expanded by the remote shell). Stored on the struct so Setup's MkdirAll
 	// targets the right host's dir without re-deriving it from the local
 	// config (which would be wrong for a remote worktree).
@@ -78,7 +78,7 @@ func NewGitWorktreeFromStorageWithDeps(repoPath string, worktreePath string, ses
 
 // resolveWorktreePaths resolves the repo root and generates a unique worktree
 // path under the given worktreeDir. worktreeDir is provided by the Host
-// (LocalHost: local ~/.cs2/worktrees; SSHHost: ~-relative literal), so this
+// (LocalHost: local ~/.boulez/worktrees; SSHHost: ~-relative literal), so this
 // function is transport-agnostic — it never reads the local config.
 func resolveWorktreePaths(repoPath string, branchName string, cmdExec cmd.Executor, worktreeDir string) (resolvedRepo string, worktreePath string, err error) {
 	// repoPath is already transport-resolved by the caller (Host.ResolveRepoPath):

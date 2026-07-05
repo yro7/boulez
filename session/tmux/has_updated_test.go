@@ -4,8 +4,8 @@ import (
 	"os/exec"
 	"testing"
 
-	"claude-squad/cmd/cmd_test"
-	"claude-squad/program"
+	"github.com/yro7/boulez/cmd/cmd_test"
+	"github.com/yro7/boulez/program"
 
 	"github.com/stretchr/testify/assert"
 )

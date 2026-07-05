@@ -1,7 +1,7 @@
 package config
 
 import (
-	"claude-squad/log"
+	"github.com/yro7/boulez/log"
 	"encoding/json"
 	"fmt"
 	"os"

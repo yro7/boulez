@@ -4,9 +4,9 @@ import (
 	"context"
 	"testing"
 
-	"claude-squad/config"
-	"claude-squad/session"
-	"claude-squad/ui"
+	"github.com/yro7/boulez/config"
+	"github.com/yro7/boulez/session"
+	"github.com/yro7/boulez/ui"
 	"github.com/charmbracelet/bubbles/spinner"
 	"github.com/stretchr/testify/assert"
 	"github.com/stretchr/testify/require"
@@ -132,7 +132,7 @@ func TestReconcileFleet_ReusesExistingHandles(t *testing.T) {
 }
 
 // TestReconcileFleet_DropsRemovedInstances proves an instance absent from a
-// new snapshot is removed from the view (e.g. killed via `cs2 ctl`).
+// new snapshot is removed from the view (e.g. killed via `boulez ctl`).
 func TestReconcileFleet_DropsRemovedInstances(t *testing.T) {
 	fleet := &fakeFleetClient{
 		list: []session.InstanceData{

@@ -1,9 +1,9 @@
 package git
 
 import (
-	"claude-squad/cmd"
-	"claude-squad/log"
-	"claude-squad/session/fs"
+	"github.com/yro7/boulez/cmd"
+	"github.com/yro7/boulez/log"
+	"github.com/yro7/boulez/session/fs"
 	"fmt"
 	"os"
 	"os/exec"
@@ -155,7 +155,7 @@ func (g *GitWorktree) Prune() error {
 }
 
 // CleanupWorktrees removes all worktrees under the local worktrees directory
-// and their associated branches. It is the "nuke" path used by `cs2 reset`.
+// and their associated branches. It is the "nuke" path used by `boulez reset`.
 // Defaults to local deps; CleanupWorktreesWithDeps is the testable / host-aware
 // variant. Remote worktrees are not swept here (they live on the remote host,
 // not the local worktrees dir) — they are cleaned per-instance via
@@ -181,7 +181,7 @@ func CleanupWorktrees() error {
 // and makes the sweep independent of cwd.
 //
 // worktreeDir is the Host's worktree directory. For LocalHost this is the local
-// ~/.cs2/worktrees; for an SSHHost it would be the ~-relative literal — but
+// ~/.boulez/worktrees; for an SSHHost it would be the ~-relative literal — but
 // note this sweep only sees entries fsys can list, so in practice it covers
 // local worktrees (remote ones are cleaned per-instance through their host).
 func CleanupWorktreesWithDeps(cmdExec cmd.Executor, fsys fs.FS, worktreeDir string) error {
@@ -204,7 +204,7 @@ func CleanupWorktreesWithDeps(cmdExec cmd.Executor, fsys fs.FS, worktreeDir stri
 		// own context (git -C <worktree> ...). Empty => not a git worktree or
 		// corrupt; fall back to a raw directory removal.
 		repoRoot := worktreeRepoRoot(cmdExec, worktreePath)
-		// Branch checked out in this worktree (cs2 branches are named after
+		// Branch checked out in this worktree (boulez branches are named after
 		// the instance title). Empty => detached or unreadable; skip branch
 		// deletion but still drop the directory.
 		branch := worktreeBranch(cmdExec, worktreePath)

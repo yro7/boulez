@@ -7,35 +7,35 @@ import (
 	"strings"
 	"time"
 
-	"claude-squad/daemon"
-	"claude-squad/kernel"
-	"claude-squad/log"
+	"github.com/yro7/boulez/daemon"
+	"github.com/yro7/boulez/kernel"
+	"github.com/yro7/boulez/log"
 	"github.com/spf13/cobra"
 )
 
-// newCtlCmd builds the `cs2 ctl` subcommand: a thin client that sends one
+// newCtlCmd builds the `boulez ctl` subcommand: a thin client that sends one
 // syscall to the kernel over the control socket and prints the JSON response.
 // It is the human/programmatic face of the control API. The LLM's tools
 // (Shape B) will wrap these same syscalls.
 //
 // If the daemon is not running, ctl auto-launches it (the daemon is the
-// canonical "always up during cs2 use" process) then retries.
+// canonical "always up during boulez use" process) then retries.
 func newCtlCmd() *cobra.Command {
 	cmd := &cobra.Command{
 		Use:   "ctl <method> [--param value ...]",
 		Short: "Send a control syscall to the running kernel (programmatic fleet control)",
-		Long: `cs2 ctl sends a single JSON-RPC syscall to the kernel's control socket
+		Long: `boulez ctl sends a single JSON-RPC syscall to the kernel's control socket
 and prints the JSON response. This is the low-level control API: spawn
 workers, send prompts, merge branches, list instances, etc.
 
 The daemon (kernel) must be running. If it isn't, ctl auto-launches it.
 
 Examples:
-  cs2 ctl list_instances
-  cs2 ctl spawn_worker --repo /path/to/repo --prompt "fix the bug" --program bash
-  cs2 ctl get_instance --id <uuid>
-  cs2 ctl merge --target-repo /path --target-branch integration --source feat-a,feat-b
-  cs2 ctl land --target-repo /path --target-branch main --source feat-x
+  boulez ctl list_instances
+  boulez ctl spawn_worker --repo /path/to/repo --prompt "fix the bug" --program bash
+  boulez ctl get_instance --id <uuid>
+  boulez ctl merge --target-repo /path --target-branch integration --source feat-a,feat-b
+  boulez ctl land --target-repo /path --target-branch main --source feat-x
 `,
 	}
 	cmd.AddCommand(newCtlListCmd())
@@ -51,12 +51,12 @@ Examples:
 	return cmd
 }
 
-// newCtlAsCmd builds `cs2 ctl as <instance-id> <syscall> [...]`: it
+// newCtlAsCmd builds `boulez ctl as <instance-id> <syscall> [...]`: it
 // authenticates the connection as the given instance, then issues the
 // syscall on the SAME connection so the caller identity is bound. This is
 // how a plan is recorded for an orchestrator via the CLI (finding #4): the
 // orchestrator's `spawn_worker` calls are attributed to it, so its plan.json
-// is written. Without `as`, every `cs2 ctl` call is top-level (no plan).
+// is written. Without `as`, every `boulez ctl` call is top-level (no plan).
 //
 // Only syscalls whose effect depends on the caller identity need `as`:
 // spawn_worker (records the worker in the caller's plan) and merge (records
@@ -65,7 +65,7 @@ func newCtlAsCmd() *cobra.Command {
 	cmd := &cobra.Command{
 		Use:   "as <instance-id> <syscall> [--param value ...]",
 		Short: "Issue a syscall authenticated as an instance (records the caller's plan)",
-		Long: `cs2 ctl as authenticates the connection as the given instance, then
+		Long: `boulez ctl as authenticates the connection as the given instance, then
 issues the named syscall on the same connection. This binds the caller
 identity so the recursion guards apply and the orchestrator's plan is
 recorded (resumability substrate).
@@ -73,8 +73,8 @@ recorded (resumability substrate).
 Only spawn_worker and merge are caller-aware; others ignore the binding.
 
 Example:
-  cs2 ctl as <orch-id> spawn_worker --repo /r --program bash --prompt "task"
-  cs2 ctl as <orch-id> merge --target-repo /r --target-branch integ --source feat-a`,
+  boulez ctl as <orch-id> spawn_worker --repo /r --program bash --prompt "task"
+  boulez ctl as <orch-id> merge --target-repo /r --target-branch integ --source feat-a`,
 		Args: cobra.MinimumNArgs(2),
 		// DisableFlagParsing: the 'as' command must NOT parse flags itself —
 		// they belong to the wrapped syscall (e.g. --repo). Without this,
@@ -127,9 +127,9 @@ func rawCtl(req kernel.Request) error {
 // rawCtlSession sends a sequence of requests on a SINGLE connection (so they
 // share a session — e.g. authenticate + spawn_worker) and prints the LAST
 // response. The earlier responses are expected to be {ok:true}; only the
-// final syscall's result is shown to the user. Used by `cs2 ctl as`.
+// final syscall's result is shown to the user. Used by `boulez ctl as`.
 func rawCtlSession(reqs []kernel.Request) error {
-	// Capture hook: `cs2 ctl as` uses this to grab the request without sending
+	// Capture hook: `boulez ctl as` uses this to grab the request without sending
 	// it, so it can prepend an `authenticate` on the same session.
 	if captureHook != nil {
 		return captureHook(reqs)
@@ -357,10 +357,10 @@ func newCtlMergeCmd() *cobra.Command {
 	return cmd
 }
 
-// newCtlLandCmd builds `cs2 ctl land`: the top-level "land to main" syscall.
+// newCtlLandCmd builds `boulez ctl land`: the top-level "land to main" syscall.
 // It commits+pushes nothing itself — it merges a SINGLE source branch into a
 // target (which may be main/master). Only a top-level caller may issue it;
-// `cs2 ctl as <id> land` is refused by the kernel (NON_TOP_LEVEL_LAND).
+// `boulez ctl as <id> land` is refused by the kernel (NON_TOP_LEVEL_LAND).
 // The full commit+push+land chain lives in the TUI's LandInstance helper;
 // ctl land is for scripting/recovery on an already-pushed branch.
 func newCtlLandCmd() *cobra.Command {
@@ -368,7 +368,7 @@ func newCtlLandCmd() *cobra.Command {
 	cmd := &cobra.Command{
 		Use:   "land",
 		Short: "Land a source branch into a target branch (top-level; may target main)",
-		Long: `cs2 ctl land merges a single source branch into a target branch of a
+		Long: `boulez ctl land merges a single source branch into a target branch of a
 repo, with explicit authority to land onto a trunk (main/master). This is
 the top-level "land to main" syscall; workers and orchestrators cannot
 issue it (they must use merge, which refuses trunks).
@@ -378,7 +378,7 @@ this for scripting/recovery once the source is already pushed. The TUI's
 L key is the full commit+push+land gesture.
 
 Example:
-  cs2 ctl land --target-repo /path --target-branch main --source feat-x`,
+  boulez ctl land --target-repo /path --target-branch main --source feat-x`,
 		RunE: func(cmd *cobra.Command, args []string) error {
 			if targetRepo == "" || targetBranch == "" || source == "" {
 				return fmt.Errorf("--target-repo, --target-branch and --source are required")
@@ -437,7 +437,7 @@ func statusWire(s string) string {
 }
 
 // buildCtlSub returns a cobra subcommand for the named syscall, configured
-// with its flags but NOT yet executed. Used by `cs2 ctl as` to parse a
+// with its flags but NOT yet executed. Used by `boulez ctl as` to parse a
 // syscall's flags and build its request without sending it (the send happens
 // via rawCtlSession after authenticate). Returns nil for unsupported
 // syscalls (only the caller-aware ones make sense under `as`).

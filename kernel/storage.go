@@ -1,8 +1,8 @@
 package kernel
 
 import (
-	"claude-squad/config"
-	"claude-squad/session"
+	"github.com/yro7/boulez/config"
+	"github.com/yro7/boulez/session"
 	"encoding/json"
 	"fmt"
 )

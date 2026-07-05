@@ -1,6 +1,6 @@
 package session
 
-import "claude-squad/session/git"
+import "github.com/yro7/boulez/session/git"
 
 // Worktree is the polymorphic worktree surface an Instance operates on.
 //

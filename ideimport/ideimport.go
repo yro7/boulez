@@ -1,7 +1,7 @@
 package ideimport
 
 import (
-	"claude-squad/session/git"
+	"github.com/yro7/boulez/session/git"
 	"encoding/json"
 	"fmt"
 	"os"
@@ -112,7 +112,7 @@ type Warning struct {
 
 // Importer scans VS Code-family IDE state files and reports the git
 // repositories found among their recently-opened folders. It does NOT touch
-// the cs2 registry — Scan returns discoveries; the caller does Registry.Add.
+// the boulez registry — Scan returns discoveries; the caller does Registry.Add.
 // This keeps the package testable without a registry and reusable for
 // --dry-run (D19).
 type Importer struct {

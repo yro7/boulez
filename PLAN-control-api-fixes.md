@@ -1,4 +1,4 @@
-# Plan : Corrections & durcissement de l'API de contrôle cs2
+# Plan : Corrections & durcissement de l'API de contrôle boulez
 
 > Suite du **`PLAN-orchestrator-api.md`** (Shape A, livrée). Ce plan corrige
 > les bugs trouvés lors du dogfooding et ajoute les fonctionnalités
@@ -8,12 +8,12 @@
 ## Origine : dogfooding du socle Shape A
 
 Tous les points ci-dessous sont issus d'une session de smoke-test sur
-`cs2 ctl` (socket unix `~/.cs2/ctl.sock`). Les 8 commits de Shape A sont
+`boulez ctl` (socket unix `~/.boulez/ctl.sock`). Les 8 commits de Shape A sont
 verts et fonctionnels ; ce plan s'attaque aux angles morts découverts.
 
 ## Résumé des décisions verrouillées
 
-1. **Le JSON de `cs2 ctl` doit être parsable sans post-traitement.** Aucune
+1. **Le JSON de `boulez ctl` doit être parsable sans post-traitement.** Aucune
    sortie parasite sur stdout. (Fix #6)
 2. **La garde « branche courante du repo hôte » est obligatoire, côté kernel,
    non-contournable.** Elle faisait partie des décisions verrouillées de Shape A
@@ -23,7 +23,7 @@ verts et fonctionnels ; ce plan s'attaque aux angles morts découverts.
    authentifiée). Le paramètre `caller` devient read-only côté client. (Fix #7)
 4. **Le daemon n'est lancé qu'une fois, via un lock fichier.** L'auto-launch
    concurrent ne multiplie plus les daemons. (Fix #5)
-5. **`cs2 ctl` expose `--caller-id` (optionnel) pour les plans.** Mais
+5. **`boulez ctl` expose `--caller-id` (optionnel) pour les plans.** Mais
    l'autorité reste au kernel, qui **valide** que l'ID existe et a le `Kind`
    revendiqué. Un worker ne peut pas se faire passer pour un orchestrator.
 6. **Le wire JSON utilise des ints pour `Kind`/`Status`, mais un
@@ -44,14 +44,14 @@ Chaque étape compile et passe `go build ./... && go test ./...`. Aucune étape
 ne dépend d'un LLM. L'ordre suit la priorité consommateur (impact parsing >
 sécurité > robustesse > ergonomie).
 
-### Étape 1 — Sortie `cs2 ctl` strictement JSON (Fix #6)
+### Étape 1 — Sortie `boulez ctl` strictement JSON (Fix #6)
 
 **Décision :** 1.
 
 **Problème :** `log.Close()` imprime `wrote logs to /tmp/.../claudesquad.log`
-sur **stdout** via `fmt.Println` à chaque appel `cs2 ctl`. La ligne est collée
+sur **stdout** via `fmt.Println` à chaque appel `boulez ctl`. La ligne est collée
 après le JSON de réponse → tout parseur JSON stricte casse
-(`Extra data: line 14 column 1`). Reproduit : `cs2 ctl get_instance | python3
+(`Extra data: line 14 column 1`). Reproduit : `boulez ctl get_instance | python3
 -m json.tool` échoue.
 
 **Changement :**
@@ -113,13 +113,13 @@ Deux implémentations défendent en profondeur :
 
 **Décision :** 4.
 
-**Problème :** Sous un storm de `cs2 ctl` concurrents avec daemon down,
+**Problème :** Sous un storm de `boulez ctl` concurrents avec daemon down,
 plusieurs clients trouvent la socket absente et **chacun lance son propre
 daemon** (jusqu'à 5+ processus observés). Pas de lock, pas de détection
 « daemon en cours de lancement ».
 
 **Changement :** `daemon.LaunchDaemon` prend un **fichier lock**
-(`~/.cs2/daemon.lock`, via `flock`-style `O_EXCL` + PID dedans) :
+(`~/.boulez/daemon.lock`, via `flock`-style `O_EXCL` + PID dedans) :
 - Si le lock est déjà détenu (fichier existe + PID vivant), `LaunchDaemon`
   retourne `nil` (un daemon est déjà en route ou démarre) — ne lance pas de
   second processus.
@@ -161,7 +161,7 @@ mono-utilisateur local), mais un trou avant Shape B.
 **Modèle :** « une socket = une session = une identité ».
 - Le transport (`kernel/transport.go`) maintient un **session ID** par
   connexion (UUID généré à l'`Accept`).
-- Une connexion démarre **non-authentifiée** (top-level, comme `cs2 ctl`
+- Une connexion démarre **non-authentifiée** (top-level, comme `boulez ctl`
   aujourd'hui — autorisé à tout faire).
 - Nouveau syscall **`authenticate`** : `{instance_id, kind}`. Le kernel
   **valide** que l'instance existe, **vérifie** son `Kind`, et **bind** la
@@ -192,7 +192,7 @@ capacité) est différée à Shape B multi-consommateur.
   celui des params. Ajout d'une méthode `BindCaller(sessionID, instanceID)
   error` qui valide l'instance + son Kind et stocke le binding.
 - `cmd_ctl.go` : pas de `--caller` direct ; si l'utilisateur veut agir « en
-  tant qu'orchestrateur X », nouveau sous-mode `cs2 ctl as <id> <syscall ...>`
+  tant qu'orchestrateur X », nouveau sous-mode `boulez ctl as <id> <syscall ...>`
   qui appelle `authenticate` puis le syscall dans la même session (une
   connexion, deux messages : authenticate + la commande). Réouvre le
   dogfooding des plans (#4) via le CLI officiel.
@@ -205,7 +205,7 @@ capacité) est différée à Shape B multi-consommateur.
   `caller.kind`).
 - `TestTransport_AuthenticateAsOrchestrator` : après auth comme
   orchestrator, spawn d'un worker **enregistre le plan** (valide que
-  l'étape 7 est enfin atteignable en CLI via `cs2 ctl as`).
+  l'étape 7 est enfin atteignable en CLI via `boulez ctl as`).
 - `TestTransport_SpoofedCallerIgnored` : params avec `caller` forgé sont
   ignorés ; le caller réel (session) prime.
 
@@ -262,7 +262,7 @@ stabilisé en production. Documenter dans le changelog.
 
 **Problème :** `spawn_worker --branch feat-a` échoue si `feat-a` n'existe pas
 (`INTERNAL: branch feat-a not found locally or on remote`). Sans `--branch`,
-cs2 crée `cs2/spawn-<ns>`. Un orchestrateur voulant des branches déterministes
+boulez crée `boulez/spawn-<ns>`. Un orchestrateur voulant des branches déterministes
 doit créer la branche git lui-même d'abord.
 
 **Changement :**
@@ -291,7 +291,7 @@ doit créer la branche git lui-même d'abord.
 
 ## Invariants structurels (à pinner par des tests, en plus de ceux de Shape A)
 
-7. **Le stdout de `cs2 ctl` est un document JSON unique, parsable sans
+7. **Le stdout de `boulez ctl` est un document JSON unique, parsable sans
    post-traitement.** Aucune ligne parasite. (Étape 1)
 8. **Le `caller` d'un syscall vient du transport (session authentifiée),
    jamais des params du client.** Un client ne peut pas se déclarer worker

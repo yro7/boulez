@@ -1,7 +1,7 @@
 package ui
 
 import (
-	"claude-squad/session"
+	"github.com/yro7/boulez/session"
 	"fmt"
 	"strings"
 

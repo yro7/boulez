@@ -1,5 +1,5 @@
 // Package repo provides the storage layer for the set of repositories known
-// to cs2 (the "repo registry").
+// to boulez (the "repo registry").
 //
 // The registry is a minimal, permissive list of repository paths. It is used to
 // pre-populate the repo selector at instance creation. A path chosen freely at
@@ -12,13 +12,13 @@
 package repo
 
 import (
-	"claude-squad/config"
+	"github.com/yro7/boulez/config"
 	"encoding/json"
 	"os"
 	"path/filepath"
 )
 
-// registryFileName is the name of the registry file inside the cs2 config dir.
+// registryFileName is the name of the registry file inside the boulez config dir.
 const registryFileName = "repos.json"
 
 // Registry is the storage layer for known repository paths. It is a deep
@@ -30,8 +30,8 @@ type Registry struct {
 	path string
 }
 
-// NewRegistry returns a Registry backed by repos.json inside the cs2 config
-// directory (~/.cs2/). The directory is created on demand by config.GetConfigDir.
+// NewRegistry returns a Registry backed by repos.json inside the boulez config
+// directory (~/.boulez/). The directory is created on demand by config.GetConfigDir.
 func NewRegistry() (*Registry, error) {
 	configDir, err := config.GetConfigDir()
 	if err != nil {

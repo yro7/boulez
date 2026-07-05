@@ -4,15 +4,15 @@ import (
 	"encoding/json"
 	"fmt"
 
-	"claude-squad/kernel"
-	"claude-squad/session"
-	"claude-squad/session/git"
+	"github.com/yro7/boulez/kernel"
+	"github.com/yro7/boulez/session"
+	"github.com/yro7/boulez/session/git"
 )
 
 // socketLandCaller is a session.LandCaller that reaches the kernel over the
 // control socket. The TUI does not hold a *kernel.Kernel directly (the kernel
 // lives in the daemon process); instead it speaks the wire protocol, exactly
-// like `cs2 ctl land`. The connection is an unauthenticated (top-level) one,
+// like `boulez ctl land`. The connection is an unauthenticated (top-level) one,
 // which is the only identity Land accepts.
 //
 // This is the thin adapter that lets session.LandInstance drive the Land

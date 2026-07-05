@@ -32,8 +32,8 @@ Reprises de la discussion + affinées par lecture du code v1.
 ## Décisions à valider (mon appel, overridable)
 
 **A. Path generation distante — via expansion `~` du shell distant.**
-`SSHHost.WorktreeDir()` retourne le literal `~/.cs2/worktrees` (pas de
-résolution `$HOME` réseau). Les commandes `ssh host git -C ~/.cs2/worktrees/...`
+`SSHHost.WorktreeDir()` retourne le literal `~/.boulez/worktrees` (pas de
+résolution `$HOME` réseau). Les commandes `ssh host git -C ~/.boulez/worktrees/...`
 sont expansées par le shell distant. `LocalHost.WorktreeDir()` retourne
 l'absolu local d'aujourd'hui (`config.GetConfigDir()/worktrees`). Chaque FS
 gère sa convention de path (LocalFS = absolu ; SSHFS = `~`-relatif). Évite
@@ -42,9 +42,9 @@ espaces/quotes → `SSHExecutor` doit shell-quoter (voir #7).
 
 **B. SSH multiplexing — defer.** Chaque `git status` = `ssh host ...` = nouvelle
 connexion. Pour v2 on documente ControlMaster dans `~/.ssh/config`
-(recommandation), on ne gère pas de master cs2. Le daemon ne poll qu'en
+(recommandation), on ne gère pas de master boulez. Le daemon ne poll qu'en
 StatusReady/Permission (pas chaque seconde sur chaque instance), donc
-supportable. Master managé par cs2 = roadmap (v2.x).
+supportable. Master managé par boulez = roadmap (v2.x).
 
 **C. AutoYes global flag — ne touche plus aux remote.** Aujourd'hui
 `--auto-yes` force `true` sur toutes les instances chargées (`app.go:168`) et
@@ -122,7 +122,7 @@ test que `LocalHost.WorktreeDir()` retourne le même path que l'ancien
     `ssh host sh -c '...'` (paths `~`-relatifs, expansés par le shell distant).
   - `PtyFactory()` → `sshPtyFactory{ alias }` : `Start` lance
     `exec.Command("ssh", "-t", alias, ...)` via `pty.Start` (creack/pty).
-  - `WorktreeDir()` → retourne le literal `~/.cs2/worktrees` (décision A).
+  - `WorktreeDir()` → retourne le literal `~/.boulez/worktrees` (décision A).
   - `AutoYesDefault()` → `false` (décision 3).
 - `host/ssh_test.go` — tests avec **faux Executor** qui assert que les
   commandes sont wrappées en `ssh <alias> <orig...>` et que les args sont
@@ -148,7 +148,7 @@ path local today ; pour remote, doivent retourner le path du distant.
   uniquement). `Instance.Start` passe `i.host` aux constructeurs GitWorktree.
 
 **Tests :** test que `LocalHost` produit le même path qu'avant (non-régression).
-Test (futur) que `SSHHost` produit `~/.cs2/worktrees/...`.
+Test (futur) que `SSHHost` produit `~/.boulez/worktrees/...`.
 
 **Commit :** `refactor(git): resolve worktree path via Host.WorktreeDir`
 
@@ -159,7 +159,7 @@ Test (futur) que `SSHHost` produit `~/.cs2/worktrees/...`.
 **Motivation.** Persistence du host sur l'instance + UI de sélection.
 
 **Fichiers :**
-- `host/registry.go` — `Registry` (miroir `repo.Registry`), `~/.cs2/hosts.json`,
+- `host/registry.go` — `Registry` (miroir `repo.Registry`), `~/.boulez/hosts.json`,
   `[]string` d'aliases (décision D). `List/Add/Remove/Contains`.
 - `host/registry_test.go` — round-trip, dedup.
 - `ui/overlay/hostSelector.go` — copie de `RepoSelector` (registre + free-text
@@ -265,7 +265,7 @@ le Host.
 
 ## Hors scope v2
 
-- Master SSH managé par cs2 (ControlMaster) — v2.x.
+- Master SSH managé par boulez (ControlMaster) — v2.x.
 - Registre de repos par host — v2.x.
 - Port-forwarding automatique des dev servers distants — v2.x.
 - Support non-GitHub (dette #2) — feature séparée.

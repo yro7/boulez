@@ -1,17 +1,17 @@
-# Plan : API de contrôle (kernel + syscalls) pour l'orchestrateur cs2
+# Plan : API de contrôle (kernel + syscalls) pour l'orchestrateur boulez
 
 > Objectif : exposer une **API de contrôle bas niveau** — pensée comme les
 > syscalls d'un OS — qui permet à un cerveau (LLM ou non) de superviser toute
-> la flotte cs2 : spawner des instances, leur donner des tâches, merger des
+> la flotte boulez : spawner des instances, leur donner des tâches, merger des
 > branches, résoudre les conflits.
 >
 > **Scope strictement l'API (Shape A).** Le branchement d'un LLM consommateur
-> (Shape B) vient après, dans un plan séparé. cs2 ne connaît jamais le LLM :
+> (Shape B) vient après, dans un plan séparé. boulez ne connaît jamais le LLM :
 > l'API est consommateur-agnostique, exactement comme `program.Adapter`.
 >
 > Ce plan construit le socle sur lequel un futur "agent orchestrateur" (LLM)
 > se branchera. L'orchestrateur *est* une instance d'agent ordinaire qui
-> consomme ces syscalls via des tools — il n'a rien de spécial côté cs2.
+> consomme ces syscalls via des tools — il n'a rien de spécial côté boulez.
 
 ---
 
@@ -21,16 +21,16 @@
   **possède** l'état mutable de la flotte et est le **seul writer** autorisé
   à le modifier. Aujourd'hui il ne fait que poller l'auto-yes ; on l'étend
   en autorité de contrôle.
-- **`cs2 ctl` = l'interface syscall.** Client mince qui envoie des requêtes
+- **`boulez ctl` = l'interface syscall.** Client mince qui envoie des requêtes
   typées au kernel. Les tools exposés à un LLM seront une fine couche de
-  description au-dessus de `cs2 ctl` — cs2 ne sait pas qu'un LLM l'appelle.
+  description au-dessus de `boulez ctl` — boulez ne sait pas qu'un LLM l'appelle.
 - **Les instances = processus** gérés par le kernel.
 - **La TUI = console** : observateur en lecture, plus autorité d'écriture
   pour les opérations de contrôle (elle peut toujours faire ce qu'elle fait
   aujourd'hui pour ses propres instances locales, mais le chemin canonical
   de contrôle passe par le kernel).
 
-**Conséquence de structure :** un seul writer mutable (le daemon). `cs2 ctl`
+**Conséquence de structure :** un seul writer mutable (le daemon). `boulez ctl`
 n'écrit **jamais** le storage directement ; il dépose une requête et lit la
 réponse. Évite le piège classique du troisième writer concurrent (TUI +
 daemon + ctl) qui rendrait l'état non-déterministe.
@@ -40,7 +40,7 @@ daemon + ctl) qui rendrait l'état non-déterministe.
 ## Décisions verrouillées (issues de la discussion)
 
 1. **Shape A d'abord, Shape B ensuite.** On construit l'API déterministe ;
-   le LLM viendra la consommer plus tard. cs2 reste agent-agnostic pur.
+   le LLM viendra la consommer plus tard. boulez reste agent-agnostic pur.
 2. **`Instance.Kind` ∈ {Worker, Orchestrator}.** Le `Kind` est le **point
    d'extension** pour la hiérarchie future : aujourd'hui Worker ne peut pas
    spawn, Orchestrator peut. Lever plus tard la restriction « Orchestrator
@@ -56,7 +56,7 @@ daemon + ctl) qui rendrait l'état non-déterministe.
    > qui éditent du code) ne s'applique pas à un superviseur qui n'édite pas.
 4. **Handle universel = `Instance.ID`** (persistant), pas le Title (mutable
    et non unique). Toute la surface API parle en ID.
-5. **Concurrence : daemon = seul writer mutable.** `cs2 ctl` = file/requête
+5. **Concurrence : daemon = seul writer mutable.** `boulez ctl` = file/requête
    synchrone vers le daemon via socket unix.
 6. **Scope du `merge` : n'importe quel repo du registre** (`repo.Registry`),
    pas seulement les repos ayant des workers actifs.
@@ -70,7 +70,7 @@ daemon + ctl) qui rendrait l'état non-déterministe.
    `GitMergeConflictResolver` (Shape B, un worker dont la tâche = résoudre)
    viennent dans un plan ultérieur.
 9. **Persistence de la flotte + état du plan.** L'orchestrateur est restauré
-   au redémarrage de cs2 : un LLM peut « reprendre » un plan interrompu.
+   au redémarrage de boulez : un LLM peut « reprendre » un plan interrompu.
 
 ---
 
@@ -78,19 +78,19 @@ daemon + ctl) qui rendrait l'état non-déterministe.
 
 | Option | Avantage | Inconvénient |
 |---|---|---|
-| **(a) CLI flags `cs2 ctl spawn ...` qui écrit le storage** | Très simple, zéro IPC | 3e writer concurrent (TUI+daemon+ctl) → races ; pas de retour synchrone (l'LLM n'obtient pas l'ID du spawn) |
-| **(b) File de requêtes JSON sur disque (`~/.cs2/requests/`)** | Simple, pas de serveur | Asynchrone : le client doit poller l'état pour le résultat — mauvais pour un LLM qui a besoin de l'ID de l'instance créée |
+| **(a) CLI flags `boulez ctl spawn ...` qui écrit le storage** | Très simple, zéro IPC | 3e writer concurrent (TUI+daemon+ctl) → races ; pas de retour synchrone (l'LLM n'obtient pas l'ID du spawn) |
+| **(b) File de requêtes JSON sur disque (`~/.boulez/requests/`)** | Simple, pas de serveur | Asynchrone : le client doit poller l'état pour le résultat — mauvais pour un LLM qui a besoin de l'ID de l'instance créée |
 | **(c) Socket unix + JSON-RPC (newline-delimited), daemon = serveur** ✅ | Synchrone (req→resp), un seul writer, testable in-process (kernel = fonctions Go pures, socket = couche fine) | Un peu plus de plomberie ; le daemon doit être up |
 
 **Retenu : (c).** Raisons : (i) un LLM a besoin de réponses synchrones
 (`spawn` → `{id}`), (ii) le kernel reste des fonctions Go testables sans
-socket ni tmux, (iii) `cs2 ctl` est un client trivial au-dessus de la même
+socket ni tmux, (iii) `boulez ctl` est un client trivial au-dessus de la même
 socket — un seul transport, deux faces (programmatic + humain). Le coût
 (plomberie socket) est payé une fois et amorti par tous les syscalls.
 
-Détail lifecycle : si `cs2 ctl` trouve le daemon down, il l'auto-lance
+Détail lifecycle : si `boulez ctl` trouve le daemon down, il l'auto-lance
 (`daemon.LaunchDaemon`) puis réessaie. Le daemon est désormais le
-processus canonique « toujours up pendant qu'on utilise cs2 ».
+processus canonique « toujours up pendant qu'on utilise boulez ».
 
 ---
 
@@ -160,7 +160,7 @@ surface actuellement portée par `*git.GitWorktree`. Deux implémentations :
 - `realWorktree` : comportement actuel, délègue à `git.GitWorktree`.
 - `headlessWorktree` : no-op pour `Setup`/`Cleanup`/`Remove`/`CommitChanges`/
   `IsDirty`/etc. ; `GetWorktreePath` retourne le **dir de contrôle**
-  (`~/.cs2/orchestrators/<id>/`), pas un path git.
+  (`~/.boulez/orchestrators/<id>/`), pas un path git.
 
 **Règle deep-module : aucune fonction d'`Instance` ne fait `if kind == ...`.**
 La distinction vit derrière l'interface Worktree. `Instance.Start` bind le
@@ -175,7 +175,7 @@ bon Worktree selon `Kind` à un seul endroit (le factory).
 
 L'orchestrateur (cerveau LLM) est lui-même une `Instance` de `KindOrchestrator`.
 Son **plan** (la liste des workers qu'il a spawnés + l'état du merge) est
-persisté à part dans `~/.cs2/orchestrators/<id>/plan.json` :
+persisté à part dans `~/.boulez/orchestrators/<id>/plan.json` :
 
 ```json
 {
@@ -224,7 +224,7 @@ modifiée), branche protégée refusée, multi-repo (cwd neutre).
 **Différé (plan ultérieur, Shape B) :** `GitMergeConflictResolver` = un
 Worker spawné avec un prompt décrivant le conflit + les noms de branches +
 le diff. C'est la résolution *agentique* — la résolution de conflit *est
-elle-même* une tâche agentique. cs2 fournit la mécanique, le cerveau décide.
+elle-même* une tâche agentique. boulez fournit la mécanique, le cerveau décide.
 
 ---
 
@@ -262,7 +262,7 @@ des instances sans ID.
     `Worktree` ; `*git.GitWorktree` la satisfait ; aucun comportement
     changé. Tout test existant reste vert.
   - 2b — `headlessWorktree` : implémentation no-op, `GetWorktreePath` →
-    dir de contrôle `~/.cs2/orchestrators/<id>/`.
+    dir de contrôle `~/.boulez/orchestrators/<id>/`.
 - `Instance.Start` : factory à un seul endroit choisit `realWorktree` vs
   `headlessWorktree` selon `Kind`. **Zéro `if kind == ...` ailleurs.**
 
@@ -340,14 +340,14 @@ testabilité, à la `program.Adapter`.
 
 **Commit :** `feat(kernel): add Kernel as single-writer control authority with syscalls`
 
-### Étape 6 — Transport : socket unix + `cs2 ctl`
+### Étape 6 — Transport : socket unix + `boulez ctl`
 
 **Décision couverte :** 5 (transport = choix (c)).
 
 - `kernel/transport.go` : serveur JSON-RPC newline-delimited sur
-  `~/.cs2/ctl.sock`. Couche fine : décode la requête → appelle la méthode
+  `~/.boulez/ctl.sock`. Couche fine : décode la requête → appelle la méthode
   Kernel correspondante → encode la réponse. Aucune logique métier ici.
-- `cmd/ctl.go` (ou `main.go` subcommand) : `cs2 ctl <syscall> [flags]`.
+- `cmd/ctl.go` (ou `main.go` subcommand) : `boulez ctl <syscall> [flags]`.
   Client mince : construit le JSON, l'envoie, affiche le JSON (ou formaté
   avec `--json` vs humain).
 - Auto-launch du daemon si la socket est absente (`daemon.LaunchDaemon`
@@ -356,13 +356,13 @@ testabilité, à la `program.Adapter`.
 Tests : transport testé via un kernel en mémoire (in-process) ; round-trip
 req→resp pour chaque syscall ; daemon-down → auto-launch → retry.
 
-**Commit :** `feat(kernel): add unix socket transport + cs2 ctl client`
+**Commit :** `feat(kernel): add unix socket transport + boulez ctl client`
 
 ### Étape 7 — Persistence de l'orchestrateur (plan reprendable)
 
 **Décision couverte :** 9.
 
-- `~/.cs2/orchestrators/<id>/plan.json` : struct `OrchestratorPlan`
+- `~/.boulez/orchestrators/<id>/plan.json` : struct `OrchestratorPlan`
   (`worker_ids`, `merge_targets`, `state`).
 - Le Kernel persiste le plan à chaque mutation (spawn d'un worker → ajoute
   à `worker_ids` ; merge → transition d'état).
@@ -379,13 +379,13 @@ n'est pas réexécuté.
 ## Explicitement différé (hors scope v1)
 
 - **Shape B : branchement LLM.** Un adapter (Pi, Claude, …) expose
-  `cs2 ctl` comme outils à son agent. Vit dans `program/`, un fichier par
-  agent — cs2 ne sait pas qu'un LLM l'appelle. Plan séparé.
+  `boulez ctl` comme outils à son agent. Vit dans `program/`, un fichier par
+  agent — boulez ne sait pas qu'un LLM l'appelle. Plan séparé.
 - **Hiérarchie > 2 niveaux.** `super-orchestrateur → n orchestrateurs →
   m workers`. Le `Kind` + la garde de récursion (étape 3) sont le point
   d'extension : lever la restriction = changer la garde, pas l'archi.
 - **`GitMergeConflictResolver`** (résolution agentique des conflits).
-  cs2 fournit la mécanique (étape 4), un worker resolver est spawné avec
+  boulez fournit la mécanique (étape 4), un worker resolver est spawné avec
   un prompt. Plan Shape B.
 - **Boucle d'orchestration autonome** (kernel attend tous les workers
   `Ready` puis merge automatiquement selon une stratégie). v1.1.
@@ -402,7 +402,7 @@ n'est pas réexécuté.
 
 ## Invariants structurels (à pinner par des tests)
 
-1. **Un seul writer mutable = le Kernel.** `cs2 ctl` et la TUI ne touchent
+1. **Un seul writer mutable = le Kernel.** `boulez ctl` et la TUI ne touchent
    jamais le storage en écriture directe.
 2. **Aucun `if kind == ...` hors du factory de `Start`.** La distinction
    Worker/Orchestrator vit derrière l'interface `Worktree`.
@@ -411,4 +411,4 @@ n'est pas réexécuté.
    client.** Non-contournable.
 5. **`Merger` n'aborte jamais silencieusement** — un conflit laisse le repo
    dans un état fusionnable, pas un état effacé.
-6. **cs2 ne connaît aucun LLM.** L'API est consommateur-agnostique.
+6. **boulez ne connaît aucun LLM.** L'API est consommateur-agnostique.

@@ -1,7 +1,7 @@
 package kernel
 
 import (
-	"claude-squad/config"
+	"github.com/yro7/boulez/config"
 	"encoding/json"
 	"fmt"
 	"os"
@@ -11,7 +11,7 @@ import (
 )
 
 // PlanState is the lifecycle state of an orchestrator's plan. Persisted so
-// an orchestrator can resume after a cs2 restart (the whole point of the
+// an orchestrator can resume after a boulez restart (the whole point of the
 // plan store: a long-running orchestration survives a daemon bounce).
 type PlanState string
 
@@ -33,7 +33,7 @@ type MergeTarget struct {
 
 // OrchestratorPlan is the persisted state of an orchestrator's supervision:
 // which workers it spawned, what it intends to merge, and where it is in the
-// lifecycle. Stored under ~/.cs2/orchestrators/<id>/plan.json.
+// lifecycle. Stored under ~/.boulez/orchestrators/<id>/plan.json.
 //
 // The kernel owns this store; the orchestrator instance (an LLM, Shape B)
 // consumes the control API to drive the plan. This is the resumability
@@ -56,7 +56,7 @@ type planStore struct {
 
 var plans = &planStore{}
 
-// orchestratorsDir returns ~/.cs2/orchestrators/.
+// orchestratorsDir returns ~/.boulez/orchestrators/.
 func orchestratorsDir() (string, error) {
 	return config.OrchestratorsDir()
 }

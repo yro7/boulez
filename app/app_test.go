@@ -1,14 +1,14 @@
 package app
 
 import (
-	"claude-squad/config"
-	"claude-squad/host"
-	"claude-squad/log"
-	"claude-squad/prefs"
-	"claude-squad/repo"
-	"claude-squad/session"
-	"claude-squad/ui"
-	"claude-squad/ui/overlay"
+	"github.com/yro7/boulez/config"
+	"github.com/yro7/boulez/host"
+	"github.com/yro7/boulez/log"
+	"github.com/yro7/boulez/prefs"
+	"github.com/yro7/boulez/repo"
+	"github.com/yro7/boulez/session"
+	"github.com/yro7/boulez/ui"
+	"github.com/yro7/boulez/ui/overlay"
 	"context"
 	"fmt"
 	"os"

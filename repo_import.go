@@ -1,9 +1,9 @@
 package main
 
 import (
-	"claude-squad/ideimport"
-	"claude-squad/log"
-	"claude-squad/repo"
+	"github.com/yro7/boulez/ideimport"
+	"github.com/yro7/boulez/log"
+	"github.com/yro7/boulez/repo"
 	"fmt"
 	"strings"
 
@@ -20,9 +20,9 @@ var repoImportCmd = &cobra.Command{
 	Short: "Import recently-opened folders from IDE state into the repo registry",
 	Long: `Scan VS Code and VS Code-based forks (Cursor, Windsurf, Antigravity, VSCodium,
 PearAI, Void, Trae) for recently opened folders, keep only git repositories, and
-add them to the cs2 repo registry.
+add them to the boulez repo registry.
 
-This is a one-shot, manual import — cs2 never reads IDE state automatically, so
+This is a one-shot, manual import — boulez never reads IDE state automatically, so
 a format change in an IDE's storage.json never affects normal operation.
 
 Use --dry-run to preview what would be imported without writing.`,

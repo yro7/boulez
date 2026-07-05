@@ -6,7 +6,7 @@ import (
 	"path/filepath"
 	"testing"
 
-	cmdtest "claude-squad/cmd/cmd_test"
+	cmdtest "github.com/yro7/boulez/cmd/cmd_test"
 	"github.com/stretchr/testify/assert"
 	"github.com/stretchr/testify/require"
 )
