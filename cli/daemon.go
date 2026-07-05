@@ -1,4 +1,4 @@
-package main
+package cli
 
 import (
 	"bufio"
@@ -25,7 +25,7 @@ import (
 // `boulez daemon run` is the canonical foreground entrypoint — the service unit
 // (Phase 2) and the TUI/ctl auto-start both invoke this under the hood. The
 // other subcommands manage a background daemon.
-func newDaemonCmd() *cobra.Command {
+func NewDaemonCmd() *cobra.Command {
 	cmd := &cobra.Command{
 		Use:   "daemon",
 		Short: "Manage the boulez daemon (the kernel / control authority)",
@@ -55,23 +55,23 @@ The daemon is normally started automatically by the TUI (boulez / boulez tui) an
 by boulez ctl when the socket is absent. These subcommands exist for explicit
 control and for service installation.`,
 	}
-	cmd.AddCommand(newDaemonRunCmd())
-	cmd.AddCommand(newDaemonStartCmd())
-	cmd.AddCommand(newDaemonStopCmd())
-	cmd.AddCommand(newDaemonStatusCmd())
-	cmd.AddCommand(newDaemonLogCmd())
-	cmd.AddCommand(newDaemonProtectCmd())
-	cmd.AddCommand(newDaemonUnprotectCmd())
-	cmd.AddCommand(newDaemonListProtectedCmd())
-	cmd.AddCommand(newDaemonInstallCmd())
-	cmd.AddCommand(newDaemonUninstallCmd())
+	cmd.AddCommand(NewDaemonRunCmd())
+	cmd.AddCommand(NewDaemonStartCmd())
+	cmd.AddCommand(NewDaemonStopCmd())
+	cmd.AddCommand(NewDaemonStatusCmd())
+	cmd.AddCommand(NewDaemonLogCmd())
+	cmd.AddCommand(NewDaemonProtectCmd())
+	cmd.AddCommand(NewDaemonUnprotectCmd())
+	cmd.AddCommand(NewDaemonListProtectedCmd())
+	cmd.AddCommand(NewDaemonInstallCmd())
+	cmd.AddCommand(NewDaemonUninstallCmd())
 	return cmd
 }
 
 // newDaemonRunCmd runs the daemon in the foreground. This is the canonical
 // entrypoint the service unit and auto-start invoke (C4.6 removed the
 // `--daemon` back-compat alias that previously also reached here).
-func newDaemonRunCmd() *cobra.Command {
+func NewDaemonRunCmd() *cobra.Command {
 	return &cobra.Command{
 		Use:   "run",
 		Short: "Run the daemon in the foreground (dev / debug)",
@@ -104,20 +104,20 @@ func runDaemon() error {
 	return err
 }
 
-// ensureDaemonRunning is the TUI's boot contract (decision D2): the TUI is
+// EnsureDaemonRunning is the TUI's boot contract (decision D2): the TUI is
 // a viewer of the kernel, and there is no degraded mode over a broken daemon.
 // If the daemon is already serving it is a no-op; otherwise it auto-starts the
 // daemon detached and waits (5s budget) for the socket to come up.
-func ensureDaemonRunning() error {
+func EnsureDaemonRunning() error {
 	return daemon.EnsureRunning(5 * time.Second)
 }
 
-// printDaemonFailureHint is the TUI boot failure surface (decision D2): when
+// PrintDaemonFailureHint is the TUI boot failure surface (decision D2): when
 // the daemon cannot come up, the TUI does not start. This writes the tail of
 // the daemon log and the path to `boulez daemon log` to stderr so the user can
 // see why without grepping tmp dirs. The caller returns a non-nil error so
 // cobra exits non-zero.
-func printDaemonFailureHint() {
+func PrintDaemonFailureHint() {
 	fmt.Fprintln(os.Stderr, "boulez: the daemon could not come up; the TUI will not start.")
 	fmt.Fprintln(os.Stderr, "Tail of the daemon log:")
 	if tail, err := readTail(log.LogFilePath(), 30); err == nil {
@@ -135,7 +135,7 @@ func printDaemonFailureHint() {
 // newDaemonStartCmd launches the daemon detached in the background. Reuses
 // LaunchDaemon (O_EXCL launch lock makes a duplicate launch a no-op) and
 // waits briefly for the socket to confirm the daemon actually came up.
-func newDaemonStartCmd() *cobra.Command {
+func NewDaemonStartCmd() *cobra.Command {
 	return &cobra.Command{
 		Use:   "start",
 		Short: "Start the daemon detached in the background",
@@ -177,7 +177,7 @@ func newDaemonStartCmd() *cobra.Command {
 
 // newDaemonStopCmd stops a running daemon. Reuses StopDaemon, which is a
 // no-op if the daemon is not running (missing PID file is not an error).
-func newDaemonStopCmd() *cobra.Command {
+func NewDaemonStopCmd() *cobra.Command {
 	return &cobra.Command{
 		Use:   "stop",
 		Short: "Stop a running daemon",
@@ -198,7 +198,7 @@ func newDaemonStopCmd() *cobra.Command {
 // newDaemonStatusCmd reports whether the daemon is running by probing the
 // socket (a real dial, not just a file check) and reading the PID file. A
 // stale PID file with no serving socket is reported as "not running".
-func newDaemonStatusCmd() *cobra.Command {
+func NewDaemonStatusCmd() *cobra.Command {
 	return &cobra.Command{
 		Use:   "status",
 		Short: "Report whether the daemon is running",
@@ -234,7 +234,7 @@ func newDaemonStatusCmd() *cobra.Command {
 // newDaemonLogCmd prints the tail of the daemon (boulez) log. The log is
 // shared by the daemon and clients; the tail is the fastest way to see why a
 // daemon refused to come up.
-func newDaemonLogCmd() *cobra.Command {
+func NewDaemonLogCmd() *cobra.Command {
 	var lines int
 	cmd := &cobra.Command{
 		Use:   "log",
@@ -293,7 +293,7 @@ func readTail(path string, n int) (string, error) {
 // declaration is per-repo on disk; the daemon picks it up at boot and on
 // SIGHUP. Protected branches are enforced kernel-wide (a branch protected
 // for any repo is refused for all repos) — see the protected package docs.
-func newDaemonProtectCmd() *cobra.Command {
+func NewDaemonProtectCmd() *cobra.Command {
 	return &cobra.Command{
 		Use:   "protect <repo> <branch>",
 		Short: "Declare a branch protected for a repo",
@@ -326,7 +326,7 @@ The repo path may be relative; it is resolved to absolute.`,
 }
 
 // newDaemonUnprotectCmd removes a protected-branch declaration (C2.1).
-func newDaemonUnprotectCmd() *cobra.Command {
+func NewDaemonUnprotectCmd() *cobra.Command {
 	return &cobra.Command{
 		Use:   "unprotect <repo> <branch>",
 		Short: "Remove a protected-branch declaration",
@@ -354,7 +354,7 @@ The change takes effect after a SIGHUP (or a daemon restart).`,
 }
 
 // newDaemonListProtectedCmd lists declared protected branches per repo (C2.1).
-func newDaemonListProtectedCmd() *cobra.Command {
+func NewDaemonListProtectedCmd() *cobra.Command {
 	return &cobra.Command{
 		Use:   "list-protected",
 		Short: "List declared protected branches per repo",
@@ -403,7 +403,7 @@ func newDaemonListProtectedCmd() *cobra.Command {
 //
 // C2.5 dev fallback: on platforms without launchd/systemd the command errors
 // out and points the user at `nohup boulez daemon run &`. No custom supervisor.
-func newDaemonInstallCmd() *cobra.Command {
+func NewDaemonInstallCmd() *cobra.Command {
 	return &cobra.Command{
 		Use:   "install",
 		Short: "Install the daemon as an OS service (launchd / systemd)",
@@ -440,7 +440,7 @@ and points you at the dev fallback: ` + "`nohup boulez daemon run &`" + `.`,
 
 // newDaemonUninstallCmd stops and removes the OS service (C2.3/C2.4). It is
 // idempotent: a missing service is not an error.
-func newDaemonUninstallCmd() *cobra.Command {
+func NewDaemonUninstallCmd() *cobra.Command {
 	return &cobra.Command{
 		Use:   "uninstall",
 		Short: "Stop and remove the daemon OS service",

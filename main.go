@@ -6,6 +6,7 @@ import (
 	"fmt"
 	"github.com/yro7/boulez/app"
 	cmd2 "github.com/yro7/boulez/cmd"
+	"github.com/yro7/boulez/cli"
 	"github.com/yro7/boulez/config"
 	"github.com/yro7/boulez/daemon"
 	"github.com/yro7/boulez/log"
@@ -110,8 +111,9 @@ func init() {
 	rootCmd.AddCommand(debugCmd)
 	rootCmd.AddCommand(versionCmd)
 	rootCmd.AddCommand(resetCmd)
-	rootCmd.AddCommand(newCtlCmd())
-	rootCmd.AddCommand(newDaemonCmd())
+	rootCmd.AddCommand(cli.NewCtlCmd())
+	rootCmd.AddCommand(cli.NewDaemonCmd())
+	rootCmd.AddCommand(cli.NewRepoImportCmd())
 }
 
 // runTUI is the entrypoint for both the bare `boulez` invocation and the
@@ -145,8 +147,8 @@ func runTUI(cmd *cobra.Command, args []string) error {
 	// The daemon's parent during the transition is this Setsid-detached
 	// child; after Phase 2 it is launchd/systemd. The TUI's job is to
 	// ensure the daemon is reachable, not to be its parent (C1.3/C1.4).
-	if err := ensureDaemonRunning(); err != nil {
-		printDaemonFailureHint()
+	if err := cli.EnsureDaemonRunning(); err != nil {
+		cli.PrintDaemonFailureHint()
 		return fmt.Errorf("daemon not reachable: %w", err)
 	}
 

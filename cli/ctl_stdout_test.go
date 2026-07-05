@@ -1,4 +1,4 @@
-package main
+package cli
 
 import (
 	"encoding/json"
@@ -37,9 +37,16 @@ func TestCtl_StdoutIsPureJSON(t *testing.T) {
 	out, err := build.CombinedOutput()
 	require.NoErrorf(t, err, "go build: %s", out)
 
-	// Isolate HOME so we don't touch the user's real ~/.boulez state.
-	home := t.TempDir()
+	// Isolate HOME so we don't touch the user's real ~/.boulez state. Use a
+	// short path under /tmp (not t.TempDir()) because the kernel's unix domain
+	// socket lives at $HOME/.boulez/ctl.sock, and on macOS a socket path longer
+	// than ~104 chars fails to bind with EINVAL. t.TempDir() nests under
+	// /var/folders/<long-hash>/T/<TestName><rand>/... which blows the limit.
+	home := filepath.Join(os.TempDir(), "boulez-stdout-home")
+	_ = os.RemoveAll(home)
+	require.NoError(t, os.MkdirAll(home, 0o755))
 	t.Setenv("HOME", home)
+	t.Cleanup(func() { _ = os.RemoveAll(home) })
 
 	// Start the daemon.
 	daemon := exec.Command(binPath, "daemon", "run")
@@ -76,6 +83,7 @@ func TestCtl_StdoutIsPureJSON(t *testing.T) {
 func mustRepoRoot(t *testing.T) string {
 	t.Helper()
 	_, file, _, _ := runtime.Caller(0)
-	// file ends in .../boulez/<worktree>/ctl_stdout_test.go
-	return filepath.Dir(file)
+	// file ends in .../boulez/cli/ctl_stdout_test.go; the repo root (package
+	// main) is the parent of cli/.
+	return filepath.Dir(filepath.Dir(file))
 }

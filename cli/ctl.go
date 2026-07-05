@@ -1,4 +1,4 @@
-package main
+package cli
 
 import (
 	"encoding/json"
@@ -20,7 +20,7 @@ import (
 //
 // If the daemon is not running, ctl auto-launches it (the daemon is the
 // canonical "always up during boulez use" process) then retries.
-func newCtlCmd() *cobra.Command {
+func NewCtlCmd() *cobra.Command {
 	cmd := &cobra.Command{
 		Use:   "ctl <method> [--param value ...]",
 		Short: "Send a control syscall to the running kernel (programmatic fleet control)",
@@ -38,16 +38,16 @@ Examples:
   boulez ctl land --target-repo /path --target-branch main --source feat-x
 `,
 	}
-	cmd.AddCommand(newCtlListCmd())
-	cmd.AddCommand(newCtlSpawnCmd())
-	cmd.AddCommand(newCtlGetInstanceCmd())
-	cmd.AddCommand(newCtlSendPromptCmd())
-	cmd.AddCommand(newCtlPauseCmd())
-	cmd.AddCommand(newCtlResumeCmd())
-	cmd.AddCommand(newCtlKillCmd())
-	cmd.AddCommand(newCtlMergeCmd())
-	cmd.AddCommand(newCtlLandCmd())
-	cmd.AddCommand(newCtlAsCmd())
+	cmd.AddCommand(NewCtlListCmd())
+	cmd.AddCommand(NewCtlSpawnCmd())
+	cmd.AddCommand(NewCtlGetInstanceCmd())
+	cmd.AddCommand(NewCtlSendPromptCmd())
+	cmd.AddCommand(NewCtlPauseCmd())
+	cmd.AddCommand(NewCtlResumeCmd())
+	cmd.AddCommand(NewCtlKillCmd())
+	cmd.AddCommand(NewCtlMergeCmd())
+	cmd.AddCommand(NewCtlLandCmd())
+	cmd.AddCommand(NewCtlAsCmd())
 	return cmd
 }
 
@@ -61,7 +61,7 @@ Examples:
 // Only syscalls whose effect depends on the caller identity need `as`:
 // spawn_worker (records the worker in the caller's plan) and merge (records
 // the merge target). The other syscalls are caller-agnostic.
-func newCtlAsCmd() *cobra.Command {
+func NewCtlAsCmd() *cobra.Command {
 	cmd := &cobra.Command{
 		Use:   "as <instance-id> <syscall> [--param value ...]",
 		Short: "Issue a syscall authenticated as an instance (records the caller's plan)",
@@ -184,7 +184,7 @@ func rawCtlSession(reqs []kernel.Request) error {
 
 // --- subcommands ---
 
-func newCtlListCmd() *cobra.Command {
+func NewCtlListCmd() *cobra.Command {
 	var kind, status, repo string
 	cmd := &cobra.Command{
 		Use:   "list_instances",
@@ -209,7 +209,7 @@ func newCtlListCmd() *cobra.Command {
 	return cmd
 }
 
-func newCtlSpawnCmd() *cobra.Command {
+func NewCtlSpawnCmd() *cobra.Command {
 	var repo, branch, prompt, program, title, kind string
 	var branchExisting bool
 	cmd := &cobra.Command{
@@ -253,7 +253,7 @@ func newCtlSpawnCmd() *cobra.Command {
 	return cmd
 }
 
-func newCtlGetInstanceCmd() *cobra.Command {
+func NewCtlGetInstanceCmd() *cobra.Command {
 	var id string
 	cmd := &cobra.Command{
 		Use:   "get_instance",
@@ -269,7 +269,7 @@ func newCtlGetInstanceCmd() *cobra.Command {
 	return cmd
 }
 
-func newCtlSendPromptCmd() *cobra.Command {
+func NewCtlSendPromptCmd() *cobra.Command {
 	var id, prompt string
 	cmd := &cobra.Command{
 		Use:   "send_prompt",
@@ -286,7 +286,7 @@ func newCtlSendPromptCmd() *cobra.Command {
 	return cmd
 }
 
-func newCtlPauseCmd() *cobra.Command {
+func NewCtlPauseCmd() *cobra.Command {
 	var id string
 	cmd := &cobra.Command{
 		Use:   "pause",
@@ -302,7 +302,7 @@ func newCtlPauseCmd() *cobra.Command {
 	return cmd
 }
 
-func newCtlResumeCmd() *cobra.Command {
+func NewCtlResumeCmd() *cobra.Command {
 	var id string
 	cmd := &cobra.Command{
 		Use:   "resume",
@@ -318,7 +318,7 @@ func newCtlResumeCmd() *cobra.Command {
 	return cmd
 }
 
-func newCtlKillCmd() *cobra.Command {
+func NewCtlKillCmd() *cobra.Command {
 	var id string
 	cmd := &cobra.Command{
 		Use:   "kill",
@@ -334,7 +334,7 @@ func newCtlKillCmd() *cobra.Command {
 	return cmd
 }
 
-func newCtlMergeCmd() *cobra.Command {
+func NewCtlMergeCmd() *cobra.Command {
 	var targetRepo, targetBranch, sources string
 	cmd := &cobra.Command{
 		Use:   "merge",
@@ -363,7 +363,7 @@ func newCtlMergeCmd() *cobra.Command {
 // `boulez ctl as <id> land` is refused by the kernel (NON_TOP_LEVEL_LAND).
 // The full commit+push+land chain lives in the TUI's LandInstance helper;
 // ctl land is for scripting/recovery on an already-pushed branch.
-func newCtlLandCmd() *cobra.Command {
+func NewCtlLandCmd() *cobra.Command {
 	var targetRepo, targetBranch, source string
 	cmd := &cobra.Command{
 		Use:   "land",
@@ -444,9 +444,9 @@ func statusWire(s string) string {
 func buildCtlSub(name string) *cobra.Command {
 	switch name {
 	case "spawn_worker":
-		return newCtlSpawnCmd()
+		return NewCtlSpawnCmd()
 	case "merge":
-		return newCtlMergeCmd()
+		return NewCtlMergeCmd()
 	default:
 		return nil
 	}

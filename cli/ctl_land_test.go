@@ -1,4 +1,4 @@
-package main
+package cli
 
 import (
 	"encoding/json"
@@ -23,7 +23,7 @@ func TestCtl_Land_BuildsCorrectRequest(t *testing.T) {
 	}
 	t.Cleanup(func() { captureHook = prev })
 
-	cmd := newCtlLandCmd()
+	cmd := NewCtlLandCmd()
 	cmd.SetArgs([]string{"--target-repo", "/repo", "--target-branch", "main", "--source", "feat-x"})
 	require.NoError(t, cmd.Execute())
 
@@ -43,7 +43,7 @@ func TestCtl_Land_BuildsCorrectRequest(t *testing.T) {
 
 // TestCtl_Land_RequiresFlags verifies the required-flag validation.
 func TestCtl_Land_RequiresFlags(t *testing.T) {
-	cmd := newCtlLandCmd()
+	cmd := NewCtlLandCmd()
 	cmd.SetArgs([]string{"--target-repo", "/repo"}) // missing --source and --target-branch
 	err := cmd.Execute()
 	require.Error(t, err)
