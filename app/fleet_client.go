@@ -256,6 +256,17 @@ func (m *home) reconcileFleet(data []session.InstanceData) {
 	// TUI's default selection is index 0, so the orchestrator must be first.
 	out = pinOrchestratorsFirst(out)
 
+	// Prune the working-streak hysteresis counters for instances no longer in
+	// the kernel's snapshot. Without this a long-running daemon would leak an
+	// entry per ever-seen instance ID. The streak is pure TUI view state.
+	if m.workingStreak != nil {
+		for id := range m.workingStreak {
+			if _, ok := seen[id]; !ok {
+				delete(m.workingStreak, id)
+			}
+		}
+	}
+
 	m.list.SetInstances(out)
 }
 
