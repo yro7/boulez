@@ -4,6 +4,7 @@ import (
 	"fmt"
 	"os"
 	"os/exec"
+	"path/filepath"
 	"strings"
 
 	"github.com/yro7/boulez/cmd"
@@ -47,20 +48,67 @@ func (h SSHHost) AutoYesDefault() bool { return false }
 // command.
 func (h SSHHost) Executor() cmd.Executor { return sshExecutor{alias: h.alias} }
 
-// FS implements Host: a filesystem routed over ssh. Paths are ~-relative so
-// the remote shell expands them (no $HOME resolution round-trip).
+// FS implements Host: a filesystem routed over ssh. Paths reaching it
+// (worktreeDir, worktreePath) are absolute on both transports — the Host
+// resolves $HOME remotely for SSH — so no ~ expansion is relied upon
+// (single-quoted argv would suppress it anyway).
 func (h SSHHost) FS() fs.FS { return sshFS{alias: h.alias} }
 
-// WorktreeDir implements Host: the literal ~/.boulez/worktrees, expanded by the
-// remote shell when used in an `ssh host git -C <dir> ...` command.
-func (h SSHHost) WorktreeDir() (string, error) { return "~/.boulez/worktrees", nil }
+// WorktreeDir implements Host: the absolute <remote-$HOME>/.boulez/worktrees
+// directory, with $HOME resolved on the remote host. The path is ABSOLUTE
+// (not ~-relative) because every consumer passes it through single-quoted
+// argv (joinShellQuoted) or `git -C`, neither of which expands `~`: the remote
+// shell can't (single quotes suppress tilde expansion) and git never does.
+// A ~-relative literal therefore reached git as `~/.boulez/...` verbatim,
+// which git treated as a relative path under the repo — creating a literal `~`
+// directory inside the repo and leaving the stored worktree path unusable
+// (the "fatal: cannot change to '~/.boulez/...'" / "not a git repository"
+// bug at remote-instance creation). Resolving $HOME once at Start yields a
+// real absolute path that flows unchanged through quoting, git -C, tmux -c,
+// and the agent's cwd. One ssh round-trip per Start/Restore.
+func (h SSHHost) WorktreeDir() (string, error) {
+	home, err := remoteHome(h.alias)
+	if err != nil {
+		return "", err
+	}
+	if home == "" {
+		return "", fmt.Errorf("ssh resolve $HOME for %s: remote home directory is empty", h.alias)
+	}
+	return worktreeDirForHome(home), nil
+}
+
+// remoteHome resolves the remote login directory ($HOME) of the ssh alias via a
+// single `ssh <alias> printf %s "$HOME"` round-trip. "$HOME" is double-quoted
+// in the script so the REMOTE shell expands it — this must NOT go through
+// joinShellQuoted, which single-quotes every arg and would freeze "$HOME" as
+// a literal. Swappable (package var) so tests can stub the network hop and
+// assert WorktreeDir's wiring without launching ssh.
+var remoteHome = func(alias string) (string, error) {
+	out, err := exec.Command("ssh", alias, `printf %s "$HOME"`).Output()
+	if err != nil {
+		return "", fmt.Errorf("ssh resolve $HOME for %s: %w", alias, err)
+	}
+	return strings.TrimSpace(string(out)), nil
+}
+
+// worktreeDirForHome returns the absolute worktree directory under a resolved
+// remote home. Pure so the path construction is unit-testable without an ssh
+// round-trip.
+func worktreeDirForHome(home string) string {
+	return filepath.Join(home, ".boulez", "worktrees")
+}
 
 // ResolveRepoPath implements Host: a remote repo path is returned unchanged so
 // the remote shell resolves it. Relative paths and ~ expand against the
 // remote $HOME (ssh non-interactive sessions start there, stably across
-// invocations); resolving locally with filepath.Abs would produce a path on
-// the wrong machine (e.g. /Users/local/.../testgit), which is exactly the bug
-// where a remote relative path failed as "not a git repository".
+// invocations) — BUT only when the path reaches the remote shell unquoted.
+// It does for repo paths (passed as a single `git -C <path>` arg that the
+// remote shell re-parses), so ~ and relatives resolve remotely. Resolving
+// locally with filepath.Abs would produce a path on the wrong machine (e.g.
+// /Users/local/.../testgit), which is exactly the bug where a remote relative
+// path failed as "not a git repository". (Worktree paths are different: see
+// WorktreeDir — they are made absolute via remote $HOME resolution because
+// they flow through single-quoted argv where ~ does NOT expand.)
 func (h SSHHost) ResolveRepoPath(path string) string { return path }
 
 // PtyFactory implements Host: a PTY factory that runs `ssh -t <alias> ...`
@@ -134,8 +182,9 @@ func shellQuote(s string) string {
 
 // --- FS ---
 
-// sshFS implements fs.FS by running shell commands over ssh. Paths are passed
-// to the remote shell, so ~ is expanded remotely. Each operation is a single
+// sshFS implements fs.FS by running shell commands over ssh. Paths reaching it
+// (worktreeDir, worktreePath) are absolute on both transports, so no ~
+// expansion is relied upon. Each operation is a single
 // `ssh host sh -c '...'` invocation.
 type sshFS struct {
 	alias string
@@ -143,10 +192,12 @@ type sshFS struct {
 
 // command builds the *exec.Cmd that runs script on the remote host as
 // `ssh <alias> <script>`. The script is passed verbatim to the remote shell,
-// which is what expands ~ and parses the script (so paths like ~-relative
-// worktrees resolve on the right machine). Extracted so tests can assert the
-// wrapping without launching ssh — never re-prepend sshBin here (that was the
-// double-"ssh" bug; the leading element is the binary, the rest is argv).
+// which parses it. Paths reaching sshFS are absolute (the Host resolves
+// $HOME remotely for SSH), so no ~ expansion is needed (and the scripts also
+// shell-quote paths, which would suppress ~ expansion anyway). Extracted so
+// tests can assert the wrapping without launching ssh — never re-prepend
+// sshBin here (that was the double-"ssh" bug; the leading element is the
+// binary, the rest is argv).
 func (f sshFS) command(script string) *exec.Cmd {
 	return exec.Command("ssh", f.alias, script)
 }

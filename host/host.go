@@ -44,8 +44,10 @@ type Host interface {
 
 	// WorktreeDir is the directory under which boulez worktrees for this host
 	// are created. LocalHost returns an absolute local path; SSHHost returns
-	// a ~-relative literal expanded by the remote shell (no $HOME resolution
-	// round-trip).
+	// an absolute remote path (<remote-$HOME>/.boulez/worktrees), resolving
+	// $HOME on the remote at Start. The path is absolute (not ~-relative)
+	// because it flows through single-quoted argv (joinShellQuoted) and
+	// `git -C`, neither of which expands ~.
 	WorktreeDir() (string, error)
 
 	// ResolveRepoPath normalizes a user-supplied repo path for this host's

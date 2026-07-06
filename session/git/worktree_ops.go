@@ -14,8 +14,9 @@ import (
 // Setup creates a new worktree for the session
 func (g *GitWorktree) Setup() error {
 	// Ensure worktrees directory exists early (can be done in parallel with branch check).
-	// g.worktreeDir is the Host's dir (local or ~-relative for ssh), so a remote
-	// worktree's mkdir targets the right host via g.fs.MkdirAll.
+	// g.worktreeDir is the Host's dir (absolute on both transports: local
+	// ~/.boulez/worktrees or remote <remote-$HOME>/.boulez/worktrees), so a
+	// remote worktree's mkdir targets the right host via g.fs.MkdirAll.
 	if err := g.fs.MkdirAll(g.worktreeDir, 0755); err != nil {
 		return err
 	}
@@ -181,8 +182,8 @@ func CleanupWorktrees() error {
 // and makes the sweep independent of cwd.
 //
 // worktreeDir is the Host's worktree directory. For LocalHost this is the local
-// ~/.boulez/worktrees; for an SSHHost it would be the ~-relative literal — but
-// note this sweep only sees entries fsys can list, so in practice it covers
+// ~/.boulez/worktrees; for an SSHHost it is the absolute <remote-$HOME>/.boulez/worktrees
+// — but note this sweep only sees entries fsys can list, so in practice it covers
 // local worktrees (remote ones are cleaned per-instance through their host).
 func CleanupWorktreesWithDeps(cmdExec cmd.Executor, fsys fs.FS, worktreeDir string) error {
 	entries, err := fsys.ReadDir(worktreeDir)

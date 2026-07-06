@@ -1,6 +1,7 @@
 package host
 
 import (
+	"fmt"
 	"os"
 	"os/exec"
 	"strings"
@@ -20,12 +21,51 @@ func TestSSHHost_NameAndPolicy(t *testing.T) {
 	assert.False(t, h.AutoYesDefault(), "remote AutoYes must default to off")
 }
 
-// TestSSHHost_WorktreeDir verifies the worktree dir is the ~-relative literal
-// (decision A): expanded by the remote shell, no $HOME resolution round-trip.
+// TestSSHHost_WorktreeDir verifies the worktree dir is the ABSOLUTE
+// <remote-$HOME>/.boulez/worktrees: $HOME is resolved on the remote at
+// Start, not a ~-relative literal. A ~-relative literal never reached git as
+// an absolute path (single-quoted argv suppresses tilde expansion; git never
+// expands ~), which created a literal `~` dir inside the repo and left the
+// stored worktree path unusable — the remote "not a git repository" bug.
+// We stub remoteHome so no ssh is launched.
 func TestSSHHost_WorktreeDir(t *testing.T) {
-	dir, err := NewSSHHost("h").WorktreeDir()
+	orig := remoteHome
+	defer func() { remoteHome = orig }()
+
+	var gotAlias string
+	remoteHome = func(alias string) (string, error) {
+		gotAlias = alias
+		return "/root", nil
+	}
+
+	dir, err := NewSSHHost("dev-machine").WorktreeDir()
 	require.NoError(t, err)
-	assert.Equal(t, "~/.boulez/worktrees", dir)
+	assert.Equal(t, "dev-machine", gotAlias, "WorktreeDir must resolve $HOME on the remote via remoteHome(alias)")
+	assert.Equal(t, "/root/.boulez/worktrees", dir,
+		"dir must be the absolute <home>/.boulez/worktrees, not a ~-relative literal")
+}
+
+// TestSSHHost_WorktreeDir_PropagatesRemoteHomeError proves a $HOME resolution
+// failure surfaces from WorktreeDir (rather than silently falling back to a
+// broken ~-relative path). A silent fallback would hide an unreachable host
+// behind a later, misleading "not a git repository" error.
+func TestSSHHost_WorktreeDir_PropagatesRemoteHomeError(t *testing.T) {
+	orig := remoteHome
+	defer func() { remoteHome = orig }()
+	remoteHome = func(alias string) (string, error) {
+		return "", fmt.Errorf("boom")
+	}
+
+	_, err := NewSSHHost("h").WorktreeDir()
+	require.Error(t, err)
+	assert.Contains(t, err.Error(), "boom")
+}
+
+// TestWorktreeDirForHome is the pure unit test for the path-construction half
+// of WorktreeDir, independent of the ssh round-trip.
+func TestWorktreeDirForHome(t *testing.T) {
+	assert.Equal(t, "/root/.boulez/worktrees", worktreeDirForHome("/root"))
+	assert.Equal(t, "/home/me/.boulez/worktrees", worktreeDirForHome("/home/me"))
 }
 
 // TestSSHExecutor_Wrap proves the seam: every command is wrapped as
