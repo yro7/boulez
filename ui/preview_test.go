@@ -390,6 +390,52 @@ func max(a, b int) int {
 
 // --- Insert mode tests ---
 
+// TestSetLiveError_ReplacesStaleLoadingFallback is the regression test for the
+// "stuck on Setting up workspace..." bug: when an instance transitions Loading →
+// Running and the first live capture ERRORS (the canonical case is an
+// unreachable remote host — every `ssh <alias> tmux capture-pane` fails), the
+// pane MUST NOT stay on the Loading fallback. Previously the error path only
+// surfaced to the error box and never touched previewState, so a Running-but-
+// unreachable instance showed "Setting up workspace..." forever — misleading
+// the user into thinking the instance was still booting. SetLiveError replaces
+// the stale fallback with a connectivity message; the next tick retries the
+// capture (the single-flight guard is cleared by the caller), so the pane
+// self-heals when the host comes back.
+func TestSetLiveError_ReplacesStaleLoadingFallback(t *testing.T) {
+	p := NewPreviewPane()
+	p.SetSize(80, 30)
+
+	// Simulate the Loading fallback left over from the spawn boot phase.
+	p.setFallbackState("Setting up workspace...")
+	require.True(t, p.previewState.fallback)
+	require.Contains(t, p.String(), "Setting up workspace...")
+
+	// The instance is now Running, but the capture errored (unreachable host).
+	// SetLiveError must replace the stale Loading fallback, not leave it.
+	p.SetLiveError(nil, fmt.Errorf("ssh: Could not resolve hostname dev-machine"))
+
+	rendered := p.String()
+	require.Contains(t, rendered, "Preview unavailable", "error fallback replaces the stale Loading message")
+	require.NotContains(t, rendered, "Setting up workspace...", "stale Loading fallback must be cleared")
+}
+
+// TestSetLiveError_RespectsScrollMode mirrors SetLiveContent's contract: a
+// capture error that lands while the user is scrolling the scrollback must
+// not clobber the scroll viewport. The error is dropped (the next tick after
+// the user exits scroll mode will re-surface it).
+func TestSetLiveError_RespectsScrollMode(t *testing.T) {
+	p := NewPreviewPane()
+	p.SetSize(80, 30)
+	p.isScrolling = true
+	p.viewport.SetContent("scrollback content\nESC to exit scroll mode")
+
+	p.SetLiveError(nil, fmt.Errorf("boom"))
+
+	require.True(t, p.isScrolling, "scroll mode preserved")
+	require.Contains(t, p.viewport.View(), "scrollback content", "scroll viewport not clobbered by the error")
+	require.NotContains(t, p.String(), "Preview unavailable")
+}
+
 // TestInsertMode_BannerShown verifies the rendered String() shows the
 // -- INSERT -- banner when in insert mode, and reserves space for it below
 // the agent output. There is no `> ` prompt line anymore: insert mode is a

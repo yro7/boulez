@@ -211,6 +211,13 @@ type home struct {
 	// previewContentMsg.
 	previewCaptureInFlight bool
 
+	// previewErrEvery throttles the log line for a failed preview capture. A
+	// remote instance whose host is down fails every ~100ms tick; without a
+	// throttle the log would fill with one identical line per tick. The error
+	// is already surfaced in the preview pane (SetPreviewError), so the log is
+	// only for post-mortem debugging — every 30s is plenty.
+	previewErrEvery *log.Every
+
 	// fleet is the TUI's seam over the daemon's control socket (C3.1). The
 	// TUI is a pure client of the kernel: it owns the VIEW (a read-only cache
 	// of the fleet), not the TRUTH. Every fleet mutation goes through this
@@ -251,6 +258,7 @@ func newHome(ctx context.Context, program string, autoYes bool) *home {
 		pendingDraftIDs: make(map[string]struct{}),
 		landInFlight:    make(map[string]struct{}),
 		workingStreak:   make(map[string]int),
+		previewErrEvery: log.NewEvery(30 * time.Second),
 	}
 	h.list = ui.NewList(&h.spinner, autoYes)
 
@@ -348,12 +356,28 @@ func (m *home) Update(msg tea.Msg) (tea.Model, tea.Cmd) {
 		// the single-flight guard first (always, even on error or a stale
 		// result) so the next tick can dispatch again.
 		m.previewCaptureInFlight = false
+		selected := m.list.GetSelectedInstance()
 		if msg.err != nil {
-			return m, m.handleError(msg.err)
+			// Surface the capture error IN the pane rather than the error
+			// box: a failed `ssh <alias> tmux capture-pane` is a per-tick
+			// event for a downed remote host, so handleError's 3s error box
+			// would both flash every tick and spam the log. SetPreviewError
+			// replaces any stale "Setting up workspace..." fallback left
+			// over from the Loading boot phase with a connectivity message,
+			// so a Running-but-unreachable instance no longer looks stuck
+			// booting. The capture is retried by the next previewTick (the
+			// single-flight guard is cleared above), so the pane self-heals
+			// when the host comes back.
+			if selected != nil && selected.GetID() == msg.instanceID {
+				m.tabbedWindow.SetPreviewError(selected, msg.err)
+			}
+			if m.previewErrEvery.ShouldLog() {
+				log.WarningLog.Printf("preview capture failed for %s: %v", msg.instanceID, msg.err)
+			}
+			return m, nil
 		}
 		// Drop the capture if the selection moved on while it was in flight —
 		// painting it now would show one instance's pane under another's title.
-		selected := m.list.GetSelectedInstance()
 		if selected != nil && selected.GetID() == msg.instanceID {
 			m.tabbedWindow.SetPreviewContent(selected, msg.content)
 		}

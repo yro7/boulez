@@ -192,6 +192,35 @@ func (p *PreviewPane) SetLiveContent(instance *session.Instance, content string)
 	}
 }
 
+// SetLiveError applies a capture error to the preview pane as a fallback
+// state. This is the error counterpart to SetLiveContent: a failed live
+// capture (typically an unreachable remote host — every
+// `ssh <alias> tmux capture-pane` round-trip fails) must not leave the pane
+// stuck on a stale "Setting up workspace..." fallback left over from the
+// Loading boot phase. An instance that is Running but whose preview cannot
+// be reached is NOT still booting; surfacing the error in the pane tells the
+// user WHY the preview is blank and that it is a connectivity issue, not a
+// slow start. Guarded against a scroll-mode transition in flight (drops the
+// error rather than clobbering the scroll viewport), mirroring SetLiveContent.
+// The next preview tick retries the capture (the single-flight guard is
+// cleared by the caller before this is called), so the pane self-heals the
+// moment the host comes back.
+func (p *PreviewPane) SetLiveError(instance *session.Instance, err error) {
+	if p.isScrolling {
+		return
+	}
+	msg := "Preview unavailable"
+	if instance != nil {
+		if h := instance.Host(); h != nil && h.Name() != "" && h.Name() != "local" {
+			msg += " on " + h.Name()
+		}
+	}
+	if err != nil {
+		msg += "\n" + err.Error()
+	}
+	p.setFallbackState(msg)
+}
+
 // EnterInsertMode activates insert mode. The caller is responsible for
 // gating on instance readiness (started, not paused) and on the Preview tab
 // being active.

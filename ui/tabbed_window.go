@@ -124,6 +124,19 @@ func (w *TabbedWindow) SetPreviewContent(instance *session.Instance, content str
 	w.preview.SetLiveContent(instance, content)
 }
 
+// SetPreviewError applies a capture error to the preview pane as a fallback
+// state (see app.instanceChanged's error path). No-op unless the Preview tab
+// is active. The error is surfaced IN the pane rather than the error box so a
+// Running-but-unreachable instance does not stay stuck on a stale "Setting up
+// workspace..." fallback, and so the per-tick capture error does not spam the
+// error box every 100ms.
+func (w *TabbedWindow) SetPreviewError(instance *session.Instance, err error) {
+	if w.activeTab != PreviewTab {
+		return
+	}
+	w.preview.SetLiveError(instance, err)
+}
+
 func (w *TabbedWindow) UpdateDiff(instance *session.Instance) {
 	if w.activeTab != DiffTab {
 		return
