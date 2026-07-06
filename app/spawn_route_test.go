@@ -5,9 +5,11 @@ import (
 	"testing"
 
 	"github.com/charmbracelet/bubbles/spinner"
+	tea "github.com/charmbracelet/bubbletea"
 	"github.com/stretchr/testify/assert"
 	"github.com/stretchr/testify/require"
 	"github.com/yro7/boulez/config"
+	"github.com/yro7/boulez/host"
 	"github.com/yro7/boulez/session"
 	"github.com/yro7/boulez/ui"
 )
@@ -108,4 +110,67 @@ func TestSpawn_OptionsCarryHostAndBranch(t *testing.T) {
 	require.Len(t, fleet.spawned, 1)
 	assert.Equal(t, "feature-x", fleet.spawned[0].Branch)
 	assert.NotNil(t, fleet.spawned[0].Host)
+}
+
+// TestSpawn_PromptOverlayCarriesHost proves the prompt+branch overlay submit
+// path (handlePromptState, the Shift+N / promptAfterName flow) carries the
+// host chosen in the host selector onto the spawn_worker syscall. Without
+// this, a remote repo (host = dev-machine) is spawned with an empty wire host
+// -> the daemon defaults to LocalHost -> "failed to find Git repository root
+// from path" because the path only exists on the remote machine.
+//
+// The host lives on the draft instance (startNewInstance bound pendingHost
+// onto it via SetHost and cleared pendingHost), so handlePromptState must
+// source opts.Host from selected.Host(), not m.pendingHost (which is nil by
+// then).
+func TestSpawn_PromptOverlayCarriesHost(t *testing.T) {
+	fleet := &fakeFleetClient{spawnID: "k-host-1"}
+	draft, err := session.NewInstance(session.InstanceOptions{
+		Title: "w", Path: "/root/Projets/teams-recorder", Program: "bash",
+	})
+	require.NoError(t, err)
+	require.NoError(t, draft.SetHost(host.Lookup("dev-machine")))
+	draft.SetStatus(session.Loading)
+
+	h := newSpawnHome(t, fleet, draft)
+	h.tabbedWindow = ui.NewTabbedWindow(ui.NewPreviewPane(), ui.NewDiffPane(), ui.NewTerminalPane())
+	h.state = statePrompt
+	h.menu.SetState(ui.StatePrompt)
+	h.newInstanceFinalizer = func() {} // no-op; the prompt-overlay submit path calls it before spawning
+	o := h.newPromptOverlay(draft.Path)
+	h.textInputOverlay = o
+	// Type the prompt, then Tab to the Enter button and submit. With the
+	// default (no-profile) overlay, numStops is textarea(0)+branch(1)+enter(2),
+	// so two Tabs land on the Enter button; Enter then submits.
+	for _, r := range "do the thing" {
+		h.handleKeyPress(tea.KeyMsg{Type: tea.KeyRunes, Runes: []rune{r}})
+	}
+	h.handleKeyPress(tea.KeyMsg{Type: tea.KeyTab}) // 0 -> 1
+	h.handleKeyPress(tea.KeyMsg{Type: tea.KeyTab}) // 1 -> 2 (enter button)
+	_, cmd := h.handleKeyPress(tea.KeyMsg{Type: tea.KeyEnter}) // submit
+	require.True(t, o.IsSubmitted(), "overlay must be submitted before asserting on the spawn")
+	execBatch(t, cmd) // drive tea.Batch -> runSpawnCmd -> fleet.Spawn synchronously
+
+	require.Len(t, fleet.spawned, 1, "prompt-overlay submit routes through the fleet seam")
+	got := fleet.spawned[0]
+	assert.Equal(t, draft.Path, got.Repo)
+	assert.Equal(t, "do the thing", got.Prompt)
+	require.NotNil(t, got.Host, "Host must be carried from the draft instance")
+	assert.Equal(t, "dev-machine", got.Host.Name(), "Host must be the remote chosen in the host selector")
+}
+
+// execBatch executes a tea.Cmd, recursing into tea.BatchMsg so the sub-commands
+// (e.g. runSpawnCmd) actually run. The TUI runtime does this automatically;
+// tests driving handleKeyPress must do it by hand.
+func execBatch(t *testing.T, cmd tea.Cmd) {
+	t.Helper()
+	if cmd == nil {
+		return
+	}
+	msg := cmd()
+	if b, ok := any(msg).(tea.BatchMsg); ok {
+		for _, c := range b {
+			execBatch(t, c)
+		}
+	}
 }

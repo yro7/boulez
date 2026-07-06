@@ -71,6 +71,7 @@ func (m *home) handlePromptState(msg tea.KeyMsg) (tea.Model, tea.Cmd) {
 					Program: selected.Program,
 					Branch:  selected.SelectedBranch(),
 					Prompt:  prompt,
+					Host:    selected.Host(),
 				}
 				return m, tea.Batch(tea.WindowSize(), m.instanceChanged(), m.runSpawnCmd(opts, selected.GetID(), false))
 			}
