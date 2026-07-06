@@ -602,6 +602,17 @@ func (i *Instance) Start(firstTimeSetup bool) error {
 	}
 	i.tmuxSession = tmuxSession
 
+	// Establish the long-lived transport connection (ControlMaster for SSHHost)
+	// BEFORE any command runs: the upcoming buildWorktree/Restore issues git
+	// and tmux commands, and the daemon's per-second poll loop issues
+	// capture-pane + git diff forever after. One warm master means none of
+	// those open a fresh one-shot `ssh` that would re-bind the alias's
+	// LocalForwards (port-collision spam) and race the tmux poll timeout.
+	// Best-effort: a failure is logged inside, never aborts Start.
+	if err := i.host.EnsureConnected(); err != nil {
+		log.WarningLog.Printf("instance %s: transport connect failed: %v", i.Title, err)
+	}
+
 	if firstTimeSetup {
 		wt, branch, err := i.buildWorktree()
 		if err != nil {

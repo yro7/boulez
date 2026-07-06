@@ -8,6 +8,7 @@ import (
 	"strings"
 
 	"github.com/yro7/boulez/cmd"
+	"github.com/yro7/boulez/log"
 	"github.com/yro7/boulez/session/fs"
 )
 
@@ -16,19 +17,30 @@ import (
 // keys — boulez never stores credentials. Every command, filesystem operation,
 // and PTY is routed over `ssh <alias> ...`.
 //
+// To avoid hammering one-shot `ssh` connections (each a fresh TCP+auth round-
+// trip that re-attempts every LocalForward in the alias's config, causing port-
+// collision spam and racing short tmux poll timeouts), SSHHost keeps a
+// long-lived ControlMaster (sshMaster) per alias. Slave commands carry
+// `-o ControlPath=<socket>` and transparently multiplex over it. See
+// ssh_conn.go for the full rationale and the empirically-verified fallback.
+//
 // The alias is an entry the user has configured in their ssh config / known
 // hosts (e.g. "dev-machine", "gpu-box"). boulez treats it as opaque; resolving
 // it to a host/user/port is ssh's job.
 type SSHHost struct {
-	alias string
+	alias  string
+	master sshMaster
 }
 
 // Compile-time guarantee that SSHHost satisfies Host.
 var _ Host = SSHHost{}
 
-// NewSSHHost returns an SSHHost bound to the given ssh alias.
+// NewSSHHost returns an SSHHost bound to the given ssh alias. The ControlMaster
+// socket path is computed eagerly (does not require the master to be running);
+// the master itself is started lazily by EnsureConnected at instance Start.
 func NewSSHHost(alias string) SSHHost {
-	return SSHHost{alias: alias}
+	m := newSSHMaster(alias)
+	return SSHHost{alias: alias, master: m}
 }
 
 // Alias returns the ssh alias this host connects to.
@@ -44,18 +56,39 @@ func (h SSHHost) Name() string { return h.alias }
 // locally (decision 3). The user can still toggle it on per-instance.
 func (h SSHHost) AutoYesDefault() bool { return false }
 
-// Executor implements Host: an executor that prefixes `ssh <alias>` to every
-// command.
-func (h SSHHost) Executor() cmd.Executor { return sshExecutor{alias: h.alias} }
+// EnsureConnected implements Host: start (or verify) a long-lived ControlMaster
+// for this alias so the burst of git/tmux commands about to run — and the
+// daemon's per-second poll loop thereafter — multiplex over one connection
+// instead of opening one-shot `ssh` connections. Best-effort: a failure is
+// logged as a warning and boulez falls back to one-shot ssh (slaves' ControlPath
+// then finds no master and opens direct connections). Never fatal to Start.
+// LocalHost's implementation is a no-op.
+func (h SSHHost) EnsureConnected() error {
+	if err := h.master.Ensure(); err != nil {
+		log.WarningLog.Printf("ssh master %s: %v (falling back to one-shot connections)", h.alias, err)
+		return nil // best-effort: do not abort Start
+	}
+	return nil
+}
 
-// FS implements Host: a filesystem routed over ssh. Paths reaching it
+// Executor implements Host: an executor that prefixes `ssh <alias>` to every
+// command (with -o ControlPath=<socket> so it multiplexes over the master).
+func (h SSHHost) Executor() cmd.Executor {
+	return sshExecutor{alias: h.alias, socket: h.master.socketForSlave()}
+}
+
+// FS implements Host: a filesystem routed over ssh (with -o ControlPath=<socket>
+// for master multiplexing). Paths reaching it
 // (worktreeDir, worktreePath) are absolute on both transports — the Host
 // resolves $HOME remotely for SSH — so no ~ expansion is relied upon
 // (single-quoted argv would suppress it anyway).
-func (h SSHHost) FS() fs.FS { return sshFS{alias: h.alias} }
+func (h SSHHost) FS() fs.FS { return sshFS{alias: h.alias, socket: h.master.socketForSlave()} }
 
 // WorktreeDir implements Host: the absolute <remote-$HOME>/.boulez/worktrees
-// directory, with $HOME resolved on the remote host. The path is ABSOLUTE
+// directory, with $HOME resolved on the remote host. $HOME is resolved over a
+// master-multiplexed connection (carrying -o ControlPath) so it does not open a
+// stray one-shot connection that would re-bind the alias's LocalForwards. The
+// path is ABSOLUTE
 // (not ~-relative) because every consumer passes it through single-quoted
 // argv (joinShellQuoted) or `git -C`, neither of which expands `~`: the remote
 // shell can't (single quotes suppress tilde expansion) and git never does.
@@ -67,7 +100,7 @@ func (h SSHHost) FS() fs.FS { return sshFS{alias: h.alias} }
 // real absolute path that flows unchanged through quoting, git -C, tmux -c,
 // and the agent's cwd. One ssh round-trip per Start/Restore.
 func (h SSHHost) WorktreeDir() (string, error) {
-	home, err := remoteHome(h.alias)
+	home, err := remoteHome(h.alias, h.master.socketForSlave())
 	if err != nil {
 		return "", err
 	}
@@ -78,13 +111,17 @@ func (h SSHHost) WorktreeDir() (string, error) {
 }
 
 // remoteHome resolves the remote login directory ($HOME) of the ssh alias via a
-// single `ssh <alias> printf %s "$HOME"` round-trip. "$HOME" is double-quoted
-// in the script so the REMOTE shell expands it — this must NOT go through
-// joinShellQuoted, which single-quotes every arg and would freeze "$HOME" as
-// a literal. Swappable (package var) so tests can stub the network hop and
-// assert WorktreeDir's wiring without launching ssh.
-var remoteHome = func(alias string) (string, error) {
-	out, err := exec.Command("ssh", alias, `printf %s "$HOME"`).Output()
+// single `ssh [opts] <alias> printf %s "$HOME"` round-trip. The ControlPath
+// option (when socket != "") makes this ride the master connection rather than
+// opening a one-shot that would re-bind the alias's LocalForwards. "$HOME" is
+// double-quoted in the script so the REMOTE shell expands it — this must NOT
+// go through joinShellQuoted, which single-quotes every arg and would freeze
+// "$HOME" as a literal. Swappable (package var) so tests can stub the network
+// hop and assert WorktreeDir's wiring without launching ssh.
+var remoteHome = func(alias, socket string) (string, error) {
+	args := append([]string{}, sshControlArgs(socket)...)
+	args = append(args, alias, `printf %s "$HOME"`)
+	out, err := exec.Command(sshBin, args...).Output()
 	if err != nil {
 		return "", fmt.Errorf("ssh resolve $HOME for %s: %w", alias, err)
 	}
@@ -113,8 +150,11 @@ func (h SSHHost) ResolveRepoPath(path string) string { return path }
 
 // PtyFactory implements Host: a PTY factory that runs `ssh -t <alias> ...`
 // under a local PTY (creack/pty). The -t forces a remote TTY so tmux attach
-// is interactive. Used by TmuxSession.Attach/Restore for remote sessions.
-func (h SSHHost) PtyFactory() PtyFactory { return sshPtyFactory{alias: h.alias} }
+// is interactive. -o ControlPath=<socket> (when set) makes the attach ride the
+// master. Used by TmuxSession.Attach/Restore for remote sessions.
+func (h SSHHost) PtyFactory() PtyFactory {
+	return sshPtyFactory{alias: h.alias, socket: h.master.socketForSlave()}
+}
 
 // --- Executor ---
 
@@ -122,11 +162,14 @@ func (h SSHHost) PtyFactory() PtyFactory { return sshPtyFactory{alias: h.alias} 
 // against it without hardcoding "ssh" in two places.
 const sshBin = "ssh"
 
-// sshExecutor wraps every command in `ssh <alias> <cmd...>`. Because ssh joins
-// argv with spaces and re-parses via the remote shell, each original arg is
-// shell-quoted to survive the round-trip (a path with a space stays one arg).
+// sshExecutor wraps every command in `ssh <alias> <cmd...>` (with
+// -o ControlPath=<socket> so it multiplexes over the master when one is up).
+// Because ssh joins argv with spaces and re-parses via the remote shell, each
+// original arg is shell-quoted to survive the round-trip (a path with a space
+// stays one arg).
 type sshExecutor struct {
-	alias string
+	alias  string
+	socket string // control socket; "" => plain one-shot ssh (no muxing)
 }
 
 func (e sshExecutor) Run(c *exec.Cmd) error {
@@ -150,13 +193,17 @@ func (e sshExecutor) command(c *exec.Cmd) *exec.Cmd {
 	return exec.Command(args[0], args[1:]...)
 }
 
-// wrap returns the full argv to run: `ssh <alias> <shell-joined-and-quoted args>`.
+// wrap returns the full argv to run: `ssh [control opts] <alias> <shell-joined-and-quoted args>`.
 // Extracted so tests can assert the wrapping without launching ssh. The
 // leading element is sshBin so callers can run the result directly as
 // exec.Command(args[0], args[1:]...) without re-prepending sshBin (which
-// would make ssh treat the literal "ssh" as the hostname).
+// would make ssh treat the literal "ssh" as the hostname). The control opts
+// (-o ControlPath=<socket>) make the command ride the ControlMaster when one
+// is up; when socket is "" they are omitted (plain one-shot ssh).
 func (e sshExecutor) wrap(origArgs []string) []string {
-	return []string{sshBin, e.alias, joinShellQuoted(origArgs)}
+	args := append([]string{sshBin}, sshControlArgs(e.socket)...)
+	args = append(args, e.alias, joinShellQuoted(origArgs))
+	return args
 }
 
 // joinShellQuoted returns the args as a single shell string with each arg
@@ -187,19 +234,24 @@ func shellQuote(s string) string {
 // expansion is relied upon. Each operation is a single
 // `ssh host sh -c '...'` invocation.
 type sshFS struct {
-	alias string
+	alias  string
+	socket string // control socket; "" => plain one-shot ssh (no muxing)
 }
 
 // command builds the *exec.Cmd that runs script on the remote host as
-// `ssh <alias> <script>`. The script is passed verbatim to the remote shell,
-// which parses it. Paths reaching sshFS are absolute (the Host resolves
-// $HOME remotely for SSH), so no ~ expansion is needed (and the scripts also
-// shell-quote paths, which would suppress ~ expansion anyway). Extracted so
-// tests can assert the wrapping without launching ssh — never re-prepend
-// sshBin here (that was the double-"ssh" bug; the leading element is the
-// binary, the rest is argv).
+// `ssh [control opts] <alias> <script>`. The control opts (-o ControlPath)
+// make the command ride the ControlMaster when one is up; when socket is ""
+// they are omitted (plain one-shot ssh). The script is passed verbatim to the
+// remote shell, which parses it. Paths reaching sshFS are absolute (the Host
+// resolves $HOME remotely for SSH), so no ~ expansion is needed (and the
+// scripts also shell-quote paths, which would suppress ~ expansion anyway).
+// Extracted so tests can assert the wrapping without launching ssh — never
+// re-prepend sshBin here (that was the double-"ssh" bug; the leading element
+// is the binary, the rest is argv).
 func (f sshFS) command(script string) *exec.Cmd {
-	return exec.Command("ssh", f.alias, script)
+	args := append([]string{}, sshControlArgs(f.socket)...)
+	args = append(args, f.alias, script)
+	return exec.Command(sshBin, args...)
 }
 
 // statScript builds the remote shell test for Stat: emit dir/file/missing so
