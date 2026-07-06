@@ -210,7 +210,7 @@ func NewCtlListCmd() *cobra.Command {
 }
 
 func NewCtlSpawnCmd() *cobra.Command {
-	var repo, branch, prompt, program, title, kind string
+	var repo, branch, prompt, program, title, kind, host string
 	var branchExisting bool
 	cmd := &cobra.Command{
 		Use:   "spawn_worker",
@@ -240,6 +240,9 @@ func NewCtlSpawnCmd() *cobra.Command {
 			if kind != "" {
 				params["kind"] = kindWire(kind)
 			}
+			if host != "" {
+				params["host"] = host
+			}
 			return rawCtl(kernel.Request{Method: "spawn_worker", Params: mustJSON(params)})
 		},
 	}
@@ -250,6 +253,7 @@ func NewCtlSpawnCmd() *cobra.Command {
 	cmd.Flags().StringVar(&program, "program", "", "agent command (default: claude)")
 	cmd.Flags().StringVar(&title, "title", "", "instance title (default: auto-derived)")
 	cmd.Flags().StringVar(&kind, "kind", "worker", "instance kind (worker|orchestrator)")
+	cmd.Flags().StringVar(&host, "host", "", "host alias from hosts.json (default: local)")
 	return cmd
 }
 

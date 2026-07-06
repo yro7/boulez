@@ -292,9 +292,10 @@ func TestSSHFS_ParseDirEntries_SplitsNullDelimited(t *testing.T) {
 
 // TestSSHPtyFactory_CommandBuildsArgv is the regression guard for the
 // double-"ssh" bug on the PTY seam. command() must build exactly
-// `ssh -t <alias> <shell-joined args>`, never re-prepend sshBin. We assert
-// the built command's Args — without launching ssh or allocating a PTY — so
-// a re-introduction of the bug class fails loudly.
+// `ssh -t <alias> <shell-joined args>` for an INTERACTIVE command (attach),
+// never re-prepend sshBin. We assert the built command's Args — without
+// launching ssh or allocating a PTY — so a re-introduction of the bug class
+// fails loudly.
 func TestSSHPtyFactory_CommandBuildsArgv(t *testing.T) {
 	f := sshPtyFactory{alias: "dev-machine"}
 	orig := exec.Command("tmux", "attach-session", "-t", "foo")
@@ -306,6 +307,50 @@ func TestSSHPtyFactory_CommandBuildsArgv(t *testing.T) {
 	require.Equal(t, []string{"ssh", "-t", "dev-machine", "'tmux' 'attach-session' '-t' 'foo'"}, built.Args)
 	assert.Equal(t, orig.Args, shellReparse(t, built.Args[3]),
 		"joined args must re-parse to the original args")
+}
+
+// TestSSHPtyFactory_Command_OmitsTForNewSession is the regression guard for
+// the remote-PTY-kills-tmux-server bug: command() must NOT pass -t for a
+// non-interactive command (tmux new-session -d). A remote PTY allocated by
+// ssh -t, once closed on ssh disconnect, sends SIGHUP to the tmux server's
+// session and the daemonized server dies — so `tmux new-session -d` appeared
+// to succeed but has-session then reported "no server running". Without -t,
+// ssh runs the detached command and exits without disturbing the server.
+// The local PTY is still allocated (creack/pty drives it); only the REMOTE
+// PTY (-t) is omitted.
+func TestSSHPtyFactory_Command_OmitsTForNewSession(t *testing.T) {
+	f := sshPtyFactory{alias: "dev-machine"}
+	orig := exec.Command("tmux", "new-session", "-d", "-s", "foo", "-c", "/wt", "bash")
+	built := f.command(orig)
+
+	// No -t: ssh runs the detached command without a remote PTY.
+	require.Equal(t, []string{"ssh", "dev-machine", "'tmux' 'new-session' '-d' '-s' 'foo' '-c' '/wt' 'bash'"}, built.Args)
+	assert.Equal(t, orig.Args, shellReparse(t, built.Args[2]),
+		"joined args must re-parse to the original args")
+}
+
+// TestWantsRemoteTTY pins the interactive-vs-non-interactive decision that
+// controls whether ssh gets -t. Only tmux attach* wants a remote PTY; a
+// remote PTY on new-session -d kills the daemonized tmux server on disconnect.
+func TestWantsRemoteTTY(t *testing.T) {
+	cases := []struct {
+		name string
+		argv []string
+		want bool
+	}{
+		{"attach-session", []string{"tmux", "attach-session", "-t", "foo"}, true},
+		{"attach", []string{"tmux", "attach"}, true},
+		{"new-session -d", []string{"tmux", "new-session", "-d", "-s", "x"}, false},
+		{"kill-session", []string{"tmux", "kill-session", "-t", "x"}, false},
+		{"has-session", []string{"tmux", "has-session", "-t=x"}, false},
+		{"bare ssh (no subcommand)", []string{"ssh"}, false},
+		{"empty", []string{}, false},
+	}
+	for _, tc := range cases {
+		t.Run(tc.name, func(t *testing.T) {
+			assert.Equal(t, tc.want, wantsRemoteTTY(tc.argv))
+		})
+	}
 }
 
 // TestSSHPtyFactory_Command_Quoting proves args survive the remote shell: a

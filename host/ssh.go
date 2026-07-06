@@ -1,6 +1,7 @@
 package host
 
 import (
+	"bytes"
 	"fmt"
 	"os"
 	"os/exec"
@@ -130,15 +131,51 @@ type sshExecutor struct {
 }
 
 func (e sshExecutor) Run(c *exec.Cmd) error {
-	return e.command(c).Run()
+	// Capture stderr separately so ssh transport chatter (e.g. LocalForward
+	// "Address already in use", "Could not request local forwarding") stays
+	// out of any parsed stdout and is folded into the error message instead.
+	cmd := e.command(c)
+	var stderr bytes.Buffer
+	cmd.Stderr = &stderr
+	if err := cmd.Run(); err != nil {
+		return fmt.Errorf("%s: %w (%s)", cmd.String(), err, strings.TrimSpace(stderr.String()))
+	}
+	return nil
 }
 
 func (e sshExecutor) Output(c *exec.Cmd) ([]byte, error) {
-	return e.command(c).Output()
+	// Output returns stdout only; stderr is captured and folded into the
+	// error on failure (not merged into stdout), so ssh transport chatter
+	// cannot pollute parsed command output.
+	cmd := e.command(c)
+	var stderr bytes.Buffer
+	cmd.Stderr = &stderr
+	out, err := cmd.Output()
+	if err != nil {
+		return out, fmt.Errorf("%s: %w (%s)", cmd.String(), err, strings.TrimSpace(stderr.String()))
+	}
+	return out, nil
 }
 
+// CombinedOutput returns stdout only (NOT stdout+stderr merged). ssh writes
+// transport-level chatter (LocalForward warnings, "Could not request local
+// forwarding", etc.) to stderr; merging it into stdout (as exec.Cmd's
+// CombinedOutput does) corrupts output that callers parse — e.g. `git
+// rev-parse HEAD` returned "<sha>\nbind [127.0.0.1]:11411: Address already in
+// use...", which then failed as `git worktree add '<sha><warnings>'` with
+// "not a valid object name". stderr is preserved in the error message on
+// non-zero exit, so diagnostics are not lost. This matches the Executor
+// contract: callers use CombinedOutput to get stderr IN THE ERROR on failure,
+// not to read stderr as data on success.
 func (e sshExecutor) CombinedOutput(c *exec.Cmd) ([]byte, error) {
-	return e.command(c).CombinedOutput()
+	cmd := e.command(c)
+	var stdout, stderr bytes.Buffer
+	cmd.Stdout = &stdout
+	cmd.Stderr = &stderr
+	if err := cmd.Run(); err != nil {
+		return stdout.Bytes(), fmt.Errorf("%s: %w (%s)", cmd.String(), err, strings.TrimSpace(stderr.String()))
+	}
+	return stdout.Bytes(), nil
 }
 
 // command builds the *exec.Cmd that runs c's argv over `ssh <alias> ...`. It is
