@@ -19,7 +19,30 @@ import (
 
 // RunDaemon runs the daemon process which iterates over all sessions and runs AutoYes mode on them.
 // It's expected that the main process kills the daemon when the main process starts.
+//
+// INVARIANT: at most one RunDaemon is alive per config dir (#daemon ∈ {0,1}).
+// The lock is held for the daemon's entire lifetime — released by the OS
+// automatically on exit (even crash). This makes `boulez daemon run` safe
+// to invoke by any caller (auto-launch, manual, future OS service): a second
+// invocation exits cleanly without double-binding the socket.
 func RunDaemon(cfg *config.Config) error {
+	// Acquire the singleton lock BEFORE touching the socket or starting any
+	// goroutine. This is the invariant gate: the previous design only locked
+	// in LaunchDaemon (the auto-launch path), so `boulez daemon run` invoked
+	// manually or by a future OS service bypassed it entirely and N daemons
+	// could run at once (a real bug seen in dogfooding). Holding an flock for
+	// the whole lifetime means a crashed daemon releases it automatically —
+	// no stale-PID heuristic to get wrong.
+	lockPath, err := daemonLockPath()
+	if err != nil {
+		return fmt.Errorf("failed to resolve daemon lock path: %w", err)
+	}
+	release, err := acquireDaemonLock(lockPath)
+	if err != nil {
+		return err // already a daemon alive (or lock unusable) — refuse cleanly
+	}
+	defer release()
+
 	log.InfoLog.Printf("starting daemon")
 	state := config.LoadState()
 	storage := kernel.NewStorage(state)
@@ -151,30 +174,26 @@ func RunDaemon(cfg *config.Config) error {
 	return nil
 }
 
-// LaunchDaemon launches the daemon process. It is concurrency-safe: if a
-// daemon is already running OR another launcher is in the middle of starting
-// one, LaunchDaemon returns nil without launching a second process. This
-// fixes the auto-launch race found in dogfooding: a storm of concurrent
-// 'boulez ctl' calls (with the daemon down) each saw the socket missing and
-// each launched its own daemon — up to 5+ processes.
-//
-// The guard is a lock file (~/.boulez/daemon.lock) created with O_EXCL (atomic
-// across processes). The lock carries the launcher's PID so a stale lock
-// (from a crashed launcher) is reclaimed. The daemon itself writes the real
-// PID to daemon.pid on startup (StopDaemon consumes that).
+// LaunchDaemon launches the daemon process. It is best-effort deduplication
+// for the auto-launch path (a storm of concurrent `boulez ctl` calls with the
+// daemon down). The HARD invariant is enforced inside RunDaemon via an flock
+// held for the daemon's lifetime: even if multiple LaunchDaemon callers race
+// and each spawns a child, only the first child that takes the lock survives —
+// the rest exit cleanly at startup. So this function does not need to be
+// perfect; it just avoids wasteful double-spawns.
 func LaunchDaemon() error {
-	pidDir, err := config.GetConfigDir()
+	configDir, err := config.GetConfigDir()
 	if err != nil {
 		return fmt.Errorf("failed to get config directory: %w", err)
 	}
 
-	lockPath := filepath.Join(pidDir, "daemon.lock")
+	lockPath := filepath.Join(configDir, "daemon.lock")
 	acquired, err := acquireLaunchLock(lockPath)
 	if err != nil {
 		return fmt.Errorf("acquire launch lock: %w", err)
 	}
 	if !acquired {
-		// Another launcher is starting (or has started) a daemon. Let it.
+		// Another launcher is starting (or a daemon is up). Let it.
 		log.InfoLog.Printf("daemon launch already in progress; not launching a second")
 		return nil
 	}
@@ -204,8 +223,11 @@ func LaunchDaemon() error {
 
 	log.InfoLog.Printf("started daemon child process with PID: %d", cmd.Process.Pid)
 
-	// Save PID to a file for later management
-	pidFile := filepath.Join(pidDir, "daemon.pid")
+	// Save PID to a file for later management (StopDaemon consumes this). The
+	// launch lock is a short-lived "launcher in flight" marker; the daemon
+	// itself re-acquires the same path as an flock in RunDaemon and holds it
+	// for its lifetime — that flock (not this file) is the real invariant.
+	pidFile := filepath.Join(configDir, "daemon.pid")
 	if err := os.WriteFile(pidFile, []byte(fmt.Sprintf("%d", cmd.Process.Pid)), 0644); err != nil {
 		return fmt.Errorf("failed to write PID file: %w", err)
 	}
@@ -217,12 +239,12 @@ func LaunchDaemon() error {
 // StopDaemon attempts to stop a running daemon process if it exists. Returns no error if the daemon is not found
 // (assumes the daemon does not exist).
 func StopDaemon() error {
-	pidDir, err := config.GetConfigDir()
+	configDir, err := config.GetConfigDir()
 	if err != nil {
 		return fmt.Errorf("failed to get config directory: %w", err)
 	}
 
-	pidFile := filepath.Join(pidDir, "daemon.pid")
+	pidFile := filepath.Join(configDir, "daemon.pid")
 	data, err := os.ReadFile(pidFile)
 	if err != nil {
 		if os.IsNotExist(err) {
@@ -245,12 +267,13 @@ func StopDaemon() error {
 		return fmt.Errorf("failed to stop daemon process: %w", err)
 	}
 
-	// Clean up PID file and the launch lock (the lock is the "a daemon exists"
-	// sentinel; removing it lets a future LaunchDaemon proceed).
+	// Clean up the PID file. The flock inside RunDaemon is released
+	// automatically when the killed process exits (OS-level), so we do NOT
+	// touch daemon.lock here — removing it would defeat the launch-lock's
+	// "launcher in flight" marker if a relaunch races in.
 	if err := os.Remove(pidFile); err != nil {
 		return fmt.Errorf("failed to remove PID file: %w", err)
 	}
-	_ = os.Remove(filepath.Join(filepath.Dir(pidFile), "daemon.lock"))
 
 	log.InfoLog.Printf("daemon process (PID: %d) stopped successfully", pid)
 	return nil
@@ -281,6 +304,12 @@ func reloadProtected(store *protected.Store, k *kernel.Kernel) {
 // sentinel. StopDaemon removes daemon.pid AND the lock when it kills the
 // daemon. We do NOT release the lock on the launcher's exit (the launcher is
 // short-lived; the lock outlives it as the "daemon is up" marker).
+//
+// NOTE: this is BEST-EFFORT deduplication for the auto-launch path only. The
+// hard singleton invariant lives in RunDaemon via acquireDaemonLock (an flock
+// held for the daemon's lifetime). Even if two LaunchDaemon callers both win
+// here (rare) and each spawn a child, only the first child to acquire the
+// daemon flock survives; the other exits cleanly at startup.
 func acquireLaunchLock(path string) (bool, error) {
 	// If a lock file exists, check whether its holder is alive.
 	if data, err := os.ReadFile(path); err == nil {
@@ -315,6 +344,60 @@ func acquireLaunchLock(path string) (bool, error) {
 		return false, err
 	}
 	return true, nil
+}
+
+// daemonLockPath returns the path to the singleton daemon lock file inside
+// the boulez config dir. Same path is used by acquireLaunchLock (best-effort
+// auto-launch dedup) and acquireDaemonLock (the hard invariant inside
+// RunDaemon) so both layers agree on a single file.
+func daemonLockPath() (string, error) {
+	configDir, err := config.GetConfigDir()
+	if err != nil {
+		return "", fmt.Errorf("failed to get config directory: %w", err)
+	}
+	return filepath.Join(configDir, "daemon.lock"), nil
+}
+
+// acquireDaemonLock takes an exclusive flock on the daemon lock file and keeps
+// it held for the daemon's lifetime. This is the HARD singleton invariant
+// (#daemon ∈ {0,1}): regardless of how `boulez daemon run` was invoked
+// (auto-launch, manual, future OS service), only ONE process can hold this
+// lock at a time. A second invocation blocks on the flock until the holder
+// exits — but since the holder is the daemon (long-lived), we don't want to
+// block: we want to refuse. So we use LOCK_EX|LOCK_NB (non-blocking): if the
+// lock is already held, we return an error immediately.
+//
+// Why flock over O_EXCL+PID: the flock is released automatically by the OS
+// when the process exits — including crashes (SIGKILL, segfault) — so there
+// is no stale-PID heuristic to get wrong. The lock file itself may be left
+// on disk; that's harmless (it's just a path to lock, its existence doesn't
+// mean "locked").
+//
+// The returned release func MUST be called on daemon shutdown (typically via
+// defer) to release the lock cleanly; the OS would release it on exit anyway,
+// but explicit release is good hygiene and makes shutdown deterministic.
+func acquireDaemonLock(path string) (release func(), err error) {
+	f, err := os.OpenFile(path, os.O_CREATE|os.O_RDWR, 0644)
+	if err != nil {
+		return nil, fmt.Errorf("open daemon lock file %s: %w", path, err)
+	}
+	// LOCK_EX|LOCK_NB: exclusive, non-blocking. If another daemon holds the
+	// lock, fail immediately instead of blocking forever (the holder is a
+	// long-lived daemon, so blocking would hang the second invocation).
+	if err := syscall.Flock(int(f.Fd()), syscall.LOCK_EX|syscall.LOCK_NB); err != nil {
+		_ = f.Close()
+		return nil, fmt.Errorf("another daemon is already running (lock %s held): %w", path, err)
+	}
+	// Write our PID into the (locked) file for diagnostics and StopDaemon.
+	// Truncate first so a stale long PID from a previous run doesn't linger.
+	if _, err := f.Seek(0, 0); err == nil {
+		_ = f.Truncate(0)
+		_, _ = fmt.Fprintf(f, "%d\n", os.Getpid())
+	}
+	return func() {
+		_ = syscall.Flock(int(f.Fd()), syscall.LOCK_UN)
+		_ = f.Close()
+	}, nil
 }
 
 // parsePID parses a decimal PID from a string (the lock/pid file contents).
