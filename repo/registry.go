@@ -20,9 +20,9 @@
 //
 //	{"version":1,"entries":[{"path":"/...","host":"local"}, ...]}
 //
-// A legacy flat `["/p1","/p2"]` file is migrated in place on first load: every
-// bare path becomes a "local" entry, and the original bytes are backed up to
-// repos.json.pre-migration (once). Insertion order is preserved.
+// Boulez is beta; there is no legacy-format migration. A file that is not
+// valid v1 JSON is treated as empty (cold start / self-heal), matching the
+// original "corrupt -> empty" contract.
 package repo
 
 import (
@@ -63,7 +63,7 @@ const registryVersion = 1
 // Registry is the storage layer for known (repo, host) bindings. It is a deep
 // module: a small surface (List/ListByHost/Add/Remove/Contains/Touch) over a
 // persistent list that handles host-conditional path normalization,
-// (path,host) deduplication, legacy migration, and round-tripping.
+// (path,host) deduplication, and round-tripping.
 type Registry struct {
 	// path is the filesystem location of the registry file. Injected so tests
 	// can use an isolated temp file.
@@ -92,9 +92,8 @@ func (r *Registry) Path() string {
 }
 
 // load reads the persisted entries. A missing or corrupt file is treated as an
-// empty registry (cold start / self-heal) rather than an error. A legacy flat
-// `[]string` file is migrated to v1 in place, with a one-time backup of the
-// original bytes written next to the file.
+// empty registry (cold start / self-heal) rather than an error. Only the v1
+// shape is recognized; a file that does not parse as v1 yields empty.
 func (r *Registry) load() ([]Entry, error) {
 	data, err := os.ReadFile(r.path)
 	if err != nil {
@@ -103,42 +102,16 @@ func (r *Registry) load() ([]Entry, error) {
 		}
 		return nil, err
 	}
-
-	// Try the current v1 shape first.
 	var v1 registryV1
-	if err := json.Unmarshal(data, &v1); err == nil && v1.Version == registryVersion {
-		return normalizeHosts(v1.Entries), nil
-	}
-
-	// Legacy flat list of path strings. Migrate it in place.
-	var flat []string
-	if err := json.Unmarshal(data, &flat); err != nil {
-		// Neither shape: corrupt file. Ignore it and start fresh, matching
-		// the original "corrupt → empty" contract. No backup: there is nothing
-		// trustable to back up.
+	if err := json.Unmarshal(data, &v1); err != nil {
+		// Corrupt or unrecognized file: ignore it and start fresh.
 		return nil, nil
 	}
-	entries := make([]Entry, 0, len(flat))
-	for _, p := range flat {
-		entries = append(entries, Entry{Path: p, Host: localAlias})
-	}
-
-	// Best-effort backup of the original bytes, once. A backup failure does
-	// not block migration (the storage layer stays dependency-free and
-	// best-effort, matching the existing tone). An existing backup is never
-	// overwritten so a re-load after migration keeps the true original.
-	backupPath := r.path + ".pre-migration"
-	if _, statErr := os.Stat(backupPath); os.IsNotExist(statErr) {
-		_ = os.WriteFile(backupPath, data, 0644)
-	}
-
-	// Persist the migrated shape so subsequent loads take the v1 path.
-	_ = r.save(entries)
-	return entries, nil
+	return normalizeHosts(v1.Entries), nil
 }
 
 // normalizeHosts fills an empty Host with localAlias (defensive: a hand-edited
-// or partially-migrated file may omit it). It does not touch non-empty hosts.
+// file may omit it). It does not touch non-empty hosts.
 func normalizeHosts(entries []Entry) []Entry {
 	for i := range entries {
 		if entries[i].Host == "" {
@@ -229,9 +202,6 @@ func (r *Registry) Add(path, host string) error {
 		return fmt.Errorf("repo: cannot resolve path %q", path)
 	}
 	entries, err := r.load()
-	if err != nil {
-		return err
-	}
 	if err != nil {
 		return err
 	}
