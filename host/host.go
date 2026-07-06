@@ -59,6 +59,16 @@ type Host interface {
 	// known, before the worktree is built.
 	ResolveRepoPath(path string) string
 
+	// EnsureConnected establishes any long-lived transport connection needed
+	// before the instance issues commands. For SSHHost this starts (or verifies)
+	// a ControlMaster so the burst of git/tmux commands and the daemon's
+	// per-second poll loop multiplex over one connection instead of opening
+	// one-shot `ssh` connections (which re-attempt LocalForwards every time and
+	// race short tmux poll timeouts). For LocalHost it is a no-op. Best-effort:
+	// a failure is logged and boulez falls back to one-shot transport; it never
+	// aborts Start.
+	EnsureConnected() error
+
 	// AutoYesDefault is whether new instances on this host start with
 	// AutoYes enabled. LocalHost follows the global config flag; SSHHost
 	// returns false (AutoYes is off by default on remote hosts).

@@ -22,6 +22,7 @@ type fakeHost struct {
 
 func (f *fakeHost) Name() string           { return f.alias }
 func (f *fakeHost) AutoYesDefault() bool   { return false }
+func (f *fakeHost) EnsureConnected() error { return nil }
 func (f *fakeHost) Executor() cmd.Executor { return cmd.MakeExecutor() }
 func (f *fakeHost) FS() fs.FS              { return fs.LocalFS{} }
 func (f *fakeHost) PtyFactory() host.PtyFactory {
