@@ -33,7 +33,7 @@ func TestSSHHost_WorktreeDir(t *testing.T) {
 	defer func() { remoteHome = orig }()
 
 	var gotAlias string
-	remoteHome = func(alias string) (string, error) {
+	remoteHome = func(alias, socket string) (string, error) {
 		gotAlias = alias
 		return "/root", nil
 	}
@@ -52,7 +52,7 @@ func TestSSHHost_WorktreeDir(t *testing.T) {
 func TestSSHHost_WorktreeDir_PropagatesRemoteHomeError(t *testing.T) {
 	orig := remoteHome
 	defer func() { remoteHome = orig }()
-	remoteHome = func(alias string) (string, error) {
+	remoteHome = func(alias, socket string) (string, error) {
 		return "", fmt.Errorf("boom")
 	}
 
@@ -66,6 +66,68 @@ func TestSSHHost_WorktreeDir_PropagatesRemoteHomeError(t *testing.T) {
 func TestWorktreeDirForHome(t *testing.T) {
 	assert.Equal(t, "/root/.boulez/worktrees", worktreeDirForHome("/root"))
 	assert.Equal(t, "/home/me/.boulez/worktrees", worktreeDirForHome("/home/me"))
+}
+
+// TestSSHExecutor_Wrap_InjectsControlPath proves that when a master socket is
+// configured (i.e. EnsureConnected has armed muxing), the slave command carries
+// -o ControlPath=<socket> so it rides the master. With socket="" the option is
+// absent (plain one-shot ssh) — the non-muxing fallback path. This is the
+// property that eliminates one-shot connection hammering on remote hosts.
+func TestSSHExecutor_Wrap_InjectsControlPath(t *testing.T) {
+	orig := exec.Command("git", "status")
+
+	// Muxing armed: -o ControlPath=<socket> precedes the alias.
+	withSock := sshExecutor{alias: "dev-machine", socket: "/tmp/x.sock"}.wrap(orig.Args)
+	assert.Equal(t,
+		[]string{"ssh", "-o", "ControlPath=/tmp/x.sock", "dev-machine", "'git' 'status'"},
+		withSock)
+
+	// Muxing unarmed: no control option, plain one-shot ssh.
+	noSock := sshExecutor{alias: "dev-machine"}.wrap(orig.Args)
+	assert.Equal(t, []string{"ssh", "dev-machine", "'git' 'status'"}, noSock)
+}
+
+// TestSSHFS_CommandInjectsControlPath proves the FS seam rides the master too.
+func TestSSHFS_CommandInjectsControlPath(t *testing.T) {
+	withSock := sshFS{alias: "dev-machine", socket: "/tmp/x.sock"}.command("echo hi")
+	assert.Equal(t,
+		[]string{"ssh", "-o", "ControlPath=/tmp/x.sock", "dev-machine", "echo hi"},
+		withSock.Args)
+
+	noSock := sshFS{alias: "dev-machine"}.command("echo hi")
+	assert.Equal(t, []string{"ssh", "dev-machine", "echo hi"}, noSock.Args)
+}
+
+// TestSSHPtyFactory_CommandInjectsControlPath proves the PTY seam rides the
+// master (the -t comes before the control opts).
+func TestSSHPtyFactory_CommandInjectsControlPath(t *testing.T) {
+	orig := exec.Command("tmux", "attach-session", "-t", "foo")
+	withSock := sshPtyFactory{alias: "dev-machine", socket: "/tmp/x.sock"}.command(orig)
+	assert.Equal(t,
+		[]string{"ssh", "-t", "-o", "ControlPath=/tmp/x.sock", "dev-machine", "'tmux' 'attach-session' '-t' 'foo'"},
+		withSock.Args)
+
+	noSock := sshPtyFactory{alias: "dev-machine"}.command(orig)
+	assert.Equal(t, []string{"ssh", "-t", "dev-machine", "'tmux' 'attach-session' '-t' 'foo'"}, noSock.Args)
+}
+
+// TestSSHHost_EnsureConnected_Delegates proves EnsureConnected drives the
+// master lifecycle (and is best-effort: a start failure is swallowed so Start
+// is never aborted by a transport hiccup). The master uses a fake runner so
+// no real ssh is launched.
+func TestSSHHost_EnsureConnected_Delegates(t *testing.T) {
+	orig := sshControlDir
+	sshControlDir = func() (string, error) { return t.TempDir(), nil }
+	t.Cleanup(func() { sshControlDir = orig })
+
+	h := NewSSHHost("dev-machine")
+	h.master = h.master.withRunner(&fakeSSHRunner{up: true}) // master already up
+	require.NoError(t, h.EnsureConnected())
+
+	// Start failure is swallowed (best-effort).
+	h2 := NewSSHHost("dev-machine")
+	h2.master = h2.master.withRunner(&fakeSSHRunner{up: false, startOK: false})
+	require.NoError(t, h2.EnsureConnected(), "EnsureConnected must not abort on master failure")
 }
 
 // TestSSHExecutor_Wrap proves the seam: every command is wrapped as

@@ -33,26 +33,35 @@ func (LocalPty) Close() {}
 func LocalPtyFactory() PtyFactory { return LocalPty{} }
 
 // sshPtyFactory starts a process under a local PTY (creack/pty) but with the
-// command wrapped in `ssh -t <alias> ...`. The -t forces PTY allocation on
-// the remote so interactive tmux attach/restore works. This is the PTY
-// analogue of sshExecutor: same wrapping, but the local PTY makes the ssh
-// session interactive.
+// command wrapped in `ssh -t [control opts] <alias> ...`. The -t forces PTY
+// allocation on the remote so interactive tmux attach/restore works. The
+// control opts (-o ControlPath=<socket>) make the attach ride the
+// ControlMaster when one is up; when socket is "" they are omitted (plain
+// one-shot ssh). This is the PTY analogue of sshExecutor: same wrapping, but
+// the local PTY makes the ssh session interactive.
 type sshPtyFactory struct {
-	alias string
+	alias  string
+	socket string // control socket; "" => plain one-shot ssh (no muxing)
 }
 
 func (f sshPtyFactory) Start(cmd *exec.Cmd) (*os.File, error) {
 	return pty.Start(f.command(cmd))
 }
 
-// command builds the *exec.Cmd that runs cmd's argv over `ssh -t <alias> ...`
-// under a local PTY. The -t forces PTY allocation on the remote so interactive
-// tmux attach/restore works. Extracted so tests can assert the wrapping
-// (alias, -t, shell-joined args) without launching ssh or allocating a PTY.
-// Built directly as `exec.Command("ssh", "-t", alias, ...)` — never re-prepend
-// sshBin (the double-"ssh" bug class).
+// command builds the *exec.Cmd that runs cmd's argv over
+// `ssh -t [control opts] <alias> ...` under a local PTY. The -t forces PTY
+// allocation on the remote so interactive tmux attach/restore works. The
+// control opts (-o ControlPath=<socket>) ride the ControlMaster when one is
+// up; when socket is "" they are omitted (plain one-shot ssh). Extracted so
+// tests can assert the wrapping (alias, -t, control opts, shell-joined args)
+// without launching ssh or allocating a PTY. Built directly as
+// `exec.Command("ssh", ...)` — never re-prepend sshBin (the double-"ssh" bug
+// class).
 func (f sshPtyFactory) command(cmd *exec.Cmd) *exec.Cmd {
-	return exec.Command("ssh", "-t", f.alias, joinShellQuoted(cmd.Args))
+	args := []string{sshBin, "-t"}
+	args = append(args, sshControlArgs(f.socket)...)
+	args = append(args, f.alias, joinShellQuoted(cmd.Args))
+	return exec.Command(args[0], args[1:]...)
 }
 
 func (f sshPtyFactory) Close() {}

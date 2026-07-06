@@ -54,3 +54,7 @@ func (LocalHost) ResolveRepoPath(path string) string {
 // config flag (preserves today's behaviour where `--auto-yes` enables
 // auto-yes locally).
 func (LocalHost) AutoYesDefault() bool { return config.LoadConfig().AutoYes }
+
+// EnsureConnected implements Host: a no-op for the local transport — there is
+// no connection to establish, commands run in-process.
+func (LocalHost) EnsureConnected() error { return nil }
