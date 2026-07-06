@@ -116,6 +116,35 @@ func TestClose_IdempotentWhenSessionGone(t *testing.T) {
 	require.NoError(t, err, "Close on a gone session is a no-op success")
 }
 
+// TestStart_TimeoutSurfacesRealHasSessionError proves the drive-by fix: when
+// `tmux new-session` succeeds but the session never appears (e.g. the remote
+// ssh/tmux failed silently), Start's 2s timeout must surface the REAL
+// has-session exit error — not a bare "<nil>" (the previous %v of a nil err
+// masked the actual cause, making remote-spawn timeouts undiagnosable).
+func TestStart_TimeoutSurfacesRealHasSessionError(t *testing.T) {
+	const realErr = "connection lost to remote tmux"
+	exec := cmd_test.MockCmdExec{
+		RunFunc: func(c *exec.Cmd) error {
+			s := cmd2.ToString(c)
+			if strings.Contains(s, "has-session") {
+				return fmt.Errorf("%s", realErr) // session never appears
+			}
+			if strings.Contains(s, "kill-session") {
+				return nil // Close cleanup
+			}
+			return nil
+		},
+		OutputFunc: func(c *exec.Cmd) ([]byte, error) { return []byte{}, nil },
+	}
+
+	sess := newTmuxSession("never-appears", "claude", NewMockPtyFactory(t), exec)
+	err := sess.Start(t.TempDir())
+	require.Error(t, err)
+	assert.Contains(t, err.Error(), "timed out waiting for tmux session")
+	assert.Contains(t, err.Error(), realErr,
+		"timeout error must surface the real has-session failure, not <nil>")
+}
+
 // TestClose_SurfacesErrorOnLiveSession proves the other side: when the session
 // IS still alive but kill-session fails (a wedged session), Close() surfaces
 // the error rather than silently swallowing it. This is the guard against

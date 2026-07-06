@@ -143,16 +143,27 @@ func (t *TmuxSession) Start(workDir string) error {
 		return fmt.Errorf("error starting tmux session: %w", err)
 	}
 
-	// Poll for session existence with exponential backoff
+	// Poll for session existence with exponential backoff. Capture the last
+	// has-session failure so the timeout message surfaces the real reason
+	// (previously it printed %v of a nil err, masking e.g. an ssh/transport
+	// failure or a real tmux error behind a bare "<nil>").
 	timeout := time.After(2 * time.Second)
 	sleepDuration := 5 * time.Millisecond
-	for !t.DoesSessionExist() {
+	var lastErr error
+	for {
+		exists, pollErr := t.doesSessionExistWithErr()
+		if exists {
+			break
+		}
+		if pollErr != nil {
+			lastErr = pollErr
+		}
 		select {
 		case <-timeout:
 			if cleanupErr := t.Close(); cleanupErr != nil {
-				err = fmt.Errorf("%v (cleanup error: %v)", err, cleanupErr)
+				lastErr = fmt.Errorf("%v (cleanup error: %v)", lastErr, cleanupErr)
 			}
-			return fmt.Errorf("timed out waiting for tmux session %s: %v", t.sanitizedName, err)
+			return fmt.Errorf("timed out waiting for tmux session %s: %w", t.sanitizedName, lastErr)
 		default:
 			time.Sleep(sleepDuration)
 			// Exponential backoff up to 50ms max
@@ -580,9 +591,22 @@ func (t *TmuxSession) updateWindowSize(cols, rows int) error {
 }
 
 func (t *TmuxSession) DoesSessionExist() bool {
+	exists, _ := t.doesSessionExistWithErr()
+	return exists
+}
+
+// doesSessionExistWithErr is the error-returning core of DoesSessionExist. It
+// runs `tmux has-session -t=<name>` and returns (true, nil) when the session
+// exists, or (false, err) with the real exit error otherwise — so callers that
+// care about WHY a session never appeared (the Start poll loop) can surface it
+// instead of a bare "<nil>".
+func (t *TmuxSession) doesSessionExistWithErr() (bool, error) {
 	// Using "-t name" does a prefix match, which is wrong. `-t=` does an exact match.
 	existsCmd := exec.Command("tmux", "has-session", fmt.Sprintf("-t=%s", t.sanitizedName))
-	return t.cmdExec.Run(existsCmd) == nil
+	if err := t.cmdExec.Run(existsCmd); err != nil {
+		return false, err
+	}
+	return true, nil
 }
 
 // CapturePaneContent captures the content of the tmux pane
