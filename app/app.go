@@ -200,6 +200,17 @@ type home struct {
 	// reconcileFleet to IDs no longer in the kernel's snapshot.
 	workingStreak map[string]int
 
+	// previewCaptureInFlight is the single-flight guard for the async preview
+	// capture (see instanceChanged). The preview pane captures the instance's
+	// own tmux pane, which for a remote (ssh) instance is a network round-trip;
+	// it is fetched in a goroutine and applied via previewContentMsg so it never
+	// blocks the Bubble Tea update thread. previewTickMsg re-arms every 100ms
+	// regardless of whether the previous capture returned, so without this guard
+	// a capture slower than the tick (the remote case) would pile up overlapping
+	// goroutines. Set true when a capture is dispatched, cleared on
+	// previewContentMsg.
+	previewCaptureInFlight bool
+
 	// fleet is the TUI's seam over the daemon's control socket (C3.1). The
 	// TUI is a pure client of the kernel: it owns the VIEW (a read-only cache
 	// of the fleet), not the TRUTH. Every fleet mutation goes through this
@@ -332,6 +343,21 @@ func (m *home) Update(msg tea.Msg) (tea.Model, tea.Cmd) {
 				return previewTickMsg{}
 			},
 		)
+	case previewContentMsg:
+		// A preview capture dispatched by instanceChanged has returned. Clear
+		// the single-flight guard first (always, even on error or a stale
+		// result) so the next tick can dispatch again.
+		m.previewCaptureInFlight = false
+		if msg.err != nil {
+			return m, m.handleError(msg.err)
+		}
+		// Drop the capture if the selection moved on while it was in flight —
+		// painting it now would show one instance's pane under another's title.
+		selected := m.list.GetSelectedInstance()
+		if selected != nil && selected.GetID() == msg.instanceID {
+			m.tabbedWindow.SetPreviewContent(selected, msg.content)
+		}
+		return m, nil
 	case keyupMsg:
 		m.menu.ClearKeydown()
 		return m, nil
@@ -940,8 +966,17 @@ func (m *home) handleInsertState(msg tea.KeyMsg) (tea.Model, tea.Cmd) {
 	return m, nil
 }
 
-// instanceChanged updates the preview pane, menu, and diff pane based on the selected instance. It returns an error
-// Cmd if there was any error.
+// instanceChanged updates the preview pane, menu, and diff pane based on the
+// selected instance. The diff pane reads cached stats and the terminal pane
+// runs a LOCAL tmux session (even for a remote instance), so both are cheap and
+// stay synchronous. The preview pane, however, captures the instance's OWN tmux
+// pane — for a remote (ssh) instance that is a network round-trip. Running it
+// here on the Bubble Tea update thread froze the entire TUI (no keys, no
+// redraw) until it returned, and re-froze on every 100ms preview tick. So the
+// cheap preview state (fallback for nil/loading/paused, scroll-mode) is applied
+// now and, when a live capture is actually needed, it is fetched in a goroutine
+// and applied later via previewContentMsg. Returns a Cmd carrying that capture
+// plus any error Cmd.
 func (m *home) instanceChanged() tea.Cmd {
 	// selected may be nil
 	selected := m.list.GetSelectedInstance()
@@ -951,14 +986,36 @@ func (m *home) instanceChanged() tea.Cmd {
 	// Update menu with current instance
 	m.menu.SetInstance(selected)
 
-	// If there's no selected instance, we don't need to update the preview.
-	if err := m.tabbedWindow.UpdatePreview(selected); err != nil {
-		return m.handleError(err)
-	}
+	var cmds []tea.Cmd
 	if err := m.tabbedWindow.UpdateTerminal(selected); err != nil {
-		return m.handleError(err)
+		cmds = append(cmds, m.handleError(err))
 	}
-	return nil
+
+	// PreparePreview does the synchronous, non-blocking preview work and reports
+	// whether a live pane capture is still needed. The single-flight guard keeps
+	// a capture slower than the 100ms tick from spawning overlapping goroutines;
+	// it is cleared when the previewContentMsg lands.
+	if m.tabbedWindow.PreparePreview(selected) && !m.previewCaptureInFlight {
+		m.previewCaptureInFlight = true
+		id := selected.GetID()
+		inst := selected
+		cmds = append(cmds, func() tea.Msg {
+			content, err := inst.Preview()
+			return previewContentMsg{instanceID: id, content: content, err: err}
+		})
+	}
+
+	return tea.Batch(cmds...)
+}
+
+// previewContentMsg carries a preview pane capture performed off the Bubble Tea
+// update thread (see instanceChanged). instanceID pins the capture to the
+// instance it was taken for, so a capture that only finishes after the
+// selection changed is dropped rather than painted into the wrong pane.
+type previewContentMsg struct {
+	instanceID string
+	content    string
+	err        error
 }
 
 type keyupMsg struct{}
