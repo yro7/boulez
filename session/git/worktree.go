@@ -40,10 +40,12 @@ type GitWorktree struct {
 	// swap in a remote FS; defaults to the local FS in the public constructors.
 	fs fs.FS
 	// worktreeDir is the directory under which this worktree lives. Owned by
-	// the Host (LocalHost: ~/.boulez/worktrees; SSHHost: ~/.boulez/worktrees literal,
-	// expanded by the remote shell). Stored on the struct so Setup's MkdirAll
-	// targets the right host's dir without re-deriving it from the local
-	// config (which would be wrong for a remote worktree).
+	// the Host (LocalHost: ~/.boulez/worktrees; SSHHost: absolute
+	// <remote-$HOME>/.boulez/worktrees). Always ABSOLUTE on both transports —
+	// a ~-relative literal would reach git/fs unexpanded (single-quoted argv
+	// suppresses tilde expansion; git never expands ~). Stored on the struct
+	// so Setup's MkdirAll targets the right host's dir without re-deriving it
+	// from the local config (which would be wrong for a remote worktree).
 	worktreeDir string
 }
 
@@ -78,8 +80,13 @@ func NewGitWorktreeFromStorageWithDeps(repoPath string, worktreePath string, ses
 
 // resolveWorktreePaths resolves the repo root and generates a unique worktree
 // path under the given worktreeDir. worktreeDir is provided by the Host
-// (LocalHost: local ~/.boulez/worktrees; SSHHost: ~-relative literal), so this
-// function is transport-agnostic — it never reads the local config.
+// (LocalHost: local ~/.boulez/worktrees; SSHHost: absolute <remote-$HOME>/.boulez/worktrees),
+// so this function is transport-agnostic — it never reads the local config.
+// worktreeDir is always an ABSOLUTE path on both transports: a ~-relative
+// literal would reach git unexpanded (single-quoted argv suppresses tilde
+// expansion; git never expands ~), producing a literal `~` dir inside the
+// repo and an unusable stored worktree path (the remote "not a git
+// repository" bug). SSHHost.WorktreeDir resolves $HOME remotely to avoid that.
 func resolveWorktreePaths(repoPath string, branchName string, cmdExec cmd.Executor, worktreeDir string) (resolvedRepo string, worktreePath string, err error) {
 	// repoPath is already transport-resolved by the caller (Host.ResolveRepoPath):
 	// absolute for LocalHost, passthrough for SSHHost. Do NOT call filepath.Abs
