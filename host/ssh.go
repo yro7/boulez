@@ -119,7 +119,8 @@ func (h SSHHost) WorktreeDir() (string, error) {
 // "$HOME" as a literal. Swappable (package var) so tests can stub the network
 // hop and assert WorktreeDir's wiring without launching ssh.
 var remoteHome = func(alias, socket string) (string, error) {
-	args := append([]string{}, sshControlArgs(socket)...)
+	args := append([]string{}, sshHardenArgs()...)
+	args = append(args, sshControlArgs(socket)...)
 	args = append(args, alias, `printf %s "$HOME"`)
 	out, err := exec.Command(sshBin, args...).Output()
 	if err != nil {
@@ -201,7 +202,8 @@ func (e sshExecutor) command(c *exec.Cmd) *exec.Cmd {
 // (-o ControlPath=<socket>) make the command ride the ControlMaster when one
 // is up; when socket is "" they are omitted (plain one-shot ssh).
 func (e sshExecutor) wrap(origArgs []string) []string {
-	args := append([]string{sshBin}, sshControlArgs(e.socket)...)
+	args := append([]string{sshBin}, sshHardenArgs()...)
+	args = append(args, sshControlArgs(e.socket)...)
 	args = append(args, e.alias, joinShellQuoted(origArgs))
 	return args
 }
@@ -249,7 +251,8 @@ type sshFS struct {
 // re-prepend sshBin here (that was the double-"ssh" bug; the leading element
 // is the binary, the rest is argv).
 func (f sshFS) command(script string) *exec.Cmd {
-	args := append([]string{}, sshControlArgs(f.socket)...)
+	args := append([]string{}, sshHardenArgs()...)
+	args = append(args, sshControlArgs(f.socket)...)
 	args = append(args, f.alias, script)
 	return exec.Command(sshBin, args...)
 }

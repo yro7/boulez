@@ -151,12 +151,12 @@ func (m sshMaster) Ensure() error {
 		return fmt.Errorf("ssh master mkdir %s: %w", filepath.Dir(m.socket), err)
 	}
 	// -fN backgrounds after auth (no remote command); -M master; -S socket;
-	// ControlPersist=yes keeps it alive after the establishing process exits;
-	// ConnectTimeout bounds auth so an unreachable host fails fast (no hang).
-	_, err := m.runner.Run("-fN", "-M", "-S", m.socket,
-		"-o", "ControlPersist=yes",
-		"-o", "ConnectTimeout=10",
-		m.alias)
+	// ControlPersist=yes keeps it alive after the establishing process exits.
+	// sshHardenArgs (BatchMode + ConnectTimeout) bounds auth so an unreachable
+	// or prompting host fails fast instead of hanging (no TTY to prompt on).
+	args := append([]string{"-fN", "-M", "-S", m.socket, "-o", "ControlPersist=yes"}, sshHardenArgs()...)
+	args = append(args, m.alias)
+	_, err := m.runner.Run(args...)
 	if err != nil {
 		return fmt.Errorf("ssh master ensure %s: %w", m.alias, err)
 	}
@@ -224,4 +224,32 @@ func sshControlArgs(socket string) []string {
 		return nil
 	}
 	return []string{"-o", "ControlPath=" + socket}
+}
+
+// sshConnectTimeoutSecs bounds every ssh connect the daemon makes. Kept short:
+// a remote-host probe (has-session, git, $HOME) must fail fast so it never
+// stalls the daemon boot or a poll tick.
+const sshConnectTimeoutSecs = 10
+
+// sshHardenArgs returns the ssh options that make a non-interactive ssh fail
+// fast instead of hanging. This is the fix for the daemon-wedge bug: a remote
+// instance's liveness probe (`ssh <alias> tmux has-session`) ran during daemon
+// boot; with no BatchMode/ConnectTimeout, an unreachable or prompting host hung
+// that ssh — and thus the whole daemon — forever, before it could bind the
+// control socket, wedging every client and every relaunch.
+//
+//   - BatchMode=yes disables ALL interactive prompts (password, passphrase,
+//     host-key confirmation). The daemon has no TTY to answer them, so a prompt
+//     would block indefinitely; BatchMode turns it into an immediate error.
+//   - ConnectTimeout bounds the TCP+auth handshake so an unreachable host fails
+//     in seconds instead of the OS default (minutes, effectively a hang).
+//
+// Applied to every non-interactive slave (executor/FS/$HOME) and the master.
+// NOT applied to the interactive PTY attach (sshPtyFactory), which is
+// user-driven and legitimately wants a terminal.
+func sshHardenArgs() []string {
+	return []string{
+		"-o", "BatchMode=yes",
+		"-o", fmt.Sprintf("ConnectTimeout=%d", sshConnectTimeoutSecs),
+	}
 }
