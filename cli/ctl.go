@@ -33,6 +33,7 @@ The daemon (kernel) must be running. If it isn't, ctl auto-launches it.
 Examples:
   boulez ctl list_instances
   boulez ctl spawn_worker --repo /path/to/repo --prompt "fix the bug" --program bash
+  boulez ctl spawn_worker --repo /root/proj --host dev-machine --program pi --prompt "task"
   boulez ctl get_instance --id <uuid>
   boulez ctl merge --target-repo /path --target-branch integration --source feat-a,feat-b
   boulez ctl land --target-repo /path --target-branch main --source feat-x
@@ -210,7 +211,7 @@ func NewCtlListCmd() *cobra.Command {
 }
 
 func NewCtlSpawnCmd() *cobra.Command {
-	var repo, branch, prompt, program, title, kind string
+	var repo, branch, prompt, program, title, kind, hostFlag string
 	var branchExisting bool
 	cmd := &cobra.Command{
 		Use:   "spawn_worker",
@@ -240,6 +241,13 @@ func NewCtlSpawnCmd() *cobra.Command {
 			if kind != "" {
 				params["kind"] = kindWire(kind)
 			}
+			// Host carries the execution environment: an ssh alias, or
+			// empty/"local" for the local machine. The daemon resolves it via
+			// host.Lookup on the wire (kernel.SpawnParams.Host), so a non-empty
+			// value runs the instance over ssh. Omitting it keeps the local default.
+			if hostFlag != "" {
+				params["host"] = hostFlag
+			}
 			return rawCtl(kernel.Request{Method: "spawn_worker", Params: mustJSON(params)})
 		},
 	}
@@ -250,6 +258,7 @@ func NewCtlSpawnCmd() *cobra.Command {
 	cmd.Flags().StringVar(&program, "program", "", "agent command (default: claude)")
 	cmd.Flags().StringVar(&title, "title", "", "instance title (default: auto-derived)")
 	cmd.Flags().StringVar(&kind, "kind", "worker", "instance kind (worker|orchestrator)")
+	cmd.Flags().StringVar(&hostFlag, "host", "", "execution host: an ssh alias, or empty/local for the local machine")
 	return cmd
 }
 
