@@ -3,6 +3,7 @@ package daemon
 import (
 	"fmt"
 	"github.com/yro7/boulez/config"
+	"github.com/yro7/boulez/host"
 	"github.com/yro7/boulez/kernel"
 	"github.com/yro7/boulez/log"
 	"github.com/yro7/boulez/program"
@@ -166,6 +167,12 @@ func RunDaemon(cfg *config.Config) error {
 	close(stopCh)
 	wg.Wait()
 
+	// Tear down every live SSH ControlMaster so they don't outlive the daemon.
+	// Each Stop is best-effort (a missing master is not an error). Without this,
+	// masters started by instance Starts would linger as orphan ssh processes
+	// holding the alias's LocalForwards bound.
+	host.StopAllMasters()
+
 	// Note: the daemon no longer saves instances on shutdown. The kernel is
 	// the single writer and persists every mutation as it happens (autosave).
 	// A shutdown save here would race the kernel and risk clobbering state it
@@ -263,9 +270,19 @@ func StopDaemon() error {
 		return fmt.Errorf("failed to find daemon process: %w", err)
 	}
 
-	if err := proc.Kill(); err != nil {
-		return fmt.Errorf("failed to stop daemon process: %w", err)
+	// Stop the daemon GRACEFULLY: SIGTERM lets RunDaemon's signal handler run
+	// its shutdown path (close goroutines, and crucially host.StopAllMasters so
+	// SSH ControlMasters don't outlive the daemon). SIGKILL (proc.Kill) would
+	// bypass that handler entirely, leaking masters and the control socket.
+	// If the process doesn't exit within a few seconds (wedged), escalate to
+	// SIGKILL so `daemon stop` still reliably terminates it.
+	if err := proc.Signal(syscall.SIGTERM); err != nil {
+		// Fall back to a hard kill if signaling failed (e.g. permission).
+		if err := proc.Kill(); err != nil {
+			return fmt.Errorf("failed to stop daemon process: %w", err)
+		}
 	}
+	waitForProcessExit(proc, 5*time.Second)
 
 	// Clean up the PID file. The flock inside RunDaemon is released
 	// automatically when the killed process exits (OS-level), so we do NOT
@@ -398,6 +415,20 @@ func acquireDaemonLock(path string) (release func(), err error) {
 		_ = syscall.Flock(int(f.Fd()), syscall.LOCK_UN)
 		_ = f.Close()
 	}, nil
+}
+
+// waitForProcessExit blocks until proc is gone or timeout elapses, after
+// which the caller escalates (e.g. SIGKILL). Used by StopDaemon so a
+// graceful SIGTERM gets a bounded window to run shutdown (StopAllMasters,
+// socket close) before the caller gives up on it.
+func waitForProcessExit(proc *os.Process, timeout time.Duration) {
+	deadline := time.Now().Add(timeout)
+	for time.Now().Before(deadline) {
+		if proc.Signal(syscall.Signal(0)) != nil {
+			return // process is gone
+		}
+		time.Sleep(50 * time.Millisecond)
+	}
 }
 
 // parsePID parses a decimal PID from a string (the lock/pid file contents).
