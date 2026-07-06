@@ -18,7 +18,7 @@ func TestFormatDryRunSummary(t *testing.T) {
 	reg := repo.NewRegistryAt(filepath.Join(t.TempDir(), "repos.json"))
 
 	known := "/Users/u/projets/known"
-	require.NoError(t, reg.Add(known))
+	require.NoError(t, reg.Add(known, "local"))
 
 	found := []ideimport.FoundRepo{
 		{Path: known, IDE: "Cursor"},

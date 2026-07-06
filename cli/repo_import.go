@@ -2,6 +2,7 @@ package cli
 
 import (
 	"fmt"
+	"github.com/yro7/boulez/host"
 	"github.com/yro7/boulez/ideimport"
 	"github.com/yro7/boulez/log"
 	"github.com/yro7/boulez/repo"
@@ -81,8 +82,8 @@ func runRepoImport(cmd *cobra.Command, args []string) error {
 	// D4: write path emits only the one-line summary.
 	newCount, knownCount := 0, 0
 	for _, f := range found {
-		wasNew := !reg.Contains(f.Path)
-		if err := reg.Add(f.Path); err != nil {
+		wasNew := !reg.Contains(f.Path, host.LocalAlias)
+		if err := reg.Add(f.Path, host.LocalAlias); err != nil {
 			return err
 		}
 		if wasNew {
@@ -103,7 +104,7 @@ func formatDryRunSummary(found []ideimport.FoundRepo, reg *repo.Registry) string
 	var b strings.Builder
 	newCount, knownCount := 0, 0
 	for _, f := range found {
-		if reg.Contains(f.Path) {
+		if reg.Contains(f.Path, host.LocalAlias) {
 			knownCount++
 		} else {
 			newCount++
