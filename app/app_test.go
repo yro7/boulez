@@ -624,11 +624,11 @@ func TestRepoSelectFreePathValidAddsToRegistryAndCreatesInstance(t *testing.T) {
 	assert.Equal(t, abs, instances[0].Path)
 
 	// The free path was registered for next time.
-	assert.True(t, h.repoRegistry.Contains(repoPath))
+	assert.True(t, h.repoRegistry.Contains(repoPath, "local"))
 
 	// Reload the registry from disk to confirm persistence.
 	reloaded := repo.NewRegistryAt(h.repoRegistry.Path())
-	paths, err := reloaded.List()
+	paths, err := reloaded.ListByHost("local")
 	require.NoError(t, err)
 	assert.Contains(t, paths, abs)
 }
@@ -652,14 +652,14 @@ func TestRepoSelectInvalidPathShowsErrorAndCreatesNoInstance(t *testing.T) {
 	// An error was surfaced.
 	assert.True(t, h.errBox.HasError())
 	// Path was not registered.
-	assert.False(t, h.repoRegistry.Contains(bad))
+	assert.False(t, h.repoRegistry.Contains(bad, "local"))
 }
 
 func TestRepoSelectKnownRepoCreatesInstanceWithoutMutatingRegistry(t *testing.T) {
 	h := newRepoSelectHome(t)
 	repoPath := t.TempDir()
 	makeTestRepo(t, repoPath)
-	require.NoError(t, h.repoRegistry.Add(repoPath))
+	require.NoError(t, h.repoRegistry.Add(repoPath, "local"))
 
 	h.openRepoSelector(false)
 	require.Equal(t, stateRepoSelect, h.state)
@@ -675,7 +675,7 @@ func TestRepoSelectKnownRepoCreatesInstanceWithoutMutatingRegistry(t *testing.T)
 	assert.Equal(t, abs, instances[0].Path)
 
 	// Selecting a known repo must not add a duplicate to the registry.
-	paths, err := h.repoRegistry.List()
+	paths, err := h.repoRegistry.ListByHost("local")
 	require.NoError(t, err)
 	assert.Len(t, paths, 1)
 }
@@ -757,7 +757,7 @@ func TestHostSelectSkippedWhenRegistryEmpty(t *testing.T) {
 	h := newHostSelectHome(t)
 	repoPath := t.TempDir()
 	makeTestRepo(t, repoPath)
-	require.NoError(t, h.repoRegistry.Add(repoPath))
+	require.NoError(t, h.repoRegistry.Add(repoPath, "local"))
 
 	cmd := h.openHostSelector(false)
 	_ = cmd
@@ -779,7 +779,7 @@ func TestHostSelectSkippedWhenSingleAlias(t *testing.T) {
 	h := newHostSelectHome(t)
 	repoPath := t.TempDir()
 	makeTestRepo(t, repoPath)
-	require.NoError(t, h.repoRegistry.Add(repoPath))
+	require.NoError(t, h.repoRegistry.Add(repoPath, "local"))
 	require.NoError(t, h.hostRegistry.Add("dev-box"))
 
 	h.openHostSelector(false)
