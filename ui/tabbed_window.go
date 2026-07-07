@@ -103,12 +103,38 @@ func (w *TabbedWindow) Toggle() {
 	w.activeTab = (w.activeTab + 1) % len(w.tabs)
 }
 
-// UpdatePreview updates the content of the preview pane. instance may be nil.
-func (w *TabbedWindow) UpdatePreview(instance *session.Instance) error {
+// PreparePreview runs the preview pane's cheap, synchronous state update
+// (fallback text for nil/loading/paused, scroll-mode) and reports whether a
+// live pane capture is still needed. It returns false — nothing more to do —
+// when the Preview tab isn't active, so the caller skips the off-thread capture
+// entirely. instance may be nil.
+func (w *TabbedWindow) PreparePreview(instance *session.Instance) bool {
 	if w.activeTab != PreviewTab {
-		return nil
+		return false
 	}
-	return w.preview.UpdateContent(instance)
+	return w.preview.PrepareContent(instance)
+}
+
+// SetPreviewContent applies preview content captured off the Bubble Tea update
+// thread (see app.instanceChanged). No-op unless the Preview tab is active.
+func (w *TabbedWindow) SetPreviewContent(instance *session.Instance, content string) {
+	if w.activeTab != PreviewTab {
+		return
+	}
+	w.preview.SetLiveContent(instance, content)
+}
+
+// SetPreviewError applies a capture error to the preview pane as a fallback
+// state (see app.instanceChanged's error path). No-op unless the Preview tab
+// is active. The error is surfaced IN the pane rather than the error box so a
+// Running-but-unreachable instance does not stay stuck on a stale "Setting up
+// workspace..." fallback, and so the per-tick capture error does not spam the
+// error box every 100ms.
+func (w *TabbedWindow) SetPreviewError(instance *session.Instance, err error) {
+	if w.activeTab != PreviewTab {
+		return
+	}
+	w.preview.SetLiveError(instance, err)
 }
 
 func (w *TabbedWindow) UpdateDiff(instance *session.Instance) {
@@ -184,9 +210,11 @@ func (w *TabbedWindow) GetActiveTab() int {
 	return w.activeTab
 }
 
-// AttachTerminal attaches to the terminal tmux session
-func (w *TabbedWindow) AttachTerminal() (chan struct{}, error) {
-	return w.terminal.Attach()
+// TerminalSessionName returns the sanitized tmux session name for the terminal
+// tab's current instance session (local tmux), or "" if none. The app builds a
+// local attach command from it for tea.ExecProcess.
+func (w *TabbedWindow) TerminalSessionName() string {
+	return w.terminal.SessionName()
 }
 
 // CleanupTerminal closes the terminal session

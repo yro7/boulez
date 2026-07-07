@@ -79,8 +79,8 @@ type home struct {
 
 	// -- Storage and Configuration --
 
-	program string
-	autoYes bool
+	agentProgram string // the default agent binary name (e.g. "claude"), from the --program flag
+	autoYes      bool
 
 	// appConfig stores persistent application configuration
 	appConfig *config.Config
@@ -200,6 +200,24 @@ type home struct {
 	// reconcileFleet to IDs no longer in the kernel's snapshot.
 	workingStreak map[string]int
 
+	// previewCaptureInFlight is the single-flight guard for the async preview
+	// capture (see instanceChanged). The preview pane captures the instance's
+	// own tmux pane, which for a remote (ssh) instance is a network round-trip;
+	// it is fetched in a goroutine and applied via previewContentMsg so it never
+	// blocks the Bubble Tea update thread. previewTickMsg re-arms every 100ms
+	// regardless of whether the previous capture returned, so without this guard
+	// a capture slower than the tick (the remote case) would pile up overlapping
+	// goroutines. Set true when a capture is dispatched, cleared on
+	// previewContentMsg.
+	previewCaptureInFlight bool
+
+	// previewErrEvery throttles the log line for a failed preview capture. A
+	// remote instance whose host is down fails every ~100ms tick; without a
+	// throttle the log would fill with one identical line per tick. The error
+	// is already surfaced in the preview pane (SetPreviewError), so the log is
+	// only for post-mortem debugging — every 30s is plenty.
+	previewErrEvery *log.Every
+
 	// fleet is the TUI's seam over the daemon's control socket (C3.1). The
 	// TUI is a pure client of the kernel: it owns the VIEW (a read-only cache
 	// of the fleet), not the TRUTH. Every fleet mutation goes through this
@@ -233,13 +251,14 @@ func newHome(ctx context.Context, program string, autoYes bool) *home {
 		hostRegistry:    hostRegistry,
 		prefs:           prefStore,
 		presetStore:     presetStore,
-		program:         program,
+		agentProgram:   program,
 		autoYes:         autoYes,
 		state:           stateDefault,
 		appState:        appState,
 		pendingDraftIDs: make(map[string]struct{}),
 		landInFlight:    make(map[string]struct{}),
 		workingStreak:   make(map[string]int),
+		previewErrEvery: log.NewEvery(30 * time.Second),
 	}
 	h.list = ui.NewList(&h.spinner, autoYes)
 
@@ -323,6 +342,15 @@ func (m *home) Update(msg tea.Msg) (tea.Model, tea.Cmd) {
 	switch msg := msg.(type) {
 	case hideErrMsg:
 		m.errBox.Clear()
+	case attachFinishedMsg:
+		// A tea.ExecProcess attach (Preview tab) has returned: the Bubbletea
+		// terminal has been restored. Reset state and refresh the preview so the
+		// pane reflects whatever the agent produced while attached.
+		m.state = stateDefault
+		return m, tea.Sequence(
+			tea.WindowSize(),
+			m.instanceChanged(),
+		)
 	case previewTickMsg:
 		cmd := m.instanceChanged()
 		return m, tea.Batch(
@@ -332,6 +360,37 @@ func (m *home) Update(msg tea.Msg) (tea.Model, tea.Cmd) {
 				return previewTickMsg{}
 			},
 		)
+	case previewContentMsg:
+		// A preview capture dispatched by instanceChanged has returned. Clear
+		// the single-flight guard first (always, even on error or a stale
+		// result) so the next tick can dispatch again.
+		m.previewCaptureInFlight = false
+		selected := m.list.GetSelectedInstance()
+		if msg.err != nil {
+			// Surface the capture error IN the pane rather than the error
+			// box: a failed `ssh <alias> tmux capture-pane` is a per-tick
+			// event for a downed remote host, so handleError's 3s error box
+			// would both flash every tick and spam the log. SetPreviewError
+			// replaces any stale "Setting up workspace..." fallback left
+			// over from the Loading boot phase with a connectivity message,
+			// so a Running-but-unreachable instance no longer looks stuck
+			// booting. The capture is retried by the next previewTick (the
+			// single-flight guard is cleared above), so the pane self-heals
+			// when the host comes back.
+			if selected != nil && selected.GetID() == msg.instanceID {
+				m.tabbedWindow.SetPreviewError(selected, msg.err)
+			}
+			if m.previewErrEvery.ShouldLog() {
+				log.WarningLog.Printf("preview capture failed for %s: %v", msg.instanceID, msg.err)
+			}
+			return m, nil
+		}
+		// Drop the capture if the selection moved on while it was in flight —
+		// painting it now would show one instance's pane under another's title.
+		if selected != nil && selected.GetID() == msg.instanceID {
+			m.tabbedWindow.SetPreviewContent(selected, msg.content)
+		}
+		return m, nil
 	case keyupMsg:
 		m.menu.ClearKeydown()
 		return m, nil
@@ -800,20 +859,27 @@ func (m *home) handleKeyPress(msg tea.KeyMsg) (mod tea.Model, cmd tea.Cmd) {
 			return m, nil
 		}
 
-		// Show help screen before pausing
-		m.showHelpScreen(helpTypeInstanceCheckout{}, func() {
+		// Show help screen before pausing. The callback runs Pause as a side-
+		// effect and returns a follow-up Cmd (instanceChanged + refresh); with
+		// the help screen already seen it fires immediately, so we must propagate
+		// its returned Cmd rather than discard it.
+		mod, helpCmd := m.showHelpScreen(helpTypeInstanceCheckout{}, func() tea.Cmd {
 			// Route pause through the kernel (C3.4): the kernel owns the tmux
 			// session + worktree lifecycle, so the pause (and the persistence)
 			// takes effect on the authoritative copy. The TUI's view is
 			// reconciled by the post-mutation fleet refresh issued below.
+			var cmds []tea.Cmd
 			if err := m.resolveFleet().Pause(selected.GetID()); err != nil {
-				m.handleError(err)
+				cmds = append(cmds, m.handleError(err))
 			}
 			m.tabbedWindow.CleanupTerminalForInstance(selected.Title)
-			m.instanceChanged()
-			_ = m.refreshFleetFromKernel()
+			if err := m.refreshFleetFromKernel(); err != nil {
+				cmds = append(cmds, m.handleError(err))
+			}
+			cmds = append(cmds, m.instanceChanged())
+			return tea.Batch(cmds...)
 		})
-		return m, tea.Batch(m.instanceChanged(), m.refreshFleetAfterMutation())
+		return mod, tea.Batch(helpCmd, m.instanceChanged(), m.refreshFleetAfterMutation())
 	case keys.KeyMoveUp:
 		// Reordering is view-only now (C3.5): the kernel's ordering is insertion
 		// order and is not propagated back. Persisting a custom order across
@@ -858,31 +924,53 @@ func (m *home) handleKeyPress(msg tea.KeyMsg) (mod tea.Model, cmd tea.Cmd) {
 		if selected == nil || selected.Paused() || selected.Status == session.Loading || !selected.TmuxAlive() {
 			return m, nil
 		}
-		// Terminal tab: attach to terminal session
+		// Terminal tab: attach to terminal session. Commit 4 migrates this to
+		// tea.ExecProcess too; for now the callback returns a tea.Cmd (required by
+		// the new overlay contract) but the attach itself still runs the manual
+		// PTY path via AttachTerminal. This is a local tmux session (fast,
+		// non-SSH), so it does not exhibit the SSH freeze.
 		if m.tabbedWindow.IsInTerminalTab() {
-			m.showHelpScreen(helpTypeInstanceAttach{}, func() {
-				ch, err := m.tabbedWindow.AttachTerminal()
-				if err != nil {
-					m.handleError(err)
-					return
-				}
-				<-ch
-				m.state = stateDefault
-			})
-			return m, nil
-		}
-		// Show help screen before attaching
-		m.showHelpScreen(helpTypeInstanceAttach{}, func() {
-			ch, err := m.list.Attach()
-			if err != nil {
-				m.handleError(err)
-				return
+			// Terminal tab: attach to the LOCAL terminal tmux session via
+			// tea.ExecProcess. The terminal tab runs a local tmux session even for
+			// a remote instance, so the attach is always local (no SSH, no freeze).
+			name := m.tabbedWindow.TerminalSessionName()
+			if name == "" {
+				return m, m.handleError(fmt.Errorf("no terminal session to attach to"))
 			}
-			<-ch
-			m.state = stateDefault
-			m.instanceChanged()
+			mod, cmd := m.showHelpScreen(helpTypeInstanceAttach{}, func() tea.Cmd {
+				return tea.ExecProcess(
+					host.Local.AttachCmd(name),
+					func(err error) tea.Msg {
+						if err != nil {
+							log.InfoLog.Printf("terminal attach exited with error: %v", err)
+						}
+						return attachFinishedMsg{}
+					},
+				)
+			})
+			return mod, cmd
+		}
+		// Preview tab: attach to the instance's tmux session via tea.ExecProcess,
+		// which releases the Bubbletea terminal (alt-screen, raw mode, mouse) for
+		// the command's duration and restores it on exit. The command is the
+		// host's AttachCmd (local: tmux attach-session; ssh: ssh -t ... tmux
+		// attach-session). This replaces the manual PTY + io.Copy + stdin
+		// scavenger that froze the TUI over SSH (two readers on os.Stdin, no
+		// terminal release). On exit, attachFinishedMsg resets state and refreshes
+		// the preview.
+		inst := selected
+		mod, cmd := m.showHelpScreen(helpTypeInstanceAttach{}, func() tea.Cmd {
+			return tea.ExecProcess(
+				inst.Host().AttachCmd(inst.SessionName()),
+				func(err error) tea.Msg {
+					if err != nil {
+						log.InfoLog.Printf("attach exited with error: %v", err)
+					}
+					return attachFinishedMsg{}
+				},
+			)
 		})
-		return m, nil
+		return mod, cmd
 	default:
 		return m, nil
 	}
@@ -940,8 +1028,17 @@ func (m *home) handleInsertState(msg tea.KeyMsg) (tea.Model, tea.Cmd) {
 	return m, nil
 }
 
-// instanceChanged updates the preview pane, menu, and diff pane based on the selected instance. It returns an error
-// Cmd if there was any error.
+// instanceChanged updates the preview pane, menu, and diff pane based on the
+// selected instance. The diff pane reads cached stats and the terminal pane
+// runs a LOCAL tmux session (even for a remote instance), so both are cheap and
+// stay synchronous. The preview pane, however, captures the instance's OWN tmux
+// pane — for a remote (ssh) instance that is a network round-trip. Running it
+// here on the Bubble Tea update thread froze the entire TUI (no keys, no
+// redraw) until it returned, and re-froze on every 100ms preview tick. So the
+// cheap preview state (fallback for nil/loading/paused, scroll-mode) is applied
+// now and, when a live capture is actually needed, it is fetched in a goroutine
+// and applied later via previewContentMsg. Returns a Cmd carrying that capture
+// plus any error Cmd.
 func (m *home) instanceChanged() tea.Cmd {
 	// selected may be nil
 	selected := m.list.GetSelectedInstance()
@@ -951,15 +1048,43 @@ func (m *home) instanceChanged() tea.Cmd {
 	// Update menu with current instance
 	m.menu.SetInstance(selected)
 
-	// If there's no selected instance, we don't need to update the preview.
-	if err := m.tabbedWindow.UpdatePreview(selected); err != nil {
-		return m.handleError(err)
-	}
+	var cmds []tea.Cmd
 	if err := m.tabbedWindow.UpdateTerminal(selected); err != nil {
-		return m.handleError(err)
+		cmds = append(cmds, m.handleError(err))
 	}
-	return nil
+
+	// PreparePreview does the synchronous, non-blocking preview work and reports
+	// whether a live pane capture is still needed. The single-flight guard keeps
+	// a capture slower than the 100ms tick from spawning overlapping goroutines;
+	// it is cleared when the previewContentMsg lands.
+	if m.tabbedWindow.PreparePreview(selected) && !m.previewCaptureInFlight {
+		m.previewCaptureInFlight = true
+		id := selected.GetID()
+		inst := selected
+		cmds = append(cmds, func() tea.Msg {
+			content, err := inst.Preview()
+			return previewContentMsg{instanceID: id, content: content, err: err}
+		})
+	}
+
+	return tea.Batch(cmds...)
 }
+
+// previewContentMsg carries a preview pane capture performed off the Bubble Tea
+// update thread (see instanceChanged). instanceID pins the capture to the
+// instance it was taken for, so a capture that only finishes after the
+// selection changed is dropped rather than painted into the wrong pane.
+type previewContentMsg struct {
+	instanceID string
+	content    string
+	err        error
+}
+
+// attachFinishedMsg is delivered by tea.ExecProcess when an interactive attach
+// (Preview tab) exits. The Bubbletea terminal has already been restored by the
+// time this message is processed; the handler resets state and refreshes the
+// preview.
+type attachFinishedMsg struct{}
 
 type keyupMsg struct{}
 
@@ -1344,7 +1469,7 @@ func (m *home) startNewInstance(repoPath string, promptFlow bool) tea.Cmd {
 	instance, err := session.NewInstance(session.InstanceOptions{
 		Title:   "",
 		Path:    repoPath,
-		Program: m.program,
+		Program: m.agentProgram,
 	})
 	if err != nil {
 		return m.handleError(err)
@@ -1402,7 +1527,7 @@ func (m *home) spawnOrchestrator() tea.Cmd {
 	// is removed and the kernel's instance surfaces via the fleet refresh.
 	draft, err := session.NewInstance(session.InstanceOptions{
 		Title:   title,
-		Program: m.program,
+		Program: m.agentProgram,
 		Kind:    session.KindOrchestrator,
 	})
 	if err != nil {
@@ -1419,7 +1544,7 @@ func (m *home) spawnOrchestrator() tea.Cmd {
 		m.instanceChanged(),
 		m.runSpawnCmd(SpawnOptions{
 			Title:   title,
-			Program: m.program,
+			Program: m.agentProgram,
 			Kind:    session.KindOrchestrator,
 		}, draft.GetID(), true /* orchestrator post-spawn injection */),
 	)

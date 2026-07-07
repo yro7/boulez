@@ -150,13 +150,23 @@ func (m sshMaster) Ensure() error {
 	if err := os.MkdirAll(filepath.Dir(m.socket), 0o700); err != nil {
 		return fmt.Errorf("ssh master mkdir %s: %w", filepath.Dir(m.socket), err)
 	}
+	// Self-heal a stale socket file. A master whose underlying connection died
+	// (e.g. a ProxyJump/network blip) can linger under ControlPersist: its
+	// control channel refuses connections (isUpLocked already reported it down)
+	// but its socket file remains on disk. A fresh `ssh -M -S <socket>` would
+	// then fail to bind ("Address already in use") because the path exists.
+	// Removing it is safe here: we hold mastersMu and the master is confirmed
+	// not serving. Best-effort — a remove failure is logged, not fatal.
+	if err := os.Remove(m.socket); err != nil && !os.IsNotExist(err) {
+		log.WarningLog.Printf("ssh master: could not remove stale socket %s: %v", m.socket, err)
+	}
 	// -fN backgrounds after auth (no remote command); -M master; -S socket;
-	// ControlPersist=yes keeps it alive after the establishing process exits;
-	// ConnectTimeout bounds auth so an unreachable host fails fast (no hang).
-	_, err := m.runner.Run("-fN", "-M", "-S", m.socket,
-		"-o", "ControlPersist=yes",
-		"-o", "ConnectTimeout=10",
-		m.alias)
+	// ControlPersist=yes keeps it alive after the establishing process exits.
+	// sshHardenArgs (BatchMode + ConnectTimeout) bounds auth so an unreachable
+	// or prompting host fails fast instead of hanging (no TTY to prompt on).
+	args := append([]string{"-fN", "-M", "-S", m.socket, "-o", "ControlPersist=yes"}, sshHardenArgs()...)
+	args = append(args, m.alias)
+	_, err := m.runner.Run(args...)
 	if err != nil {
 		return fmt.Errorf("ssh master ensure %s: %w", m.alias, err)
 	}
@@ -224,4 +234,44 @@ func sshControlArgs(socket string) []string {
 		return nil
 	}
 	return []string{"-o", "ControlPath=" + socket}
+}
+
+// sshConnectTimeoutSecs bounds every ssh connect the daemon makes. Kept short:
+// a remote-host probe (has-session, git, $HOME) must fail fast so it never
+// stalls the daemon boot or a poll tick.
+const sshConnectTimeoutSecs = 10
+
+// sshHardenArgs returns the ssh options that make boulez's non-interactive ssh
+// traffic well-behaved: fail fast instead of hanging, and never fight the user
+// over their forward ports.
+//
+//   - BatchMode=yes disables ALL interactive prompts (password, passphrase,
+//     host-key confirmation). The daemon has no TTY to answer them, so a prompt
+//     would block indefinitely; BatchMode turns it into an immediate error.
+//     (Fixes the daemon-wedge bug: a remote instance's liveness probe ran during
+//     daemon boot and, with no BatchMode/ConnectTimeout, an unreachable or
+//     prompting host hung that ssh — and thus the whole daemon — forever.)
+//   - ConnectTimeout bounds the TCP+auth handshake so an unreachable host fails
+//     in seconds instead of the OS default (minutes, effectively a hang).
+//   - ClearAllForwardings=yes suppresses every LocalForward/RemoteForward/
+//     DynamicForward the alias's ~/.ssh/config declares. boulez's automated ssh
+//     is a pure command channel (tmux/git/fs) — it needs no forwards. Without
+//     this, a master (or one-shot fallback) re-attempts the alias's forwards on
+//     EVERY connection; when the user's own ssh session (or a lingering master)
+//     already holds those ports, ssh emits `bind ...: Address already in use` /
+//     `Could not request local forwarding` and races that setup against short
+//     tmux poll timeouts — a primary cause of the remote-instance UI freeze.
+//     Clearing them lets boulez's connection coexist peacefully with the user's,
+//     and does not touch ProxyJump. The interactive PTY attach keeps forwards
+//     (see below).
+//
+// Applied to every non-interactive slave (executor/FS/$HOME) and the master.
+// NOT applied to the interactive PTY attach (sshPtyFactory), which is
+// user-driven and legitimately wants a terminal (and may want the forwards).
+func sshHardenArgs() []string {
+	return []string{
+		"-o", "BatchMode=yes",
+		"-o", fmt.Sprintf("ConnectTimeout=%d", sshConnectTimeoutSecs),
+		"-o", "ClearAllForwardings=yes",
+	}
 }

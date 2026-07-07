@@ -79,12 +79,6 @@ func RunDaemon(cfg *config.Config) error {
 	protected, _ := protectedStore.Flat()
 	k := kernel.New(storage, kernel.WithSpawner(kernelSpawner{}), kernel.WithMerger(realMerger{}), kernel.WithProtectedBranches(protected))
 
-	// C4.4: after loading the fleet, demote any instance whose tmux session
-	// is gone (e.g. a daemon restart following a tmux crash) from Running to
-	// Dead, so the user sees a dead instance instead of a ghost "running".
-	// Only a definitive "session absent" from tmux demotes — never a timeout.
-	k.ReconcileLiveness()
-
 	// NOTE: the daemon no longer auto-spawns a global orchestrator. The old
 	// always-on "instance 0" bootstrap (orchestrator.Ensure at startup + a
 	// periodic EnsureLive probe) never worked reliably and is gone. An
@@ -100,12 +94,33 @@ func RunDaemon(cfg *config.Config) error {
 	wg := &sync.WaitGroup{}
 	wg.Add(1)
 	stopCh := make(chan struct{})
+
+	// Bind and serve the control socket FIRST — before any boot work that can
+	// block on a remote host. If Serve fails to bind, that is fatal: a daemon
+	// that cannot serve is useless AND harmful, since it holds the singleton
+	// lock + pid and wedges every client and every relaunch. serveErr signals
+	// the shutdown loop below so the process exits and releases its locks.
+	serveErr := make(chan error, 1)
 	go func() {
 		defer wg.Done()
 		if err := kernel.Serve(k, socketPath); err != nil {
 			log.ErrorLog.Printf("kernel serve failed: %v", err)
+			serveErr <- err
 		}
 	}()
+
+	// C4.4: after the socket is serving, demote any instance whose tmux session
+	// is gone (e.g. a daemon restart following a tmux crash) from Running to
+	// Dead, so the user sees a dead instance instead of a ghost "running". Only
+	// a definitive "session absent" from tmux demotes — never a timeout.
+	//
+	// Run in the BACKGROUND: for a remote instance this shells out to
+	// `ssh <alias> tmux has-session`, which — even bounded by BatchMode +
+	// ConnectTimeout — can take seconds against an unreachable host. It ran
+	// synchronously on the boot path before the socket was bound, so a stalled
+	// remote probe left the daemon alive-but-not-serving and wedged the whole
+	// system. It must never gate the serve loop.
+	go k.ReconcileLiveness()
 
 	pollInterval := time.Duration(cfg.DaemonPollInterval) * time.Millisecond
 	// If we get an error for a session, it's likely that we'll keep getting the error. Log every 30 seconds.
@@ -153,13 +168,22 @@ func RunDaemon(cfg *config.Config) error {
 	// protected set is hot-swapped via SetProtectedBranches).
 	sigChan := make(chan os.Signal, 1)
 	signal.Notify(sigChan, syscall.SIGINT, syscall.SIGTERM, syscall.SIGHUP)
+	var fatalErr error
 	for {
-		sig := <-sigChan
-		if sig == syscall.SIGHUP {
-			reloadProtected(protectedStore, k)
-			continue
+		select {
+		case sig := <-sigChan:
+			if sig == syscall.SIGHUP {
+				reloadProtected(protectedStore, k)
+				continue
+			}
+			log.InfoLog.Printf("received signal %s", sig.String())
+		case err := <-serveErr:
+			// The control socket could not be served. Exit so the singleton
+			// lock and pid release and a fresh daemon can take over — never
+			// linger alive-but-not-serving (that is the wedge we are avoiding).
+			log.ErrorLog.Printf("daemon shutting down: control socket unavailable: %v", err)
+			fatalErr = fmt.Errorf("kernel serve failed: %w", err)
 		}
-		log.InfoLog.Printf("received signal %s", sig.String())
 		break
 	}
 
@@ -178,7 +202,7 @@ func RunDaemon(cfg *config.Config) error {
 	// A shutdown save here would race the kernel and risk clobbering state it
 	// does not know about (the original double-writer bug that orphaned the
 	// orchestrator on every restart).
-	return nil
+	return fatalErr
 }
 
 // LaunchDaemon launches the daemon process. It is best-effort deduplication
