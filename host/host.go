@@ -87,7 +87,7 @@ type Host interface {
 
 // attachTmuxArgv builds the tmux argv that attaches the current terminal to a
 // session while (1) restoring automatic window sizing and (2) binding Ctrl-Q
-// to detach-client for the duration of the attach (then unbinding it). This
+// to detach-client for the duration of the attach (self-cleaning). This
 // restores boulez's Ctrl-Q detach contract after the manual stdin scavenger
 // was removed: tmux owns the keyboard during attach, so the Ctrl-Q → detach
 // mapping must live in tmux's key table, scoped to the attach so it doesn't
@@ -101,32 +101,41 @@ type Host interface {
 //      `manual`. Without resetting it, attaching a full-screen client does not
 //      resize the window — the agent keeps rendering at the pane's small size
 //      and the rest of the terminal shows leftover content (the trailing dots
-//      bug). Restoring `latest` makes the attach resize the window to the
-//      real terminal.
+//      bug). Restoring `latest` makes the attach resize the window to the real
+//      terminal.
 //
-//   2. bind-key -n C-q detach-client
+//   2. bind-key -n C-q "detach-client ; unbind-key -n C-q"
 //      Root-table binding (no prefix). `bind-key` without -n binds in the
-//      prefix table, which would require C-b before C-q — that regressed Ctrl-Q
-//      detach entirely (the agent swallowed the bare C-q). -n puts it in the
-//      root table so tmux intercepts C-q before the pane, matching the old
-//      raw-ASCII-17 scavenger.
+//      prefix table, which would require C-b before C-q — that regressed
+//      Ctrl-Q detach entirely (the agent swallowed the bare C-q). -n puts it
+//      in the root table so tmux intercepts C-q before the pane, matching the
+//      old raw-ASCII-17 scavenger.
+//
+//      The binding is SELF-CLEANING: when C-q is pressed it runs detach-client
+//      (detaches the current client) and then unbind-key -n C-q (removes the
+//      binding). This is required because attach-session does NOT block when
+//      run as part of a tmux command sequence — a trailing `; unbind-key` runs
+//      immediately, removing the binding BEFORE the user can press C-q (the
+//      bug fixed here after the original bind/unbind attempt regressed).
+//      Bundling the unbind INTO the bound command defers it to actual keypress.
+//
+//      The bound command is one argv element ("detach-client ; unbind-key -n
+//      C-q"); tmux parses the embedded `;` as a command separator. For SSH,
+//      shellQuote keeps it a single arg through the remote shell round-trip.
 //
 //   3. attach-session -t <session>
 //
-//   4. unbind-key -n C-q
-//      Runs after detach (whether via Ctrl-Q, `:detach`, or client death)
-//      because tmux executes post-attach commands only after the client
-//      detaches. -n must match the bind's table, otherwise it unbinds from the
-//      prefix table (no-op) and leaves the root binding leaking into the rest
-//      of the user's tmux usage.
+// Note: if the user detaches by other means (closing the terminal, `:detach`)
+//      the binding leaks globally in the tmux server until the next attach
+//      re-binds it (idempotent). A follow-up could unbind via the tea.
+//      ExecProcess exit callback; left out for now since the contract is C-q.
 //
 // Returned argv is the part after `tmux` (LocalHost) or after the remote
 // `tmux` (SSHHost, via sshInteractiveArgs).
 func attachTmuxArgv(sessionName string) []string {
 	return []string{
 		"set-option", "-t", sessionName, "window-size", "latest",
-		";", "bind-key", "-n", "C-q", "detach-client",
+		";", "bind-key", "-n", "C-q", "detach-client ; unbind-key -n C-q",
 		";", "attach-session", "-t", sessionName,
-		";", "unbind-key", "-n", "C-q",
 	}
 }
