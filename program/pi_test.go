@@ -18,6 +18,11 @@ func TestPiAdapter_NameAndMatch(t *testing.T) {
 	assert.False(t, a.Matches("pixi"))
 }
 
+// A helper that builds a JSONL message entry line, so test cases stay readable.
+func piEntry(role, stopReason string) string {
+	return `{"type":"message","message":{"role":"` + role + `","stopReason":"` + stopReason + `"}}`
+}
+
 func TestPiAdapter_Detect(t *testing.T) {
 	cases := []struct {
 		name     string
@@ -26,26 +31,68 @@ func TestPiAdapter_Detect(t *testing.T) {
 		wantKind PromptKind
 	}{
 		{
-			name:     "idle footer with boulez sentinel -> Ready",
-			content:  "0.0%/1.0M (auto)                                        <provider> <model> • high\n" + PiReadySentinel,
+			name:     "assistant stop -> Ready",
+			content:  piEntry("assistant", "stop"),
 			wantStat: StatusReady,
 			wantKind: PromptReady,
 		},
 		{
-			name:     "working footer, no sentinel -> Working (conservative)",
-			content:  "↑7.0k ↓63 0.4%/1.0M (auto)                              <provider> <model> • high",
+			name:     "assistant toolUse -> Working (mid-loop)",
+			content:  piEntry("assistant", "toolUse"),
 			wantStat: StatusWorking,
 			wantKind: PromptNone,
 		},
 		{
-			name:     "idle footer, no sentinel -> Working (conservative)",
-			content:  "0.0%/1.0M (auto)                                        <provider> <model> • high",
+			name:     "assistant length -> Working (hit length limit, likely mid-turn)",
+			content:  piEntry("assistant", "length"),
 			wantStat: StatusWorking,
 			wantKind: PromptNone,
 		},
 		{
-			name:     "not a pi pane",
-			content:  "random claude output here",
+			name:     "assistant error -> Unknown (no auto-action)",
+			content:  piEntry("assistant", "error"),
+			wantStat: StatusUnknown,
+			wantKind: PromptNone,
+		},
+		{
+			name:     "assistant aborted -> Unknown",
+			content:  piEntry("assistant", "aborted"),
+			wantStat: StatusUnknown,
+			wantKind: PromptNone,
+		},
+		{
+			name:     "toolResult trailing -> Working (LLM will resume)",
+			content:  `{"type":"message","message":{"role":"toolResult"}}`,
+			wantStat: StatusWorking,
+			wantKind: PromptNone,
+		},
+		{
+			name:     "user trailing -> Working (prompt just sent)",
+			content:  `{"type":"message","message":{"role":"user","content":"hi"}}`,
+			wantStat: StatusWorking,
+			wantKind: PromptNone,
+		},
+		{
+			name:     "non-message entry (session header) -> Unknown",
+			content:  `{"type":"session","id":"abc","version":3}`,
+			wantStat: StatusUnknown,
+			wantKind: PromptNone,
+		},
+		{
+			name:     "non-message entry (model_change) -> Unknown",
+			content:  `{"type":"model_change","provider":"<provider>","modelId":"glm-5.2"}`,
+			wantStat: StatusUnknown,
+			wantKind: PromptNone,
+		},
+		{
+			name:     "invalid JSON -> Unknown",
+			content:  `not json at all`,
+			wantStat: StatusUnknown,
+			wantKind: PromptNone,
+		},
+		{
+			name:     "empty -> Unknown",
+			content:  ``,
 			wantStat: StatusUnknown,
 			wantKind: PromptNone,
 		},
@@ -64,11 +111,28 @@ func TestPiAdapter_Detect(t *testing.T) {
 	}
 }
 
-func TestPiReadySentinelIsStable(t *testing.T) {
-	// Guard against accidental edits to the sentinel string: it is a shared
-	// contract with the pi-boulez Pi extension. If this test breaks, update both
-	// sides (program/pi.go and extensions/pi-boulez.ts) together.
-	assert.Equal(t, "⟦boulez:ready⟧", PiReadySentinel)
+func TestPiAdapter_ReadyPromptHasNoResolve(t *testing.T) {
+	// The ready prompt is informational only; there is nothing to auto-dismiss.
+	_, p := PiAdapter{}.Detect(piEntry("assistant", "stop"))
+	if assert.NotNil(t, p) {
+		assert.Nil(t, p.Resolve, "pi ready prompt must not auto-resolve")
+	}
+}
+
+func TestPiAdapter_SessionArgs(t *testing.T) {
+	// SessionArgs implements JournalingAdapter: Pi gets --session-dir pointing
+	// at the per-instance directory so the journal observer and Pi agree.
+	args := PiAdapter{}.SessionArgs("/tmp/some-dir")
+	assert.Equal(t, []string{"--session-dir", "/tmp/some-dir"}, args)
+}
+
+func TestPiAdapter_IsJournalingAdapter(t *testing.T) {
+	// Compile-time + runtime guarantee: PiAdapter declares the journal-based
+	// observation capability. TmuxSession checks for this at Start to decide
+	// whether to install a journal observer.
+	var a Adapter = PiAdapter{}
+	_, ok := a.(JournalingAdapter)
+	assert.True(t, ok, "PiAdapter must implement JournalingAdapter")
 }
 
 func TestPiAdapter_Registered(t *testing.T) {

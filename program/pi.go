@@ -1,43 +1,33 @@
 package program
 
-import "strings"
+import (
+	"encoding/json"
+	"strings"
+)
 
 // PiAdapter carries all agent-specific knowledge for the Pi coding agent
-// (https://pi.dev). Pi runs in a tmux pane like the other agents.
+// (https://pi.dev). Pi runs in a tmux pane like the other agents, but its
+// status is NOT read from pane content. Instead, Pi writes its session as an
+// incrementally-appended JSONL file (appendFileSync on every message_end),
+// and Boulez tails that file to detect the agent's state.
 //
-// STATUS DETECTION (current):
-// Pi's footer line is stable across models/thinking levels and identifies
-// the agent unambiguously: it ends with "<provider> <model> • <thinking-level>"
-// (e.g. "<provider> <model> • high") and contains a context-usage percentage
-// like "0.4%/1.0M". We use this signature to confirm Pi is the running agent.
+// STATUS DETECTION (journal-based):
+// Each assistant message entry in the JSONL carries a stopReason field:
+//   - "stop"     → Pi finished its turn and is waiting for input (StatusReady)
+//   - "toolUse"  → Pi is mid-loop, executing tools (StatusWorking)
+//   - "aborted"  → the turn was aborted (StatusUnknown — no auto-action)
+//   - "error"    → the turn errored (StatusUnknown)
+//   - "length"   → the response hit a length limit (StatusWorking — likely mid-turn)
+// A trailing toolResult/user entry means the LLM will resume shortly
+// (StatusWorking). This is deterministic: stopReason:"stop" is written only
+// when Pi truly finishes, so no stability heuristic or sentinel is needed.
 //
-// We currently return StatusWorking whenever Pi is detected. Distinguishing
-// StatusReady (idle, waiting for input) from StatusWorking reliably requires
-// a stable indicator of the "thinking" state; the animated working spinner
-// does not survive tmux capture-pane reliably, so ready/permission detection
-// is intentionally left as a no-op until a stable signature is confirmed.
-//
-// This is deliberately conservative: a wrong "Ready" badge is worse than no
-// badge. The agent-agnostic stability fallback in session/tmux (stableFor)
-// catches the case where the extension is absent: a Pi pane that has been
-// stable for longer than the threshold is presumed idle by the caller, so
-// boulez still shows a Ready badge (just delayed) and the Land button
-// reappears. Pi still gets full lifecycle (worktree, attach, diff, preview)
-// via the agent-agnostic core regardless.
+// The journal content (the last JSONL line) is passed to Detect as `content`.
+// This replaces the former sentinel-based approach (pi-boulez.ts extension +
+// ⟦boulez:ready⟧ sentinel + footer scraping), which was fragile: the animated
+// spinner broke the stability heuristic, the sentinel required a shared
+// contract across two codebases, and the footer regex was model-dependent.
 type PiAdapter struct{}
-
-// PiReadySentinel is the marker string the pi-boulez Pi extension appends to the
-// end of every completed assistant turn. Boulez detects this string in the tmux
-// pane content to know Pi is idle and waiting for input (StatusReady).
-//
-// This is a shared contract between two codebases:
-//   - emitter: the pi-boulez extension (~/cs-multirepo/extensions/pi-boulez.ts) prints
-//     this exact string via sendMessage with display:true after each turn.
-//   - detector: program.PiAdapter.Detect looks for it in the captured pane.
-//
-// Keep them in sync. The string is deliberately distinctive and unlikely to
-// appear in normal output.
-const PiReadySentinel = "⟦boulez:ready⟧"
 
 func (PiAdapter) Name() string { return "pi" }
 
@@ -52,35 +42,56 @@ func (PiAdapter) Matches(program string) bool {
 	return base == "pi"
 }
 
-// piFooterMarker is a stable substring of Pi's footer line. The footer always
-// shows the thinking level after " • " (e.g. " • high", " • off", " • medium").
-// Combined with the context-usage "%" this is a reliable Pi signature.
-func (PiAdapter) Detect(content string) (Status, *Prompt) {
-	if !isPiFooter(content) {
-		return StatusUnknown, nil
-	}
-	// First, check for the Boulez sentinel emitted by the pi-boulez extension (see
-	// pi-boulez.ts). This is the most reliable ready signal: Pi prints it at the
-	// end of each completed assistant turn, so its presence means Pi is idle
-	// and waiting for input.
-	if strings.Contains(content, PiReadySentinel) {
-		return StatusReady, &Prompt{Kind: PromptReady}
-	}
-	// TODO: until the extension is installed, the sentinel won't appear. Once a
-	// stable ready/working signature is identified, return
-	// StatusReady here so the TUI shows the "Ready" badge and the daemon can
-	// react. Until then, stay silent (StatusWorking) to avoid false badges.
-	return StatusWorking, nil
+// piSessionEntry is the JSONL line shape for a Pi message entry. Only the
+// fields needed for status detection are decoded.
+type piSessionEntry struct {
+	Type    string `json:"type"`
+	Message struct {
+		Role       string `json:"role"`
+		StopReason string `json:"stopReason"`
+	} `json:"message"`
 }
 
-// isPiFooter reports whether content shows a Pi footer line. We look for a
-// line containing both a context-usage percentage and the " • " thinking-level
-// separator that Pi always emits.
-func isPiFooter(content string) bool {
-	for _, line := range strings.Split(content, "\n") {
-		if strings.Contains(line, "%/") && strings.Contains(line, " • ") {
-			return true
-		}
+// Detect parses the last JSONL line (a Pi session journal entry) and returns
+// the perceived status. A pure function of `content` → testable without a
+// journal, without a PTY, without tmux. If the content is not valid JSON or
+// not a message entry, returns StatusUnknown (we cannot determine the state).
+func (PiAdapter) Detect(content string) (Status, *Prompt) {
+	var entry piSessionEntry
+	if err := json.Unmarshal([]byte(content), &entry); err != nil {
+		return StatusUnknown, nil
 	}
-	return false
+	if entry.Type != "message" {
+		// Non-message entries (session, model_change, thinking_level_change)
+		// appear between turns. We cannot infer status from them alone.
+		return StatusUnknown, nil
+	}
+
+	switch entry.Message.Role {
+	case "assistant":
+		switch entry.Message.StopReason {
+		case "stop":
+			return StatusReady, &Prompt{Kind: PromptReady}
+		case "toolUse", "length":
+			return StatusWorking, nil
+		default:
+			// "error", "aborted", or empty — cannot act automatically.
+			return StatusUnknown, nil
+		}
+	case "toolResult", "user":
+		// A tool just finished or a prompt was just sent — the LLM will
+		// resume shortly.
+		return StatusWorking, nil
+	default:
+		return StatusUnknown, nil
+	}
+}
+
+// SessionArgs implements JournalingAdapter. Pi supports --session-dir natively
+// (CLI flag, settings, or PI_CODING_AGENT_SESSION_DIR env). We pass it
+// explicitly so the journal observer and Pi agree on the path deterministically.
+// The observer and Pi both point at the same directory; Pi creates a single
+// .jsonl file inside it.
+func (PiAdapter) SessionArgs(sessionDir string) []string {
+	return []string{"--session-dir", sessionDir}
 }

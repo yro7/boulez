@@ -1042,7 +1042,7 @@ func (i *Instance) GetDiffStats() *git.DiffStats {
 // This is agent-agnostic: every TUI agent echoes typed characters into its
 // input area, so "text appeared" / "text disappeared" are universal signals
 // that the input handler accepted the keystrokes. No per-agent boot marker is
-// needed (Pi's boulez:ready sentinel only fires after a turn; Claude has no boot
+// needed (Pi's journal stopReason only fires after a turn; Claude has no boot
 // ready marker at all).
 //
 // The loop is bounded by `promptBootTimeout` (generous: some agents take a
