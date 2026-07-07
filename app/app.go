@@ -1556,8 +1556,8 @@ func (m *home) spawnOrchestrator() tea.Cmd {
 // surfaces as an error but does not undo the spawn.
 func (m *home) injectOrchestratorContext(id, title string) tea.Cmd {
 	return func() tea.Msg {
-		if err := orchestrator.WriteContextFile(id); err != nil {
-			return fmt.Errorf("write orchestrator context: %w", err)
+		if err := orchestrator.WriteControlFiles(id); err != nil {
+			return fmt.Errorf("write orchestrator control files: %w", err)
 		}
 		// Find the live instance (now in the TUI's reconciled cache) to send the
 		// injection prompt and to render the fleet snapshot.
