@@ -267,31 +267,55 @@ func LaunchDaemon() error {
 	return nil
 }
 
-// StopDaemon attempts to stop a running daemon process if it exists. Returns no error if the daemon is not found
-// (assumes the daemon does not exist).
+// StopDaemon stops a running daemon process. It resolves the daemon's PID
+// from daemon.pid (canonical) or daemon.lock (fallback written by the flock
+// holder), then sends SIGTERM and escalates to SIGKILL if needed. Unlike the
+// previous implementation, it NEVER claims success while the daemon is still
+// alive: a missing PID file is no longer a silent no-op when the control
+// socket is still serving — that was the "stop lies" regression where a
+// directly-run `boulez daemon run` (which never wrote daemon.pid) survived
+// `boulez daemon stop` while the CLI printed "daemon stopped".
+//
+// Returns nil only when the daemon is confirmed stopped (process dead) or
+// was not running to begin with (no PID and socket unreachable). Returns an
+// error describing the unkillable situation otherwise, so the user can act.
 func StopDaemon() error {
 	configDir, err := config.GetConfigDir()
 	if err != nil {
 		return fmt.Errorf("failed to get config directory: %w", err)
 	}
-
 	pidFile := filepath.Join(configDir, "daemon.pid")
-	data, err := os.ReadFile(pidFile)
-	if err != nil {
-		if os.IsNotExist(err) {
-			return nil
-		}
-		return fmt.Errorf("failed to read PID file: %w", err)
-	}
+	lockFile := filepath.Join(configDir, "daemon.lock")
 
-	var pid int
-	if _, err := fmt.Sscanf(string(data), "%d", &pid); err != nil {
-		return fmt.Errorf("invalid PID file format: %w", err)
+	pid := resolveDaemonPID(pidFile, lockFile)
+
+	if pid == 0 {
+		// No PID recorded in either file. The daemon may still be serving if
+		// it was launched by a path that wrote neither (historically, a direct
+		// `boulez daemon run`). Probe the socket: if it answers, the daemon is
+		// alive but we cannot identify its PID to kill it — surface this loudly
+		// rather than print "stopped" (the lie). If the socket is down too, the
+		// daemon genuinely is not running: clean any stale files and succeed.
+		if err := ProbeSocket(); err == nil {
+			return fmt.Errorf("daemon appears running (control socket is up) but no PID file found; stop the daemon manually (e.g. `boulez daemon status` then kill its PID)")
+		}
+		_ = os.Remove(pidFile)
+		return nil
 	}
 
 	proc, err := os.FindProcess(pid)
 	if err != nil {
-		return fmt.Errorf("failed to find daemon process: %w", err)
+		// os.FindProcess only fails on malformed PIDs on Unix; treat as stale.
+		_ = os.Remove(pidFile)
+		return fmt.Errorf("failed to find daemon process (PID %d): %w", pid, err)
+	}
+
+	// If the process is already gone, the daemon is not running. Clean stale
+	// files and report success (idempotent stop).
+	if !pidAlive(pid) {
+		_ = os.Remove(pidFile)
+		log.InfoLog.Printf("daemon process (PID %d) already stopped; cleaned stale PID file", pid)
+		return nil
 	}
 
 	// Stop the daemon GRACEFULLY: SIGTERM lets RunDaemon's signal handler run
@@ -303,20 +327,38 @@ func StopDaemon() error {
 	if err := proc.Signal(syscall.SIGTERM); err != nil {
 		// Fall back to a hard kill if signaling failed (e.g. permission).
 		if err := proc.Kill(); err != nil {
-			return fmt.Errorf("failed to stop daemon process: %w", err)
+			return fmt.Errorf("failed to stop daemon process (PID %d): %w", pid, err)
 		}
 	}
 	waitForProcessExit(proc, 5*time.Second)
 
-	// Clean up the PID file. The flock inside RunDaemon is released
-	// automatically when the killed process exits (OS-level), so we do NOT
-	// touch daemon.lock here — removing it would defeat the launch-lock's
-	// "launcher in flight" marker if a relaunch races in.
-	if err := os.Remove(pidFile); err != nil {
+	// Escalate to SIGKILL if SIGTERM did not terminate the process within the
+	// grace window. We do NOT declare success until the process is confirmed
+	// dead — the previous code removed the PID file and logged "stopped" even
+	// when the daemon survived SIGTERM, hiding a wedged process.
+	if pidAlive(pid) {
+		if err := proc.Kill(); err != nil {
+			return fmt.Errorf("failed to kill daemon process (PID %d): %w", pid, err)
+		}
+		waitForProcessExit(proc, 5*time.Second)
+	}
+
+	if pidAlive(pid) {
+		// Refused to die even after SIGKILL (e.g. zombie, or kernel-protected).
+		// Do not remove the PID file — it still identifies the wedged process.
+		return fmt.Errorf("daemon process (PID %d) did not stop after SIGKILL; kill it manually (kill -9 %d)", pid, pid)
+	}
+
+	// Confirmed dead. Clean up the PID file. The flock inside RunDaemon is
+	// released automatically when the killed process exits (OS-level), so we
+	// do NOT touch daemon.lock here — removing it would defeat the launch
+	// lock's "launcher in flight" marker if a relaunch races in, and
+	// acquireLaunchLock already reclaims a stale lock (dead holder PID).
+	if err := os.Remove(pidFile); err != nil && !os.IsNotExist(err) {
 		return fmt.Errorf("failed to remove PID file: %w", err)
 	}
 
-	log.InfoLog.Printf("daemon process (PID: %d) stopped successfully", pid)
+	log.InfoLog.Printf("daemon process (PID %d) stopped successfully", pid)
 	return nil
 }
 
@@ -460,6 +502,39 @@ func parsePID(s string) (int, error) {
 	var pid int
 	_, err := fmt.Sscanf(s, "%d", &pid)
 	return pid, err
+}
+
+// readPIDFromFile reads and parses a PID from a file. Returns the PID and true
+// on success; 0 and false if the file is missing, unreadable, or unparseable.
+// Used by resolveDaemonPID to try each PID-bearing file in turn.
+func readPIDFromFile(path string) (int, bool) {
+	data, err := os.ReadFile(path)
+	if err != nil {
+		return 0, false
+	}
+	pid, err := parsePID(strings.TrimSpace(string(data)))
+	if err != nil || pid <= 0 {
+		return 0, false
+	}
+	return pid, true
+}
+
+// resolveDaemonPID finds the daemon's PID from the recorded files. It tries
+// daemon.pid first (the canonical record written by LaunchDaemon and
+// RunDaemon), then falls back to daemon.lock (written by acquireDaemonLock
+// when RunDaemon holds the flock). Returns 0 if neither file carries a valid
+// PID — the caller (StopDaemon) then probes the socket to distinguish "no
+// daemon" from "daemon alive but unkillable from here" (the "stop lies"
+// regression: a directly-run `boulez daemon run` historically wrote neither
+// file, so stop silently no-op'd while the daemon kept serving).
+func resolveDaemonPID(pidFile, lockFile string) int {
+	if pid, ok := readPIDFromFile(pidFile); ok {
+		return pid
+	}
+	if pid, ok := readPIDFromFile(lockFile); ok {
+		return pid
+	}
+	return 0
 }
 
 // pidAlive reports whether a process with the given PID exists. On any error
