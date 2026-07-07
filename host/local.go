@@ -1,6 +1,8 @@
 package host
 
 import (
+	"os/exec"
+
 	"github.com/yro7/boulez/cmd"
 	"github.com/yro7/boulez/config"
 	"github.com/yro7/boulez/session/fs"
@@ -58,3 +60,11 @@ func (LocalHost) AutoYesDefault() bool { return config.LoadConfig().AutoYes }
 // EnsureConnected implements Host: a no-op for the local transport — there is
 // no connection to establish, commands run in-process.
 func (LocalHost) EnsureConnected() error { return nil }
+
+// AttachCmd implements Host: `tmux attach-session -t <name>`, run on the real
+// terminal by the TUI via tea.ExecProcess. No PTY is allocated by boulez — the
+// local terminal is already a tty, and tmux attach-session takes it over
+// directly while Bubbletea's terminal is released.
+func (LocalHost) AttachCmd(sessionName string) *exec.Cmd {
+	return exec.Command("tmux", "attach-session", "-t", sessionName)
+}

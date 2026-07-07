@@ -15,6 +15,8 @@
 package host
 
 import (
+	"os/exec"
+
 	"github.com/yro7/boulez/cmd"
 	"github.com/yro7/boulez/session/fs"
 )
@@ -68,6 +70,18 @@ type Host interface {
 	// a failure is logged and boulez falls back to one-shot transport; it never
 	// aborts Start.
 	EnsureConnected() error
+
+	// AttachCmd returns the *exec.Cmd that interactively attaches the user's
+	// terminal to a named tmux session on this host. The TUI runs it via
+	// tea.ExecProcess, which releases the Bubbletea terminal (alt-screen, raw
+	// mode, mouse) for the command's duration and restores it on exit. LocalHost
+	// returns `tmux attach-session -t <name>`; SSHHost returns
+	// `ssh -t [control opts] <alias> tmux attach-session -t <name>` — the -t
+	// forces a remote PTY so the attach is interactive, and the control opts
+	// ride the ControlMaster when one is up. The returned command is run on the
+	// real terminal; boulez does not allocate its own PTY for it (the local
+	// terminal is already a tty, and ssh -t allocates the remote one).
+	AttachCmd(sessionName string) *exec.Cmd
 
 	// AutoYesDefault is whether new instances on this host start with
 	// AutoYes enabled. LocalHost follows the global config flag; SSHHost

@@ -391,3 +391,38 @@ func TestSSHPtyFactory_Command_Quoting(t *testing.T) {
 	require.Len(t, built.Args, 4)
 	assert.Equal(t, orig.Args, shellReparse(t, built.Args[3]))
 }
+
+// TestSSHHost_AttachCmd_BuildsArgv proves AttachCmd produces the interactive
+// attach command: `ssh -t [control opts] <alias> tmux attach-session -t <name>`.
+// It rides the master when a socket is set (mirroring sshPtyFactory.command)
+// and omits the control opts when socket is "". The -t forces a remote PTY so
+// the attach is interactive under tea.ExecProcess. Asserted without launching
+// ssh — the argv is the contract.
+func TestSSHHost_AttachCmd_BuildsArgv(t *testing.T) {
+	h := NewSSHHost("dev-machine")
+	h.master = sshMaster{alias: "dev-machine", socket: "/tmp/x.sock"}
+
+	withSock := h.AttachCmd("foo")
+	assert.Equal(t,
+		[]string{"ssh", "-t", "-o", "ControlPath=/tmp/x.sock", "dev-machine", "'tmux' 'attach-session' '-t' 'foo'"},
+		withSock.Args)
+
+	h.master = sshMaster{alias: "dev-machine"} // socket "" => plain one-shot
+	noSock := h.AttachCmd("foo")
+	assert.Equal(t,
+		[]string{"ssh", "-t", "dev-machine", "'tmux' 'attach-session' '-t' 'foo'"},
+		noSock.Args)
+}
+
+// TestSSHHost_AttachCmd_Quoting proves a session name with a space survives the
+// remote shell round-trip (stays a single arg), the same property
+// sshPtyFactory.command enjoys.
+func TestSSHHost_AttachCmd_Quoting(t *testing.T) {
+	h := NewSSHHost("dev-machine")
+	h.master = sshMaster{alias: "dev-machine"} // socket "" => no control opts
+	built := h.AttachCmd("my session")
+	require.Len(t, built.Args, 4)
+	assert.Equal(t,
+		[]string{"tmux", "attach-session", "-t", "my session"},
+		shellReparse(t, built.Args[3]))
+}

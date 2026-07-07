@@ -73,3 +73,11 @@ func TestLocalHost_ResolveRepoPath_Absolutizes(t *testing.T) {
 	// filepath.Abs's) — pinning so a future "helpful" ~ expansion here fails.
 	assert.Equal(t, filepath.Join(wd, "~/repo"), LocalHost{}.ResolveRepoPath("~/repo"))
 }
+
+// TestLocalHost_AttachCmd_BuildsArgv proves AttachCmd returns the local
+// interactive attach command, run by the TUI via tea.ExecProcess on the real
+// terminal (no PTY allocated by boulez).
+func TestLocalHost_AttachCmd_BuildsArgv(t *testing.T) {
+	cmd := LocalHost{}.AttachCmd("foo")
+	assert.Equal(t, []string{"tmux", "attach-session", "-t", "foo"}, cmd.Args)
+}
