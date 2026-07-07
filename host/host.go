@@ -86,24 +86,47 @@ type Host interface {
 }
 
 // attachTmuxArgv builds the tmux argv that attaches the current terminal to a
-// session while binding Ctrl-Q to detach-client for the duration of the attach
-// (and unbinding it afterwards). This restores boulez's Ctrl-Q detach contract
-// after the manual stdin scavenger was removed: tmux owns the keyboard during
-// attach, so the Ctrl-Q → detach mapping must live in tmux's key table, scoped
-// to the attach so it doesn't leak into the user's other tmux usage.
+// session while (1) restoring automatic window sizing and (2) binding Ctrl-Q
+// to detach-client for the duration of the attach (then unbinding it). This
+// restores boulez's Ctrl-Q detach contract after the manual stdin scavenger
+// was removed: tmux owns the keyboard during attach, so the Ctrl-Q → detach
+// mapping must live in tmux's key table, scoped to the attach so it doesn't
+// leak into the user's other tmux usage.
 //
-// The sequence is a single tmux invocation: bind C-q, attach, unbind C-q. The
-// unbind runs after detach (whether via Ctrl-Q, `:detach`, or client death)
-// because tmux executes the post-attach commands only after the client detaches.
-// If the bind already exists (user has rebound C-q), `-T boulez-attach` would
-// be the scoped-table alternative — left as a follow-up if users report clashes.
+// The sequence is a single tmux invocation, run in order:
+//
+//   1. set-option -t <session> window-size latest
+//      The preview/terminal panes size the detached session to their small
+//      pane dimensions via `resize-window -x -y`, which flips window-size to
+//      `manual`. Without resetting it, attaching a full-screen client does not
+//      resize the window — the agent keeps rendering at the pane's small size
+//      and the rest of the terminal shows leftover content (the trailing dots
+//      bug). Restoring `latest` makes the attach resize the window to the
+//      real terminal.
+//
+//   2. bind-key -n C-q detach-client
+//      Root-table binding (no prefix). `bind-key` without -n binds in the
+//      prefix table, which would require C-b before C-q — that regressed Ctrl-Q
+//      detach entirely (the agent swallowed the bare C-q). -n puts it in the
+//      root table so tmux intercepts C-q before the pane, matching the old
+//      raw-ASCII-17 scavenger.
+//
+//   3. attach-session -t <session>
+//
+//   4. unbind-key -n C-q
+//      Runs after detach (whether via Ctrl-Q, `:detach`, or client death)
+//      because tmux executes post-attach commands only after the client
+//      detaches. -n must match the bind's table, otherwise it unbinds from the
+//      prefix table (no-op) and leaves the root binding leaking into the rest
+//      of the user's tmux usage.
 //
 // Returned argv is the part after `tmux` (LocalHost) or after the remote
 // `tmux` (SSHHost, via sshInteractiveArgs).
 func attachTmuxArgv(sessionName string) []string {
 	return []string{
-		"bind-key", "C-q", "detach-client",
+		"set-option", "-t", sessionName, "window-size", "latest",
+		";", "bind-key", "-n", "C-q", "detach-client",
 		";", "attach-session", "-t", sessionName,
-		";", "unbind-key", "C-q",
+		";", "unbind-key", "-n", "C-q",
 	}
 }
