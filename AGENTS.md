@@ -76,3 +76,37 @@ differences). See the [Origin](./README.md#origin) section of the README.
 - Boulez uses a dedicated `~/.boulez/` config dir. Cold start: no migration from
   `cs` or `claude-squad`.
 
+## Definition of done — rebuild + restart daemon
+
+A task is **not done** when its tests pass. Before reporting a task complete,
+any agent working on this repo MUST make its changes usable on the host by
+rebuilding the binary from the branch and restarting the daemon:
+
+```bash
+# From the repo principal (always on main, stable path):
+cd ~/Documents/PROJETS/Free/boulez
+git pull --ff-only origin main   # only if the task was merged into main
+# Otherwise, build the current branch directly (the worktree's HEAD):
+go build -o ~/bin/boulez .
+boulez version   # sanity check
+
+# Restart the daemon so it picks up the new binary:
+boulez daemon stop   # if one is running (ignore "not running" errors)
+boulez daemon start  # or: launch the TUI, which auto-starts it
+```
+
+Rules:
+- **Always rebuild from the branch you just finished**, not from a stale
+  `main`. If the work is on a feature branch not yet merged, `cd` into that
+  branch's worktree (or `git checkout` it in the principal) and build there.
+  The binary at `~/bin/boulez` must reflect the code you just wrote.
+- **Restart the daemon** after any change to `kernel/`, `daemon/`, `session/`,
+  `program/`, `cli/`, or `main.go` — the running daemon holds the old binary
+  in memory. A code change that is not rebuilt + restarted does not exist for
+  the user.
+- If the task only touched tests or docs, a rebuild is not required (but a
+  daemon restart is harmless).
+- Never report "done" while `boulez version` or the daemon still runs the
+  previous binary.
+
+
