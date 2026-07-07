@@ -17,6 +17,11 @@ func (s *Server) registerAll() {
 	s.registerListInstances()
 	s.registerGetInstance()
 	s.registerSpawnWorker()
+	s.registerSendPrompt()
+	s.registerPause()
+	s.registerResume()
+	s.registerKill()
+	s.registerMerge()
 }
 
 // listInstancesArgs is the MCP-facing argument shape for list_instances. It
@@ -155,6 +160,99 @@ func (s *Server) registerSpawnWorker() {
 			return nil, nil, fmt.Errorf("unmarshal spawn_worker result: %w", err)
 		}
 		return textResult(fmt.Sprintf(`{"id":%q}`, res.ID)), nil, nil
+	})
+}
+
+// sendPromptArgs sends more instructions to a running instance.
+type sendPromptArgs struct {
+	ID     string `json:"id"     jsonschema:"the target instance ID"`
+	Prompt string `json:"prompt" jsonschema:"the instruction text to send"`
+}
+
+func (s *Server) registerSendPrompt() {
+	mcp.AddTool(s.mcp, &mcp.Tool{
+		Name:        "send_prompt",
+		Description: "Send a follow-up instruction to a running instance. Use this to steer a worker that is waiting for input or to give it more work.",
+	}, func(ctx context.Context, req *mcp.CallToolRequest, args sendPromptArgs) (*mcp.CallToolResult, any, error) {
+		return s.callSimple(ctx, "send_prompt", args)
+	})
+}
+
+func (s *Server) registerPause() {
+	mcp.AddTool(s.mcp, &mcp.Tool{
+		Name:        "pause",
+		Description: "Pause a running instance. The agent is suspended (its tmux pane is frozen) and can be resumed later.",
+	}, func(ctx context.Context, req *mcp.CallToolRequest, args instanceIDArgs) (*mcp.CallToolResult, any, error) {
+		return s.callSimple(ctx, "pause", args)
+	})
+}
+
+func (s *Server) registerResume() {
+	mcp.AddTool(s.mcp, &mcp.Tool{
+		Name:        "resume",
+		Description: "Resume a paused instance.",
+	}, func(ctx context.Context, req *mcp.CallToolRequest, args instanceIDArgs) (*mcp.CallToolResult, any, error) {
+		return s.callSimple(ctx, "resume", args)
+	})
+}
+
+func (s *Server) registerKill() {
+	mcp.AddTool(s.mcp, &mcp.Tool{
+		Name:        "kill",
+		Description: "Kill an instance and tear down its worktree. Uncommitted changes are lost. Use with care.",
+	}, func(ctx context.Context, req *mcp.CallToolRequest, args instanceIDArgs) (*mcp.CallToolResult, any, error) {
+		return s.callSimple(ctx, "kill", args)
+	})
+}
+
+// callSimple is the shared handler for syscalls that take JSON-tagged params
+// and return a trivial {ok:true} on success (send_prompt, pause, resume,// kill). It forwards the params as-is and surfaces kernel errors.
+func (s *Server) callSimple(ctx context.Context, method string, args any) (*mcp.CallToolResult, any, error) {
+	params, err := json.Marshal(args)
+	if err != nil {
+		return nil, nil, fmt.Errorf("marshal %s params: %w", method, err)
+	}
+	raw, errInfo, err := s.caller.Call(ctx, method, params)
+	if err != nil {
+		return nil, nil, err
+	}
+	if errInfo != nil {
+		return errorResult(errInfo), nil, nil
+	}
+	return textResult(string(raw)), nil, nil
+}
+
+// mergeArgs mirrors kernel.mergeParams' wire contract (DRY: identical json
+// tags) minus the deprecated Caller field. The target must NOT be a protected
+// branch (main/master/host-current); the kernel returns PROTECTED_BRANCH if it is.
+type mergeArgs struct {
+	TargetRepo     string   `json:"target_repo"     jsonschema:"repo path of the merge target"`
+	TargetBranch   string   `json:"target_branch"   jsonschema:"branch to merge into (must not be protected)"`
+	SourceBranches []string `json:"source_branches"  jsonschema:"comma-separated source branches to merge from"`
+	Strategy       int      `json:"strategy,omitempty" jsonschema:"merge strategy (0=default)"`
+}
+
+func (s *Server) registerMerge() {
+	mcp.AddTool(s.mcp, &mcp.Tool{
+		Name:        "merge",
+		Description: "Merge one or more source branches into a target branch of a repo. The target must not be a protected branch (main/master/host-current). On conflict, the merge is left in a merging worktree for a resolver to inspect; the result carries the conflicted files.",
+	}, func(ctx context.Context, req *mcp.CallToolRequest, args mergeArgs) (*mcp.CallToolResult, any, error) {
+		params, err := json.Marshal(args)
+		if err != nil {
+			return nil, nil, fmt.Errorf("marshal merge params: %w", err)
+		}
+		raw, errInfo, err := s.caller.Call(ctx, "merge", params)
+		if err != nil {
+			return nil, nil, err
+		}
+		if errInfo != nil {
+			return errorResult(errInfo), nil, nil
+		}
+		b, err := json.MarshalIndent(json.RawMessage(raw), "", "  ")
+		if err != nil {
+			return nil, nil, fmt.Errorf("reformat merge result: %w", err)
+		}
+		return textResult(string(b)), nil, nil
 	})
 }
 
