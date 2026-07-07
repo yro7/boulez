@@ -132,6 +132,95 @@ func (p *PreviewPane) UpdateContent(instance *session.Instance) error {
 	return nil
 }
 
+// PrepareContent applies the cheap, non-blocking preview states (nil / loading
+// / paused) synchronously and reports whether a live pane capture is still
+// needed. It returns false — the pane is fully up to date — for those fallback
+// states and while in scroll mode (which owns its own capture, taken on the
+// scroll keypress). When it returns true the caller MUST fetch the live content
+// off the Bubble Tea update thread (instance.Preview() is an ssh round-trip for
+// a remote instance) and hand the result to SetLiveContent. This is the
+// synchronous half of the async split of UpdateContent.
+func (p *PreviewPane) PrepareContent(instance *session.Instance) bool {
+	switch {
+	case instance == nil:
+		p.setFallbackState("No agents running yet. Spin up a new instance with 'n' to get started!")
+		return false
+	case instance.Status == session.Loading:
+		p.setFallbackState("Setting up workspace...")
+		return false
+	case instance.Status == session.Paused:
+		p.setFallbackState(lipgloss.JoinVertical(lipgloss.Center,
+			"Session is paused. Press 'r' to resume.",
+			"",
+			lipgloss.NewStyle().
+				Foreground(lipgloss.AdaptiveColor{
+					Light: "#FFD700",
+					Dark:  "#FFD700",
+				}).
+				Render(fmt.Sprintf(
+					"The instance can be checked out at '%s' (copied to your clipboard)",
+					instance.Branch,
+				)),
+		))
+		return false
+	}
+	// In scroll mode the viewport owns its content (captured on the scroll
+	// keypress); the periodic tick must not overwrite it with a live capture.
+	if p.isScrolling {
+		return false
+	}
+	return true
+}
+
+// SetLiveContent applies pane content captured off the update thread (normal
+// mode only). It is guarded against a scroll-mode transition that may have
+// happened while the capture was in flight — dropping the content rather than
+// clobbering the scroll viewport. The empty-but-unstarted case falls back to
+// the name prompt, mirroring UpdateContent. This is the applying half of the
+// async split of UpdateContent.
+func (p *PreviewPane) SetLiveContent(instance *session.Instance, content string) {
+	if p.isScrolling {
+		return
+	}
+	if len(content) == 0 && instance != nil && !instance.Started() {
+		p.setFallbackState("Please enter a name for the instance.")
+		return
+	}
+	p.previewState = previewState{
+		fallback: false,
+		text:     content,
+	}
+}
+
+// SetLiveError applies a capture error to the preview pane as a fallback
+// state. This is the error counterpart to SetLiveContent: a failed live
+// capture (typically an unreachable remote host — every
+// `ssh <alias> tmux capture-pane` round-trip fails) must not leave the pane
+// stuck on a stale "Setting up workspace..." fallback left over from the
+// Loading boot phase. An instance that is Running but whose preview cannot
+// be reached is NOT still booting; surfacing the error in the pane tells the
+// user WHY the preview is blank and that it is a connectivity issue, not a
+// slow start. Guarded against a scroll-mode transition in flight (drops the
+// error rather than clobbering the scroll viewport), mirroring SetLiveContent.
+// The next preview tick retries the capture (the single-flight guard is
+// cleared by the caller before this is called), so the pane self-heals the
+// moment the host comes back.
+func (p *PreviewPane) SetLiveError(instance *session.Instance, err error) {
+	if p.isScrolling {
+		return
+	}
+	msg := "Preview unavailable"
+	if instance != nil {
+		if h := instance.Host(); h != nil && h.Name() != "" && h.Name() != "local" {
+			msg += " on " + h.Name()
+		}
+	}
+	if err != nil {
+		msg += "\n" + err.Error()
+	}
+	p.setFallbackState(msg)
+}
+
 // EnterInsertMode activates insert mode. The caller is responsible for
 // gating on instance readiness (started, not paused) and on the Preview tab
 // being active.

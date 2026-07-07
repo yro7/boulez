@@ -10,7 +10,6 @@ import (
 	"github.com/yro7/boulez/cmd"
 	"github.com/yro7/boulez/cmd/cmd_test"
 	"github.com/yro7/boulez/config"
-	"github.com/yro7/boulez/host"
 	"github.com/yro7/boulez/session"
 	"github.com/yro7/boulez/session/tmux"
 
@@ -172,8 +171,7 @@ func TestKernel_Kill_RemovesRecordEvenWhenCleanupFails(t *testing.T) {
 		OutputFunc: func(c *exec.Cmd) ([]byte, error) { return []byte{}, nil },
 	}
 	spawner.tmuxInjector = func(inst *session.Instance) {
-		inst.SetTmuxSession(tmux.NewTmuxSessionWithDeps("wedge", "bash",
-			host.LocalPtyFactory(), mockExec))
+		inst.SetTmuxSession(tmux.NewTmuxSessionWithDeps("wedge", "bash", mockExec))
 	}
 
 	id, err := k.Spawn(CallerContext{}, SpawnOptions{

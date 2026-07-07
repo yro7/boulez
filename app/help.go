@@ -138,8 +138,13 @@ var (
 	descStyle   = lipgloss.NewStyle().Foreground(lipgloss.Color("#FFFFFF"))
 )
 
-// showHelpScreen displays the help screen overlay if it hasn't been shown before
-func (m *home) showHelpScreen(helpType helpText, onDismiss func()) (tea.Model, tea.Cmd) {
+// showHelpScreen displays the help screen overlay if it hasn't been shown before.
+// onDismiss returns a tea.Cmd run when the overlay is dismissed (or immediately
+// if the help screen is skipped as already-seen). It must NOT block: long-
+// running work belongs to the returned Cmd (e.g. a tea.ExecProcess attach),
+// not to the callback — the blocking variant was the root cause of the SSH
+// attach freeze (the callback ran inside Update and blocked on <-ch).
+func (m *home) showHelpScreen(helpType helpText, onDismiss func() tea.Cmd) (tea.Model, tea.Cmd) {
 	// Get the flag for this help type
 	var alwaysShow bool
 	switch helpType.(type) {
@@ -166,9 +171,10 @@ func (m *home) showHelpScreen(helpType helpText, onDismiss func()) (tea.Model, t
 		return m, nil
 	}
 
-	// Skip displaying the help screen
+	// Skip displaying the help screen: run the dismiss callback now so its Cmd
+	// is returned to Update (e.g. the attach ExecProcess fires immediately).
 	if onDismiss != nil {
-		onDismiss()
+		return m, onDismiss()
 	}
 	return m, nil
 }
@@ -179,12 +185,21 @@ func (m *home) handleHelpState(msg tea.KeyMsg) (tea.Model, tea.Cmd) {
 	shouldClose := m.textOverlay.HandleKeyPress(msg)
 	if shouldClose {
 		m.state = stateDefault
+		// Capture the dismiss Cmd before clearing the overlay (OnDismiss is
+		// one-shot: it must not run again on a stale overlay).
+		onDismiss := m.textOverlay.OnDismiss
+		m.textOverlay = nil
+		var dismissCmd tea.Cmd
+		if onDismiss != nil {
+			dismissCmd = onDismiss()
+		}
 		return m, tea.Sequence(
 			tea.WindowSize(),
 			func() tea.Msg {
 				m.menu.SetState(ui.StateDefault)
 				return nil
 			},
+			dismissCmd,
 		)
 	}
 

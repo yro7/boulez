@@ -574,7 +574,7 @@ func newRepoSelectHome(t *testing.T) *home {
 		ctx:          context.Background(),
 		state:        stateDefault,
 		appConfig:    config.DefaultConfig(),
-		program:      "claude",
+		agentProgram: "claude",
 		repoRegistry: repo.NewRegistryAt(filepath.Join(t.TempDir(), "repos.json")),
 		prefs:        prefs.NewStoreAt(filepath.Join(t.TempDir(), "preferences.json")),
 		list:         ui.NewList(&sp, false),
