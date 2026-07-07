@@ -342,6 +342,15 @@ func (m *home) Update(msg tea.Msg) (tea.Model, tea.Cmd) {
 	switch msg := msg.(type) {
 	case hideErrMsg:
 		m.errBox.Clear()
+	case attachFinishedMsg:
+		// A tea.ExecProcess attach (Preview tab) has returned: the Bubbletea
+		// terminal has been restored. Reset state and refresh the preview so the
+		// pane reflects whatever the agent produced while attached.
+		m.state = stateDefault
+		return m, tea.Sequence(
+			tea.WindowSize(),
+			m.instanceChanged(),
+		)
 	case previewTickMsg:
 		cmd := m.instanceChanged()
 		return m, tea.Batch(
@@ -850,20 +859,27 @@ func (m *home) handleKeyPress(msg tea.KeyMsg) (mod tea.Model, cmd tea.Cmd) {
 			return m, nil
 		}
 
-		// Show help screen before pausing
-		m.showHelpScreen(helpTypeInstanceCheckout{}, func() {
+		// Show help screen before pausing. The callback runs Pause as a side-
+		// effect and returns a follow-up Cmd (instanceChanged + refresh); with
+		// the help screen already seen it fires immediately, so we must propagate
+		// its returned Cmd rather than discard it.
+		mod, helpCmd := m.showHelpScreen(helpTypeInstanceCheckout{}, func() tea.Cmd {
 			// Route pause through the kernel (C3.4): the kernel owns the tmux
 			// session + worktree lifecycle, so the pause (and the persistence)
 			// takes effect on the authoritative copy. The TUI's view is
 			// reconciled by the post-mutation fleet refresh issued below.
+			var cmds []tea.Cmd
 			if err := m.resolveFleet().Pause(selected.GetID()); err != nil {
-				m.handleError(err)
+				cmds = append(cmds, m.handleError(err))
 			}
 			m.tabbedWindow.CleanupTerminalForInstance(selected.Title)
-			m.instanceChanged()
-			_ = m.refreshFleetFromKernel()
+			if err := m.refreshFleetFromKernel(); err != nil {
+				cmds = append(cmds, m.handleError(err))
+			}
+			cmds = append(cmds, m.instanceChanged())
+			return tea.Batch(cmds...)
 		})
-		return m, tea.Batch(m.instanceChanged(), m.refreshFleetAfterMutation())
+		return mod, tea.Batch(helpCmd, m.instanceChanged(), m.refreshFleetAfterMutation())
 	case keys.KeyMoveUp:
 		// Reordering is view-only now (C3.5): the kernel's ordering is insertion
 		// order and is not propagated back. Persisting a custom order across
@@ -908,31 +924,45 @@ func (m *home) handleKeyPress(msg tea.KeyMsg) (mod tea.Model, cmd tea.Cmd) {
 		if selected == nil || selected.Paused() || selected.Status == session.Loading || !selected.TmuxAlive() {
 			return m, nil
 		}
-		// Terminal tab: attach to terminal session
+		// Terminal tab: attach to terminal session. Commit 4 migrates this to
+		// tea.ExecProcess too; for now the callback returns a tea.Cmd (required by
+		// the new overlay contract) but the attach itself still runs the manual
+		// PTY path via AttachTerminal. This is a local tmux session (fast,
+		// non-SSH), so it does not exhibit the SSH freeze.
 		if m.tabbedWindow.IsInTerminalTab() {
-			m.showHelpScreen(helpTypeInstanceAttach{}, func() {
+			mod, cmd := m.showHelpScreen(helpTypeInstanceAttach{}, func() tea.Cmd {
 				ch, err := m.tabbedWindow.AttachTerminal()
 				if err != nil {
-					m.handleError(err)
-					return
+					return m.handleError(err)
 				}
-				<-ch
-				m.state = stateDefault
+				// Park the state reset on a goroutine so this callback returns
+				// immediately (no blocking <-ch inside Update).
+				go func() { <-ch; m.state = stateDefault }()
+				return nil
 			})
-			return m, nil
+			return mod, cmd
 		}
-		// Show help screen before attaching
-		m.showHelpScreen(helpTypeInstanceAttach{}, func() {
-			ch, err := m.list.Attach()
-			if err != nil {
-				m.handleError(err)
-				return
-			}
-			<-ch
-			m.state = stateDefault
-			m.instanceChanged()
+		// Preview tab: attach to the instance's tmux session via tea.ExecProcess,
+		// which releases the Bubbletea terminal (alt-screen, raw mode, mouse) for
+		// the command's duration and restores it on exit. The command is the
+		// host's AttachCmd (local: tmux attach-session; ssh: ssh -t ... tmux
+		// attach-session). This replaces the manual PTY + io.Copy + stdin
+		// scavenger that froze the TUI over SSH (two readers on os.Stdin, no
+		// terminal release). On exit, attachFinishedMsg resets state and refreshes
+		// the preview.
+		inst := selected
+		mod, cmd := m.showHelpScreen(helpTypeInstanceAttach{}, func() tea.Cmd {
+			return tea.ExecProcess(
+				inst.Host().AttachCmd(inst.SessionName()),
+				func(err error) tea.Msg {
+					if err != nil {
+						log.InfoLog.Printf("attach exited with error: %v", err)
+					}
+					return attachFinishedMsg{}
+				},
+			)
 		})
-		return m, nil
+		return mod, cmd
 	default:
 		return m, nil
 	}
@@ -1041,6 +1071,12 @@ type previewContentMsg struct {
 	content    string
 	err        error
 }
+
+// attachFinishedMsg is delivered by tea.ExecProcess when an interactive attach
+// (Preview tab) exits. The Bubbletea terminal has already been restored by the
+// time this message is processed; the handler resets state and refreshes the
+// preview.
+type attachFinishedMsg struct{}
 
 type keyupMsg struct{}
 
