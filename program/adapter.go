@@ -73,6 +73,22 @@ type Adapter interface {
 	Detect(content string) (Status, *Prompt)
 }
 
+// JournalingAdapter is implemented by adapters whose status detection comes
+// from a session journal file (incrementally written JSONL) rather than tmux
+// pane content. TmuxSession checks for this at Start; if present, it injects
+// the returned args into the agent's program command and reads status from a
+// journal.Observer instead of capture-pane. This is the observation/transport
+// split: the adapter declares "I am journal-based" and provides the CLI args;
+// TmuxSession owns the session-dir path and the observer lifecycle.
+type JournalingAdapter interface {
+	Adapter
+	// SessionArgs returns the CLI args to inject into the agent's program
+	// command so it writes its session journal to the given directory. The
+	// directory is per-instance and deterministic (derived from the tmux
+	// session name under ~/.boulez/pi-sessions/).
+	SessionArgs(sessionDir string) []string
+}
+
 // NoOpAdapter is the default fallback returned by Lookup when no registered
 // adapter matches. An unknown agent never crashes: it is simply "silent"
 // (StatusUnknown, no prompt), so it gets no "Ready" badge and no auto-yes.

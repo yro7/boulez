@@ -36,6 +36,22 @@ func GetConfigDir() (string, error) {
 	return dir, nil
 }
 
+// PiSessionsDir returns the path to the directory holding per-instance Pi
+// session journals (~/.boulez/pi-sessions/<sanitizedName>/). Each Pi instance
+// gets its own --session-dir under this path so the journal observer can find
+// the single .jsonl file deterministically. Ensures the directory exists.
+func PiSessionsDir() (string, error) {
+	configDir, err := GetConfigDir()
+	if err != nil {
+		return "", err
+	}
+	dir := filepath.Join(configDir, "pi-sessions")
+	if err := os.MkdirAll(dir, 0o755); err != nil {
+		return "", fmt.Errorf("failed to create pi-sessions directory: %w", err)
+	}
+	return dir, nil
+}
+
 // OrchestratorsDir returns the path to the directory holding all orchestrator
 // control dirs (~/.boulez/orchestrators/<id>/). It is the single source of truth
 // for this path: shared by the headless worktree (session), the plan store

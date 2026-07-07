@@ -262,37 +262,27 @@ func TestPiAdapter_MatchesPathological(t *testing.T) {
 
 func TestPiAdapter_DetectEmpty(t *testing.T) {
 	s, p := PiAdapter{}.Detect("")
-	assert.Equal(t, StatusUnknown, s, "empty pane is not a Pi pane")
+	assert.Equal(t, StatusUnknown, s, "empty content is not a recognisable state")
 	assert.Nil(t, p)
 }
 
-func TestPiAdapter_DetectSentinelWithoutFooterIsUnknown(t *testing.T) {
-	// The sentinel alone, without a Pi footer, must NOT be reported as Ready:
-	// it could be stale scrollback or content from another tool. Pi is only
-	// recognised when its footer is present.
-	s, p := PiAdapter{}.Detect("some output\n" + PiReadySentinel + "\nmore output")
+func TestPiAdapter_DetectInvalidJSONIsUnknown(t *testing.T) {
+	// Non-JSON content (e.g. a stale pane scrape) is not a journal line.
+	s, p := PiAdapter{}.Detect("some output\nmore output")
 	assert.Equal(t, StatusUnknown, s)
 	assert.Nil(t, p)
 }
 
-func TestPiAdapter_DetectFooterWithoutThinkingSeparator(t *testing.T) {
-	// A line with "%/" but no " • " is not a Pi footer.
-	s, p := PiAdapter{}.Detect("0.4%/1.0M some other tool footer")
+func TestPiAdapter_DetectNonMessageEntryIsUnknown(t *testing.T) {
+	// Non-message entries (session header, model_change) appear between
+	// turns. Status cannot be inferred from them alone.
+	s, p := PiAdapter{}.Detect(`{"type":"session","id":"abc"}`)
 	assert.Equal(t, StatusUnknown, s)
 	assert.Nil(t, p)
 }
 
-func TestPiAdapter_DetectFooterWithoutContextUsage(t *testing.T) {
-	// A line with " • " but no "%/" is not a Pi footer.
-	s, p := PiAdapter{}.Detect("<provider> <model> • high")
-	assert.Equal(t, StatusUnknown, s)
-	assert.Nil(t, p)
-}
-
-func TestPiAdapter_DetectSentinelMultilineFooter(t *testing.T) {
-	// Real capture: footer on one line, sentinel on the next.
-	content := "first line of output\n0.0%/1.0M (auto)    <provider> <model> • high\n" + PiReadySentinel + "\n"
-	s, p := PiAdapter{}.Detect(content)
+func TestPiAdapter_DetectAssistantStopIsReady(t *testing.T) {
+	s, p := PiAdapter{}.Detect(`{"type":"message","message":{"role":"assistant","stopReason":"stop"}}`)
 	assert.Equal(t, StatusReady, s)
 	if assert.NotNil(t, p) {
 		assert.Equal(t, PromptReady, p.Kind)
@@ -300,19 +290,17 @@ func TestPiAdapter_DetectSentinelMultilineFooter(t *testing.T) {
 	}
 }
 
-func TestPiAdapter_DetectMultipleFooterLines(t *testing.T) {
-	// If a Pi footer appears anywhere in the pane, Pi is the agent.
-	content := "garbage\n0.4%/1.0M (auto) <provider> <model> • off\nlater\n7.2%/1.0M (auto) <provider> <model> • medium"
-	s, _ := PiAdapter{}.Detect(content)
+func TestPiAdapter_DetectAssistantToolUseIsWorking(t *testing.T) {
+	s, p := PiAdapter{}.Detect(`{"type":"message","message":{"role":"assistant","stopReason":"toolUse"}}`)
 	assert.Equal(t, StatusWorking, s)
+	assert.Nil(t, p)
 }
 
-func TestPiAdapter_DetectReadyPromptHasNoResolve(t *testing.T) {
-	content := "0.0%/1.0M (auto) <provider> <model> • high\n" + PiReadySentinel
-	_, p := PiAdapter{}.Detect(content)
-	if assert.NotNil(t, p) {
-		assert.Nil(t, p.Resolve)
-	}
+func TestPiAdapter_DetectToolResultIsWorking(t *testing.T) {
+	// A trailing toolResult means the LLM will resume shortly.
+	s, p := PiAdapter{}.Detect(`{"type":"message","message":{"role":"toolResult"}}`)
+	assert.Equal(t, StatusWorking, s)
+	assert.Nil(t, p)
 }
 
 // --- Registry edge cases --------------------------------------------------

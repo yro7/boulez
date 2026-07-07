@@ -6,9 +6,13 @@ import (
 	"errors"
 	"fmt"
 	"github.com/yro7/boulez/cmd"
+	"github.com/yro7/boulez/config"
 	"github.com/yro7/boulez/log"
 	"github.com/yro7/boulez/program"
+	"github.com/yro7/boulez/session/journal"
+	"os"
 	"os/exec"
+	"path/filepath"
 	"regexp"
 	"strings"
 	"time"
@@ -31,6 +35,12 @@ type TmuxSession struct {
 	// Resolved once at construction via program.Lookup; tmux.go itself holds no
 	// agent-specific strings. Adding a new agent never touches this file.
 	adapter program.Adapter
+	// journal tails the agent's session JSONL file when the adapter is a
+	// JournalingAdapter (e.g. Pi). When non-nil, HasUpdated reads status from
+	// the journal instead of capture-pane. The pane is still captured for
+	// human-facing scrollback (get_instance), but status detection is
+	// journal-based. nil for non-journaling adapters (Claude, Aider, etc.).
+	journal *journal.Observer
 	// cmdExec is used to execute commands in the tmux session.
 	cmdExec cmd.Executor
 
@@ -114,7 +124,18 @@ func (t *TmuxSession) Start(workDir string) error {
 	// (cmdExec) — the SSH-aware channel CapturePaneContent/SendKeys already
 	// use — rather than a PTY. A PTY was wrong here: tmux new-session -d is
 	// detached and never reads a terminal.
-	startCmd := exec.Command("tmux", "new-session", "-d", "-s", t.sanitizedName, "-c", workDir, t.program)
+	programCmd := t.program
+	if ja, ok := t.adapter.(program.JournalingAdapter); ok {
+		sessionDir, err := t.ensureJournalSessionDir()
+		if err != nil {
+			log.WarningLog.Printf("journal session dir for %s: %v (falling back to pane detection)", t.sanitizedName, err)
+		} else {
+			args := ja.SessionArgs(sessionDir)
+			programCmd = strings.Join(append([]string{t.program}, args...), " ")
+			t.journal = journal.NewObserver(sessionDir)
+		}
+	}
+	startCmd := exec.Command("tmux", "new-session", "-d", "-s", t.sanitizedName, "-c", workDir, programCmd)
 	if err := t.cmdExec.Run(startCmd); err != nil {
 		// Cleanup any partially created session if any exists.
 		if t.DoesSessionExist() {
@@ -212,6 +233,19 @@ func (t *TmuxSession) CheckAndHandleTrustPrompt() bool {
 // path's invariant that ptmx was non-nil.
 func (t *TmuxSession) Restore() error {
 	t.monitor = newStatusMonitor()
+	// For restarted instances the tmux session already exists (Pi is already
+	// running inside). Re-establish the journal observer pointing at the same
+	// deterministic session dir so HasUpdated reads from the journal.
+	if t.journal == nil {
+		if _, ok := t.adapter.(program.JournalingAdapter); ok {
+			sessionDir, err := t.ensureJournalSessionDir()
+			if err != nil {
+				log.WarningLog.Printf("journal session dir for %s on restore: %v (falling back to pane detection)", t.sanitizedName, err)
+			} else {
+				t.journal = journal.NewObserver(sessionDir)
+			}
+		}
+	}
 	return nil
 }
 
@@ -315,7 +349,7 @@ func (t *TmuxSession) SendKey(name string) error {
 // Callers branch on the precise Status rather than a lossy "has prompt" bool:
 // a definitive StatusReady/StatusPermission from the adapter MUST take
 // priority over the content-change heuristic. When an agent finishes a turn
-// it emits its ready marker (e.g. Pi's boulez:ready sentinel), which changes the
+// it emits its status signal (e.g. Pi's journal stopReason), which changes the
 // pane content; classifying that as "working" just because the pane changed
 // would leave a finished agent stuck showing the running spinner forever.
 // Agent-specific detection is delegated to program.Adapter; this function
@@ -330,11 +364,44 @@ func (t *TmuxSession) SendKey(name string) error {
 // is a delayed Ready badge rather than an instance stuck on Running forever.
 // A long silent tool run (build/test with no output) can produce a transient
 // false Ready, but it self-corrects the moment the tool emits a line.
-func (t *TmuxSession) HasUpdated() (updated bool, status program.Status, stableFor time.Duration) {
-	content, err := t.CapturePaneContent()
+// detectContent returns the content used for status detection. When a
+// journal observer is installed (journaling adapters like Pi), it reads the
+// last JSONL line from the session file. Otherwise it falls back to capturing
+// the tmux pane content. This is the observation seam: journal-based agents
+// get deterministic, structured status; pane-based agents keep their
+// ANSI-scraping detection.
+func (t *TmuxSession) detectContent() (string, error) {
+	if t.journal != nil {
+		return t.journal.Content()
+	}
+	return t.CapturePaneContent()
+}
+
+// ensureJournalSessionDir computes the per-instance session directory
+// (~/.boulez/pi-sessions/<sanitizedName>/) and creates it so Pi can write
+// its .jsonl into it. Returns the path for both the --session-dir CLI arg
+// and the journal.Observer to share.
+func (t *TmuxSession) ensureJournalSessionDir() (string, error) {
+	base, err := config.PiSessionsDir()
 	if err != nil {
-		if t.monitor.captureErrEvery.ShouldLog() {
-			log.ErrorLog.Printf("error capturing pane content in status monitor: %v", err)
+		return "", err
+	}
+	sessionDir := filepath.Join(base, t.sanitizedName)
+	if err := os.MkdirAll(sessionDir, 0o755); err != nil {
+		return "", fmt.Errorf("create session dir: %w", err)
+	}
+	return sessionDir, nil
+}
+
+func (t *TmuxSession) HasUpdated() (updated bool, status program.Status, stableFor time.Duration) {
+	content, err := t.detectContent()
+	if err != nil {
+		if t.journal == nil {
+			// Only log capture-pane errors; journal errors (ErrNoSession before
+			// Pi writes its first line) are expected during startup and silent.
+			if t.monitor.captureErrEvery.ShouldLog() {
+				log.ErrorLog.Printf("error capturing pane content in status monitor: %v", err)
+			}
 		}
 		return false, program.StatusUnknown, 0
 	}
