@@ -352,10 +352,12 @@ func TestSSHFS_ParseDirEntries_SplitsNullDelimited(t *testing.T) {
 }
 
 // TestSSHHost_AttachCmd_BuildsArgv proves AttachCmd produces the interactive
-// attach command: `ssh -t [control opts] <alias> tmux <bind C-q ; attach ; unbind>`.
+// attach command: `ssh -t [control opts] <alias> tmux <set-option ; bind -n C-q ; attach ; unbind>`.
 // It rides the master when a socket is set and omits the control opts when
 // socket is "". The -t forces a remote PTY so the attach is interactive under
-// tea.ExecProcess. The remote tmux binds Ctrl-Q to detach-client for the
+// tea.ExecProcess. The remote tmux resets window-size to latest (so the attach
+// resizes to the real terminal after the preview pane left it `manual` at a
+// small size) and binds Ctrl-Q to detach-client in the root table for the
 // duration (then unbinds), preserving boulez's Ctrl-Q detach contract. The
 // tmux argv is shell-joined into one arg by sshInteractiveArgs. Asserted
 // without launching ssh — the argv is the contract.
@@ -366,14 +368,14 @@ func TestSSHHost_AttachCmd_BuildsArgv(t *testing.T) {
 	withSock := h.AttachCmd("foo")
 	assert.Equal(t,
 		[]string{"ssh", "-t", "-o", "ControlPath=/tmp/x.sock", "dev-machine",
-			"'tmux' 'bind-key' 'C-q' 'detach-client' ';' 'attach-session' '-t' 'foo' ';' 'unbind-key' 'C-q'"},
+			"'tmux' 'set-option' '-t' 'foo' 'window-size' 'latest' ';' 'bind-key' '-n' 'C-q' 'detach-client' ';' 'attach-session' '-t' 'foo' ';' 'unbind-key' '-n' 'C-q'"},
 		withSock.Args)
 
 	h.master = sshMaster{alias: "dev-machine"} // socket "" => plain one-shot
 	noSock := h.AttachCmd("foo")
 	assert.Equal(t,
 		[]string{"ssh", "-t", "dev-machine",
-			"'tmux' 'bind-key' 'C-q' 'detach-client' ';' 'attach-session' '-t' 'foo' ';' 'unbind-key' 'C-q'"},
+			"'tmux' 'set-option' '-t' 'foo' 'window-size' 'latest' ';' 'bind-key' '-n' 'C-q' 'detach-client' ';' 'attach-session' '-t' 'foo' ';' 'unbind-key' '-n' 'C-q'"},
 		noSock.Args)
 }
 
@@ -385,12 +387,15 @@ func TestSSHHost_AttachCmd_Quoting(t *testing.T) {
 	h.master = sshMaster{alias: "dev-machine"} // socket "" => no control opts
 	built := h.AttachCmd("my session")
 	require.Len(t, built.Args, 4)
-	// The shell-joined tmux argv (Args[3]) must re-parse to the bind/attach/unbind
-	// sequence with the spaced session name intact.
+	// The shell-joined tmux argv (Args[3]) must re-parse to the
+	// set-option / root-table bind / attach / unbind sequence with the spaced
+	// session name intact.
 	reparsed := shellReparse(t, built.Args[3])
 	assert.Equal(t,
-		[]string{"tmux", "bind-key", "C-q", "detach-client", ";",
-			"attach-session", "-t", "my session", ";",
-			"unbind-key", "C-q"},
+		[]string{"tmux",
+			"set-option", "-t", "my session", "window-size", "latest",
+			";", "bind-key", "-n", "C-q", "detach-client",
+			";", "attach-session", "-t", "my session",
+			";", "unbind-key", "-n", "C-q"},
 		reparsed)
 }
