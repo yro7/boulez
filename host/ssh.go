@@ -151,14 +151,17 @@ func (h SSHHost) ResolveRepoPath(path string) string { return path }
 
 // AttachCmd implements Host: the *exec.Cmd that interactively attaches the
 // user's terminal to a remote tmux session, run via tea.ExecProcess by the
-// TUI. The argv is `ssh -t [control opts] <alias> tmux attach-session -t
-// <name>` — reusing sshInteractiveArgs so the -t / control-opts / shell-
-// joining assembly is shared (and its tests). No PTY is allocated by boulez:
-// the local terminal is already a tty, ssh -t allocates the remote one, and
+// TUI. The argv is `ssh -t [control opts] <alias> tmux <attachTmuxArgv>` —
+// reusing sshInteractiveArgs so the -t / control-opts / shell-joining
+// assembly is shared (and its tests). The remote tmux binds Ctrl-Q to
+// detach-client for the duration of the attach (then unbinds), preserving
+// boulez's Ctrl-Q detach contract now that the manual stdin scavenger is
+// gone (see attachTmuxArgv). No PTY is allocated by boulez: the local
+// terminal is already a tty, ssh -t allocates the remote one, and
 // tea.ExecProcess releases the Bubbletea terminal for the command's duration.
 func (h SSHHost) AttachCmd(sessionName string) *exec.Cmd {
 	args := sshInteractiveArgs(h.alias, h.master.socketForSlave(),
-		[]string{"tmux", "attach-session", "-t", sessionName})
+		append([]string{"tmux"}, attachTmuxArgv(sessionName)...))
 	return exec.Command(args[0], args[1:]...)
 }
 
