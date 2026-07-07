@@ -114,6 +114,7 @@ func init() {
 	rootCmd.AddCommand(cli.NewCtlCmd())
 	rootCmd.AddCommand(cli.NewDaemonCmd())
 	rootCmd.AddCommand(cli.NewRepoImportCmd())
+	rootCmd.AddCommand(cli.NewMCPCmd())
 }
 
 // runTUI is the entrypoint for both the bare `boulez` invocation and the
