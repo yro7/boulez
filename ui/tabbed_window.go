@@ -215,6 +215,13 @@ func (w *TabbedWindow) AttachTerminal() (chan struct{}, error) {
 	return w.terminal.Attach()
 }
 
+// TerminalSessionName returns the sanitized tmux session name for the terminal
+// tab's current instance session (local tmux), or "" if none. The app builds a
+// local attach command from it for tea.ExecProcess.
+func (w *TabbedWindow) TerminalSessionName() string {
+	return w.terminal.SessionName()
+}
+
 // CleanupTerminal closes the terminal session
 func (w *TabbedWindow) CleanupTerminal() {
 	w.terminal.Close()

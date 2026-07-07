@@ -148,6 +148,7 @@ func newInsertTestHome(t *testing.T, inst *session.Instance) *home {
 		list:         list,
 		menu:         ui.NewMenu(),
 		tabbedWindow: tw,
+		errBox:       ui.NewErrBox(),
 	}
 }
 

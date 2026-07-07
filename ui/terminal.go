@@ -206,6 +206,21 @@ func (t *TerminalPane) Attach() (chan struct{}, error) {
 	return ts.Attach()
 }
 
+// SessionName returns the sanitized tmux session name for the currently
+// displayed instance's terminal session, or "" if none exists. Used to build
+// a local attach command (host.AttachCmd) for tea.ExecProcess — the terminal
+// tab runs a LOCAL tmux session (even for a remote instance), so the attach is
+// always a local `tmux attach-session -t <name>`.
+func (t *TerminalPane) SessionName() string {
+	t.mu.Lock()
+	defer t.mu.Unlock()
+	s, ok := t.sessions[t.currentTitle]
+	if !ok || s.tmuxSession == nil {
+		return ""
+	}
+	return s.tmuxSession.Name()
+}
+
 // Close kills all cached terminal tmux sessions and cleans up.
 func (t *TerminalPane) Close() {
 	t.mu.Lock()

@@ -186,6 +186,13 @@ func TestSessionName_Deterministic(t *testing.T) {
 		SessionName("a sd f. asdf"))
 }
 
+// TestTmuxSession_Name exposes the sanitized session name so a caller can
+// build an attach command (host.AttachCmd) without re-deriving sanitization.
+func TestTmuxSession_Name(t *testing.T) {
+	ts := NewTmuxSession("a sd f. asdf", "p")
+	require.Equal(t, SessionName("a sd f. asdf"), ts.Name())
+}
+
 // TestSendKeys_TapEnter_TapDAndEnter_PinSendKeysArgv pins that SendKeys,
 // TapEnter, and TapDAndEnter route through `tmux send-keys` via the host
 // executor (cmdExec) rather than writing raw bytes to an attached PTY. This

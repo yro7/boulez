@@ -44,3 +44,23 @@ func TestKeyEnter_PausedInstanceReturnsNil(t *testing.T) {
 	_, cmd := h.handleKeyPress(tea.KeyMsg{Type: tea.KeyEnter})
 	assert.Nil(t, cmd, "KeyEnter on a paused instance must not attach")
 }
+
+// TestKeyEnter_TerminalTabNoSessionReturnsError proves the Terminal-tab path
+// surfaces a clean error (as a Cmd) when no terminal session exists yet,
+// rather than crashing or blocking. This guards the tea.ExecProcess wiring:
+// the path must build a local attach cmd only when a session name is present.
+func TestKeyEnter_TerminalTabNoSessionReturnsError(t *testing.T) {
+	inst, _ := newStartedMockInstance(t, session.Ready)
+	h := newInsertTestHome(t, inst)
+	h.keySent = true
+	h.appState = config.LoadState()
+	_ = h.appState.SetHelpScreensSeen(allHelpScreensSeen)
+	// Switch to the Terminal tab. No terminal tmux session has been created,
+	// so TerminalSessionName() returns "".
+	h.tabbedWindow.Toggle() // Preview → Diff
+	h.tabbedWindow.Toggle() // Diff → Terminal
+	require.True(t, h.tabbedWindow.IsInTerminalTab())
+
+	_, cmd := h.handleKeyPress(tea.KeyMsg{Type: tea.KeyEnter})
+	require.NotNil(t, cmd, "KeyEnter on the Terminal tab with no session must return an error Cmd")
+}

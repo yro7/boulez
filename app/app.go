@@ -930,15 +930,23 @@ func (m *home) handleKeyPress(msg tea.KeyMsg) (mod tea.Model, cmd tea.Cmd) {
 		// PTY path via AttachTerminal. This is a local tmux session (fast,
 		// non-SSH), so it does not exhibit the SSH freeze.
 		if m.tabbedWindow.IsInTerminalTab() {
+			// Terminal tab: attach to the LOCAL terminal tmux session via
+			// tea.ExecProcess. The terminal tab runs a local tmux session even for
+			// a remote instance, so the attach is always local (no SSH, no freeze).
+			name := m.tabbedWindow.TerminalSessionName()
+			if name == "" {
+				return m, m.handleError(fmt.Errorf("no terminal session to attach to"))
+			}
 			mod, cmd := m.showHelpScreen(helpTypeInstanceAttach{}, func() tea.Cmd {
-				ch, err := m.tabbedWindow.AttachTerminal()
-				if err != nil {
-					return m.handleError(err)
-				}
-				// Park the state reset on a goroutine so this callback returns
-				// immediately (no blocking <-ch inside Update).
-				go func() { <-ch; m.state = stateDefault }()
-				return nil
+				return tea.ExecProcess(
+					host.Local.AttachCmd(name),
+					func(err error) tea.Msg {
+						if err != nil {
+							log.InfoLog.Printf("terminal attach exited with error: %v", err)
+						}
+						return attachFinishedMsg{}
+					},
+				)
 			})
 			return mod, cmd
 		}

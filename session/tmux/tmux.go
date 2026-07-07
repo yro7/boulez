@@ -590,6 +590,14 @@ func (t *TmuxSession) updateWindowSize(cols, rows int) error {
 	})
 }
 
+// Name returns the sanitized tmux session name used in tmux commands
+// (has-session, kill-session, capture-pane, attach-session, ...). Exposed so a
+// caller can build an attach command (e.g. host.AttachCmd) without re-deriving
+// the sanitization.
+func (t *TmuxSession) Name() string {
+	return t.sanitizedName
+}
+
 func (t *TmuxSession) DoesSessionExist() bool {
 	exists, _ := t.doesSessionExistWithErr()
 	return exists
