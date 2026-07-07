@@ -291,8 +291,9 @@ What changed since the fork:
   that owns the kernel / control authority. `boulez ctl` is a thin client.
 - **Modular agent support** via a `program.Adapter` seam.
 - **Multi-repo orchestration** + **multi-env (SSH)**.
-- A small Pi ↔ boulez ready-signal bridge (see `extensions/pi-boulez.ts` +
-  `program/pi.go`).
+- Pi status detection via session JSONL tailing (see `program/pi.go` +
+  `session/journal/`): Boulez reads Pi's incrementally-written session
+  file to detect `stopReason` deterministically, with no Pi-side extension.
 
 ---
 
