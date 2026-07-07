@@ -10,7 +10,6 @@ import (
 	"github.com/yro7/boulez/orchestrator"
 	"github.com/yro7/boulez/prefs"
 	"github.com/yro7/boulez/presets"
-	"github.com/yro7/boulez/program"
 	"github.com/yro7/boulez/repo"
 	"github.com/yro7/boulez/session"
 	"github.com/yro7/boulez/session/git"
@@ -187,18 +186,16 @@ type home struct {
 	// global, so landin two different instances concurrently is allowed.
 	landInFlight map[string]struct{}
 
-	// workingStreak is the per-instance hysteresis counter for the
-	// Ready→Running transition. A single "pane changed" tick is not enough to
-	// demote a Ready instance: the pane chrome (Pi's animated spinner, the
-	// context-usage percentage, the cursor) keeps hashing differently even
-	// when the agent is idle, so without hysteresis an idle instance flickers
-	// Ready↔Running every 500ms tick. The counter accumulates consecutive
-	// "really working" ticks (pane changed AND no authoritative Ready signal)
-	// and only flips Ready→Running once it reaches readyToWorkingTicks. A Ready
-	// signal (adapter StatusReady) or a stable pane resets it. Pure TUI view
-	// state — not persisted, not on the wire. Keyed by instance ID; pruned in
-	// reconcileFleet to IDs no longer in the kernel's snapshot.
-	workingStreak map[string]int
+	// prevStatus tracks the last KERNEL-reported status per instance, used in
+	// reconcileFleet to detect Ready transitions for render-only side effects
+	// (clearing the TUI-only landed hint + desktop notification). This is
+	// legitimate view state — not the status de-noising hysteresis (that was
+	// the daemon's job and moved there): it only records what the authority
+	// last said so the viewer can react to a transition. A freshly-
+	// reconstructed view handle's inst.Status is unreliable for this because
+	// FromInstanceData → Start forces it to Running. Pruned in reconcileFleet
+	// of instances no longer in the kernel's snapshot.
+	prevStatus map[string]session.Status
 
 	// previewCaptureInFlight is the single-flight guard for the async preview
 	// capture (see instanceChanged). The preview pane captures the instance's
@@ -257,7 +254,6 @@ func newHome(ctx context.Context, program string, autoYes bool) *home {
 		appState:        appState,
 		pendingDraftIDs: make(map[string]struct{}),
 		landInFlight:    make(map[string]struct{}),
-		workingStreak:   make(map[string]int),
 		previewErrEvery: log.NewEvery(30 * time.Second),
 	}
 	h.list = ui.NewList(&h.spinner, autoYes)
@@ -417,97 +413,21 @@ func (m *home) Update(msg tea.Msg) (tea.Model, tea.Cmd) {
 		)
 	case metadataUpdateDoneMsg:
 		for _, r := range msg.results {
-			// Skip instances that were paused while metadata was being computed
+			// Skip instances that were paused while metadata was being computed.
 			if r.instance.Status == session.Paused {
 				continue
 			}
-			// The adapter's detected status is the source of truth and takes
-			// priority over the content-change heuristic. Previously, a ready
-			// sentinel landing in the pane was classified as "working" merely
-			// because the pane content changed, leaving finished agents stuck on
-			// the running spinner forever.
-			prevStatus := r.instance.Status
-			if m.workingStreak == nil {
-				m.workingStreak = make(map[string]int)
-			}
-			switch {
-			case r.status == program.StatusReady:
-				// An authoritative Ready signal (e.g. the Pi sentinel) resets the
-				// working hysteresis: the next working phase starts counting from 1.
-				delete(m.workingStreak, r.instance.GetID())
-				r.instance.SetStatus(session.Ready)
-			case r.status == program.StatusPermission:
-				// A resolvable permission/trust prompt. Only auto-resolve when
-				// AutoYes is on, mirroring the original TapEnter() gating:
-				// the user explicitly turned off auto-yes, so do not dismiss
-				// prompts for them. The instance status is left unchanged
-				// (Running) since the agent is waiting for a permission
-				// decision, not free input.
-				if r.instance.AutoYes {
-					r.instance.CheckAndHandleTrustPrompt()
-				}
-			default:
-				// StatusWorking (or StatusUnknown for agents we don't detect):
-				// an authoritative adapter signal always wins. When the adapter is
-				// silent, fall back to pane-content stability: if the pane hasn't
-				// changed for longer than stableReadyThreshold, the agent is
-				// presumed idle (waiting on input or a permission, not streaming).
-				// This is the agent-agnostic net — boulez stays usable for any
-				// harness without a dedicated adapter. A transient false Ready
-				// (long silent tool run) self-corrects as soon as output resumes.
-				if r.updated {
-					// Hysteresis on Ready→Running: a single "pane changed" tick is
-					// not enough to demote a Ready instance. The pane chrome (Pi's
-					// animated spinner, the context-usage percentage, the cursor)
-					// keeps hashing differently even when the agent is idle, so
-					// without this gate an idle instance flickers Ready↔Running
-					// every 500ms tick. Require `readyToWorkingTicks` consecutive
-					// working ticks before flipping. A Running instance stays
-					// Running on a single tick (no gate needed there); a Ready
-					// signal or a stable pane resets the streak.
-					if prevStatus == session.Ready {
-						m.workingStreak[r.instance.GetID()]++
-						if m.workingStreak[r.instance.GetID()] < readyToWorkingTicks {
-							// Hold Ready: not enough consecutive working ticks yet.
-							r.instance.SetStatus(session.Ready)
-						} else {
-							delete(m.workingStreak, r.instance.GetID())
-							r.instance.SetStatus(session.Running)
-						}
-					} else {
-						// Running (or other) → stay Running; no streak accumulated.
-						delete(m.workingStreak, r.instance.GetID())
-						r.instance.SetStatus(session.Running)
-					}
-				} else if r.stableFor >= stableReadyThreshold {
-					// Stable pane: idle. Resets the working streak.
-					delete(m.workingStreak, r.instance.GetID())
-					r.instance.SetStatus(session.Ready)
-				} else if prevStatus != session.Ready {
-					// Running and no change: keep Running, keep the streak clear.
-					delete(m.workingStreak, r.instance.GetID())
-				}
-				// If prevStatus == Ready, r.updated == false, stableFor < threshold:
-				// the pane hasn't changed but not long enough to be idle. Hold
-				// Ready (no SetStatus call) and reset the streak — a stable tick
-				// means the agent isn't actively working, so the next working
-				// phase starts counting from 1.
-				if prevStatus == session.Ready && !r.updated && r.stableFor < stableReadyThreshold {
-					delete(m.workingStreak, r.instance.GetID())
-				}
-			}
-			// Notify on the Ready transition when configured.
-			if prevStatus != session.Ready && r.instance.Status == session.Ready {
-				// The agent finished a turn after having resumed work (Running →
-				// Ready): the displayed version no longer matches what was last
-				// landed, so clear the TUI-only landed hint. The dimmed row +
-				// checkmark disappears, signalling the work has moved past the
-				// merged snapshot.
-				r.instance.SetLanded(false)
-				if m.appConfig.NotifyOnReady {
-					m.notifyReady(r.instance)
-				}
-			}
+			// The TUI is a pure viewer of the daemon's status (the daemon is the
+			// status authority: it observes each instance, de-noises via
+			// session.Stabilize, and pushes the stabilized status into the kernel
+			// via k.UpdateStatus). The kernel's status arrives here through
+			// reconcileFleet (fleetTickMsg, ~1s) as d.Status. This handler no
+			// longer detects status locally: doing so would race the daemon's
+			// authority and reintroduce the Ready↔Running flicker (the TUI's
+			// local Ready was clobbered every second by the kernel's stale
+			// Running, and conversely a local detection would fight a daemon
+			// detection one tick apart). What remains here is render-only work:
+			// the diff for the preview pane, computed off the main thread.
 			if r.diffStats != nil && r.diffStats.Error != nil {
 				if !strings.Contains(r.diffStats.Error.Error(), "base commit SHA not set") {
 					log.WarningLog.Printf("could not update diff stats: %v", r.diffStats.Error)
@@ -1157,9 +1077,6 @@ func (m *home) runBranchSearch(repoPath, filter string, version uint64) tea.Cmd 
 // computed in a background goroutine.
 type instanceMetaResult struct {
 	instance  *session.Instance
-	updated   bool
-	status    program.Status
-	stableFor time.Duration
 	diffStats *git.DiffStats
 }
 
@@ -1167,29 +1084,6 @@ type instanceMetaResult struct {
 type metadataUpdateDoneMsg struct {
 	results []instanceMetaResult
 }
-
-// stableReadyThreshold is the agent-agnostic fallback: when an adapter
-// returns no authoritative ready signal (StatusUnknown, or StatusWorking
-// without a turn-boundary marker — e.g. an agent whose sentinel extension
-// isn't installed), the instance is presumed idle once its tmux pane has been
-// stable for this long. An adapter's explicit StatusReady/StatusPermission
-// always wins and is immediate; this is only the net that catches every
-// harness without a dedicated adapter. Tuned conservatively to avoid tripping
-// on long silent tool runs (build/test with no output); the false-positive
-// self-corrects the moment the tool emits a line.
-const stableReadyThreshold = 60 * time.Second
-
-// readyToWorkingTicks is the hysteresis threshold for the Ready→Running
-// transition: a Ready instance is only demoted to Running after this many
-// CONSECUTIVE "pane changed" ticks (each tick is ~500ms, so a value of 3 ≈
-// 1.5s of sustained work). This suppresses the Ready↔Running flicker an idle
-// instance shows because its pane chrome (Pi's animated spinner, the
-// context-usage percentage, the cursor) keeps hashing differently every
-// tick even though the agent is producing nothing. A single jitter tick does
-// not flip; the streak resets on an authoritative Ready signal or a stable
-// pane. A Running→Ready transition is NOT gated (a Ready signal is
-// immediate). See the reconciliation loop in handleMetadataUpdate.
-const readyToWorkingTicks = 3
 
 // snapshotActiveInstances returns the currently active (started, not paused)
 // instances. Called on the main thread so the filtering doesn't race with
@@ -1229,7 +1123,12 @@ func tickUpdateMetadataCmd(active []*session.Instance, selected *session.Instanc
 				defer wg.Done()
 				r := &results[i]
 				r.instance = instance
-				r.updated, r.status, r.stableFor = instance.HasUpdated()
+				// The TUI computes only the render-only diff here; status detection
+				// is the daemon's job (it pushes the stabilized status into the
+				// kernel, which the TUI reads via reconcileFleet). Calling
+				// HasUpdated here would observe a different statusMonitor than the
+				// daemon's kernel instance (the TUI holds a reconstructed
+				// view-handle) and race the daemon's authority.
 				if instance == selected {
 					r.diffStats = instance.ComputeDiff()
 				} else {
