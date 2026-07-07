@@ -8,6 +8,7 @@ import (
 	"github.com/yro7/boulez/log"
 	"github.com/yro7/boulez/program"
 	"github.com/yro7/boulez/protected"
+	"github.com/yro7/boulez/session"
 	"os"
 	"os/exec"
 	"os/signal"
@@ -130,23 +131,68 @@ func RunDaemon(cfg *config.Config) error {
 	go func() {
 		defer wg.Done()
 		ticker := time.NewTimer(pollInterval)
+		// streaks is the per-instance hysteresis counter for the Ready→Running
+		// transition (see session.Stabilize). Owned by this poll goroutine: the
+		// daemon is the status authority, so the de-noising state lives here,
+		// not in the TUI. Pruned each tick of instances no longer in the fleet.
+		streaks := make(map[string]int)
 		for {
-			for _, instance := range k.LiveInstances() {
-				// We only store started instances, but check anyway.
-				if instance.Started() && !instance.Paused() {
-					if _, status, _ := instance.HasUpdated(); status == program.StatusReady || status == program.StatusPermission {
-						// Only resolve prompts the agent's adapter knows how to dismiss
-						// (permissions/trust). A bare "ready" prompt (agent waiting for free
-						// user input) is NOT auto-dismissed: tapping Enter there would
-						// send an empty input to the agent. Agent-specific knowledge of
-						// what is resolvable lives in program.Adapter.
-						instance.CheckAndHandleTrustPrompt()
-						if err := instance.UpdateDiffStats(); err != nil {
-							if everyN.ShouldLog() {
-								log.WarningLog.Printf("could not update diff stats for %s: %v", instance.Title, err)
-							}
+			live := k.LiveInstances()
+			seen := make(map[string]struct{}, len(live))
+			for _, instance := range live {
+				// We only store started instances, but check anyway. A Paused
+				// instance has no live tmux session (Pause kills it), so probing it
+				// would error; skip it entirely.
+				if !instance.Started() || instance.Paused() {
+					continue
+				}
+				seen[instance.GetID()] = struct{}{}
+
+				// The daemon is the status authority: it observes each instance,
+				// de-noises the observation via session.Stabilize, and pushes the
+				// stabilized status into the kernel (which persists transitions).
+				// Previously the daemon called HasUpdated only to drive prompt
+				// resolution and never persisted the detected status, so the
+				// kernel stayed frozen at spawn-time Running: `boulez ctl
+				// list_instances` reported Running forever, and the TUI's
+				// locally-detected Ready was clobbered every second by
+				// reconcileFleet propagating the kernel's stale Running (flicker).
+				updated, observed, stableFor := instance.HasUpdated()
+				prev := instance.Status
+				stable := session.Stabilize(streaks, instance.GetID(), observed, updated, stableFor, prev)
+				k.UpdateStatus(instance.GetID(), stable)
+
+				// Prompt resolution. Only resolve prompts the agent's adapter knows
+				// how to dismiss (permissions/trust) and only when AutoYes is on: the
+				// user explicitly turned off auto-yes, so do not dismiss prompts for
+				// them. A bare "ready" prompt (agent waiting for free input) is NOT
+				// auto-dismissed (tapping Enter there would send an empty input);
+				// StatusReady carries a nil Resolve so CheckAndHandleTrustPrompt is
+				// a no-op there anyway. Agent-specific knowledge of what is
+				// resolvable lives in program.Adapter. Gating on AutoYes here
+				// fixes a latent divergence: the daemon previously resolved
+				// prompts unconditionally while the TUI gated on AutoYes.
+				if observed == program.StatusPermission && instance.AutoYes {
+					instance.CheckAndHandleTrustPrompt()
+				}
+
+				// Diff stats are refreshed when the agent is idle (Ready) or holding
+				// on a permission prompt — the worktree is stable then, and this is
+				// when the user inspects the diff. Refreshing mid-tool-run would
+				// race a changing worktree and waste a git invocation per tick.
+				if stable == session.Ready || observed == program.StatusPermission {
+					if err := instance.UpdateDiffStats(); err != nil {
+						if everyN.ShouldLog() {
+							log.WarningLog.Printf("could not update diff stats for %s: %v", instance.Title, err)
 						}
 					}
+				}
+			}
+			// Prune hysteresis counters for instances that left the fleet
+			// (killed/paused) so the map does not grow unbounded.
+			for id := range streaks {
+				if _, ok := seen[id]; !ok {
+					delete(streaks, id)
 				}
 			}
 
