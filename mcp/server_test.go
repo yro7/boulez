@@ -112,6 +112,47 @@ func TestServer_ListInstances_Filters(t *testing.T) {
 	}
 }
 
+// TestServer_GetInstance proves the read-detail path: the tool emits a
+// get_instance syscall with the id, and the full InstanceDetail (including
+// diff stats) renders back as indented JSON.
+func TestServer_GetInstance(t *testing.T) {
+	fake := boulezmcp.NewFakeCallerForTest()
+	fake.StubResult("get_instance", mustJSON(t, kernel.InstanceDetail{
+		InstanceSummary: kernel.InstanceSummary{ID: "w1", Title: "fix-bug", Repo: "boulez"},
+		Log:             "scrollback line\n",
+	}))
+
+	cs := connect(t, boulezmcp.NewServer(fake))
+	defer cs.Close()
+
+	res, err := cs.CallTool(context.Background(), &mcpsdk.CallToolParams{
+		Name:      "get_instance",
+		Arguments: map[string]any{"id": "w1"},
+	})
+	if err != nil {
+		t.Fatalf("CallTool: %v", err)
+	}
+	if res.IsError {
+		t.Fatalf("tool returned error: %+v", res.Content)
+	}
+	text := res.Content[0].(*mcpsdk.TextContent).Text
+	if !contains(text, "w1") || !contains(text, "fix-bug") || !contains(text, "scrollback line") {
+		t.Fatalf("result missing detail fields: %q", text)
+	}
+
+	calls := fake.Calls()
+	if len(calls) != 1 || calls[0].Method != "get_instance" {
+		t.Fatalf("expected one get_instance call, got %+v", calls)
+	}
+	var got map[string]any
+	if err := json.Unmarshal(calls[0].Params, &got); err != nil {
+		t.Fatalf("unmarshal params: %v", err)
+	}
+	if got["id"] != "w1" {
+		t.Fatalf("id not forwarded: %v", got["id"])
+	}
+}
+
 func mustJSON(t *testing.T, v any) json.RawMessage {
 	t.Helper()
 	b, err := json.Marshal(v)

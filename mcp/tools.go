@@ -15,6 +15,7 @@ import (
 // `list_instances_full` (TUI-internal) are NOT exposed.
 func (s *Server) registerAll() {
 	s.registerListInstances()
+	s.registerGetInstance()
 }
 
 // listInstancesArgs is the MCP-facing argument shape for list_instances. It
@@ -77,7 +78,41 @@ func renderSummaries(in []kernel.InstanceSummary) string {
 	return string(out)
 }
 
-// --- result helpers ---
+// instanceIDArgs is the shared args shape for single-instance tools: just an ID.
+type instanceIDArgs struct {
+	ID string `json:"id" jsonschema:"the instance ID"`
+}
+
+// get_instance returns the full detail of one instance: status, diff stats,
+// and the tmux scrollback (best-effort). This is the projection an
+// orchestrator uses to decide what to do with a worker.
+func (s *Server) registerGetInstance() {
+	mcp.AddTool(s.mcp, &mcp.Tool{
+		Name:        "get_instance",
+		Description: "Get full detail of one instance: summary (status, title, repo, branch, program, host), diff stats, and tmux scrollback log. Use this to inspect a worker's progress or diagnose a failure.",
+	}, func(ctx context.Context, req *mcp.CallToolRequest, args instanceIDArgs) (*mcp.CallToolResult, any, error) {
+		params, err := json.Marshal(args)
+		if err != nil {
+			return nil, nil, fmt.Errorf("marshal get_instance params: %w", err)
+		}
+		raw, errInfo, err := s.caller.Call(ctx, "get_instance", params)
+		if err != nil {
+			return nil, nil, err
+		}
+		if errInfo != nil {
+			return errorResult(errInfo), nil, nil
+		}
+		var detail kernel.InstanceDetail
+		if err := json.Unmarshal(raw, &detail); err != nil {
+			return nil, nil, fmt.Errorf("unmarshal get_instance result: %w", err)
+		}
+		b, err := json.MarshalIndent(detail, "", "  ")
+		if err != nil {
+			return nil, nil, fmt.Errorf("marshal get_instance detail: %w", err)
+		}
+		return textResult(string(b)), nil, nil
+	})
+}
 
 // textResult wraps text as the sole content of an MCP tool result.
 func textResult(text string) *mcp.CallToolResult {
