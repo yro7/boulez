@@ -153,6 +153,57 @@ func TestServer_GetInstance(t *testing.T) {
 	}
 }
 
+// TestServer_SpawnWorker proves the mutate path: the tool emits a
+// spawn_worker syscall with the forwarded args, and returns the new instance
+// ID. Critically, it asserts NO `caller` field leaks into the wire params —
+// identity is bound at the socket session (authenticate), not carried in
+// params (a client cannot spoof another instance to bypass the recursion
+// guard; the MCP surface must not even mention caller).
+func TestServer_SpawnWorker(t *testing.T) {
+	fake := boulezmcp.NewFakeCallerForTest()
+	fake.StubResult("spawn_worker", mustJSON(t, map[string]string{"id": "w42"}))
+
+	cs := connect(t, boulezmcp.NewServer(fake))
+	defer cs.Close()
+
+	res, err := cs.CallTool(context.Background(), &mcpsdk.CallToolParams{
+		Name: "spawn_worker",
+		Arguments: map[string]any{
+			"repo":    "/path/to/boulez",
+			"prompt":  "fix the bug",
+			"program": "pi",
+		},
+	})
+	if err != nil {
+		t.Fatalf("CallTool: %v", err)
+	}
+	if res.IsError {
+		t.Fatalf("tool returned error: %+v", res.Content)
+	}
+	text := res.Content[0].(*mcpsdk.TextContent).Text
+	if !contains(text, "w42") {
+		t.Fatalf("result missing new id: %q", text)
+	}
+
+	calls := fake.Calls()
+	if len(calls) != 1 || calls[0].Method != "spawn_worker" {
+		t.Fatalf("expected one spawn_worker call, got %+v", calls)
+	}
+	var got map[string]any
+	if err := json.Unmarshal(calls[0].Params, &got); err != nil {
+		t.Fatalf("unmarshal params: %v", err)
+	}
+	if got["repo"] != "/path/to/boulez" {
+		t.Fatalf("repo not forwarded: %v", got["repo"])
+	}
+	if got["prompt"] != "fix the bug" {
+		t.Fatalf("prompt not forwarded: %v", got["prompt"])
+	}
+	if _, ok := got["caller"]; ok {
+		t.Fatalf("params must not carry a caller field: %s", calls[0].Params)
+	}
+}
+
 func mustJSON(t *testing.T, v any) json.RawMessage {
 	t.Helper()
 	b, err := json.Marshal(v)

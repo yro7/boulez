@@ -16,6 +16,7 @@ import (
 func (s *Server) registerAll() {
 	s.registerListInstances()
 	s.registerGetInstance()
+	s.registerSpawnWorker()
 }
 
 // listInstancesArgs is the MCP-facing argument shape for list_instances. It
@@ -111,6 +112,49 @@ func (s *Server) registerGetInstance() {
 			return nil, nil, fmt.Errorf("marshal get_instance detail: %w", err)
 		}
 		return textResult(string(b)), nil, nil
+	})
+}
+
+// spawnWorkerArgs mirrors kernel.SpawnParams' wire contract (DRY: identical
+// json tags) but omits the deprecated Caller field — the MCP surface must not
+// even mention caller, since identity is bound at the socket session.
+// Required: Repo. The kernel creates the branch from HEAD if Branch is empty
+// (deterministic names); BranchMustExist requires it to pre-exist.
+type spawnWorkerArgs struct {
+	Repo            string `json:"repo"`
+	Branch          string `json:"branch,omitempty"          jsonschema:"branch name; created from HEAD if absent"`
+	BranchMustExist bool   `json:"branch_must_exist,omitempty" jsonschema:"if true, the branch must pre-exist"`
+	Prompt          string `json:"prompt,omitempty"          jsonschema:"the task to give the worker"`
+	Program         string `json:"program,omitempty"         jsonschema:"agent program (e.g. pi, claude); defaults to the orchestrator's"`
+	Title           string `json:"title,omitempty"            jsonschema:"human-readable instance title"`
+	Kind            string `json:"kind,omitempty"            jsonschema:"instance kind: worker (default) | orchestrator"`
+	Host            string `json:"host,omitempty"            jsonschema:"host name for multi-env (SSH); empty = local"`
+}
+
+func (s *Server) registerSpawnWorker() {
+	mcp.AddTool(s.mcp, &mcp.Tool{
+		Name:        "spawn_worker",
+		Description: "Spawn a new worker instance in an isolated git worktree of the given repo, running an agent program with the given task prompt. Returns the new instance ID. The worker runs on its own branch and cannot touch the protected trunk.",
+	}, func(ctx context.Context, req *mcp.CallToolRequest, args spawnWorkerArgs) (*mcp.CallToolResult, any, error) {
+		params, err := json.Marshal(args)
+		if err != nil {
+			return nil, nil, fmt.Errorf("marshal spawn_worker params: %w", err)
+		}
+		raw, errInfo, err := s.caller.Call(ctx, "spawn_worker", params)
+		if err != nil {
+			return nil, nil, err
+		}
+		if errInfo != nil {
+			return errorResult(errInfo), nil, nil
+		}
+		// kernel returns {"id": "..."}
+		var res struct {
+			ID string `json:"id"`
+		}
+		if err := json.Unmarshal(raw, &res); err != nil {
+			return nil, nil, fmt.Errorf("unmarshal spawn_worker result: %w", err)
+		}
+		return textResult(fmt.Sprintf(`{"id":%q}`, res.ID)), nil, nil
 	})
 }
 
