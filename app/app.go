@@ -79,8 +79,8 @@ type home struct {
 
 	// -- Storage and Configuration --
 
-	program string
-	autoYes bool
+	agentProgram string // the default agent binary name (e.g. "claude"), from the --program flag
+	autoYes      bool
 
 	// appConfig stores persistent application configuration
 	appConfig *config.Config
@@ -251,7 +251,7 @@ func newHome(ctx context.Context, program string, autoYes bool) *home {
 		hostRegistry:    hostRegistry,
 		prefs:           prefStore,
 		presetStore:     presetStore,
-		program:         program,
+		agentProgram:   program,
 		autoYes:         autoYes,
 		state:           stateDefault,
 		appState:        appState,
@@ -1425,7 +1425,7 @@ func (m *home) startNewInstance(repoPath string, promptFlow bool) tea.Cmd {
 	instance, err := session.NewInstance(session.InstanceOptions{
 		Title:   "",
 		Path:    repoPath,
-		Program: m.program,
+		Program: m.agentProgram,
 	})
 	if err != nil {
 		return m.handleError(err)
@@ -1483,7 +1483,7 @@ func (m *home) spawnOrchestrator() tea.Cmd {
 	// is removed and the kernel's instance surfaces via the fleet refresh.
 	draft, err := session.NewInstance(session.InstanceOptions{
 		Title:   title,
-		Program: m.program,
+		Program: m.agentProgram,
 		Kind:    session.KindOrchestrator,
 	})
 	if err != nil {
@@ -1500,7 +1500,7 @@ func (m *home) spawnOrchestrator() tea.Cmd {
 		m.instanceChanged(),
 		m.runSpawnCmd(SpawnOptions{
 			Title:   title,
-			Program: m.program,
+			Program: m.agentProgram,
 			Kind:    session.KindOrchestrator,
 		}, draft.GetID(), true /* orchestrator post-spawn injection */),
 	)

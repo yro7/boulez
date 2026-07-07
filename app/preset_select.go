@@ -115,7 +115,7 @@ func (m *home) startNewInstanceFromPreset(name string, p presets.Preset) tea.Cmd
 	// Resolve the profile name to a program string. An empty profile means
 	// "use the default program" (the boulez --program flag). A name that matches
 	// no profile is rejected so a stale preset does not start a wrong agent.
-	program := m.program
+	program := m.agentProgram
 	if p.Profile != "" {
 		resolved, ok := m.appConfig.GetProfileByName(p.Profile)
 		if !ok {
