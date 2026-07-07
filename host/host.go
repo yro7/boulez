@@ -40,18 +40,6 @@ type Host interface {
 	// routes over ssh.
 	FS() fs.FS
 
-	// PtyFactory allocates PTYs for tmux attach/restore. LocalHost uses
-	// creack/pty directly; SSHHost starts `ssh -t <alias> ...` under a PTY.
-	PtyFactory() PtyFactory
-
-	// WorktreeDir is the directory under which boulez worktrees for this host
-	// are created. LocalHost returns an absolute local path; SSHHost returns
-	// an absolute remote path (<remote-$HOME>/.boulez/worktrees), resolving
-	// $HOME on the remote at Start. The path is absolute (not ~-relative)
-	// because it flows through single-quoted argv (joinShellQuoted) and
-	// `git -C`, neither of which expands ~.
-	WorktreeDir() (string, error)
-
 	// ResolveRepoPath normalizes a user-supplied repo path for this host's
 	// transport. LocalHost resolves it against the process working directory
 	// (filepath.Abs, best-effort) so a stored path survives a cwd change;
@@ -60,6 +48,14 @@ type Host interface {
 	// at a path on the wrong machine. Called once at Start, after the host is
 	// known, before the worktree is built.
 	ResolveRepoPath(path string) string
+
+	// WorktreeDir is the directory under which boulez worktrees for this host
+	// are created. LocalHost returns an absolute local path; SSHHost returns
+	// an absolute remote path (<remote-$HOME>/.boulez/worktrees), resolving
+	// $HOME on the remote at Start. The path is absolute (not ~-relative)
+	// because it flows through single-quoted argv (joinShellQuoted) and
+	// `git -C`, neither of which expands ~.
+	WorktreeDir() (string, error)
 
 	// EnsureConnected establishes any long-lived transport connection needed
 	// before the instance issues commands. For SSHHost this starts (or verifies)

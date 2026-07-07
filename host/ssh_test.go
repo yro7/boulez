@@ -106,19 +106,6 @@ func TestSSHFS_CommandInjectsControlPath(t *testing.T) {
 	assert.Equal(t, sshArgv("dev-machine", "echo hi"), noSock.Args)
 }
 
-// TestSSHPtyFactory_CommandInjectsControlPath proves the PTY seam rides the
-// master (the -t comes before the control opts).
-func TestSSHPtyFactory_CommandInjectsControlPath(t *testing.T) {
-	orig := exec.Command("tmux", "attach-session", "-t", "foo")
-	withSock := sshPtyFactory{alias: "dev-machine", socket: "/tmp/x.sock"}.command(orig)
-	assert.Equal(t,
-		[]string{"ssh", "-t", "-o", "ControlPath=/tmp/x.sock", "dev-machine", "'tmux' 'attach-session' '-t' 'foo'"},
-		withSock.Args)
-
-	noSock := sshPtyFactory{alias: "dev-machine"}.command(orig)
-	assert.Equal(t, []string{"ssh", "-t", "dev-machine", "'tmux' 'attach-session' '-t' 'foo'"}, noSock.Args)
-}
-
 // TestSSHHost_EnsureConnected_Delegates proves EnsureConnected drives the
 // master lifecycle (and is best-effort: a start failure is swallowed so Start
 // is never aborted by a transport hiccup). The master uses a fake runner so
@@ -362,34 +349,6 @@ func TestSSHFS_ParseDirEntries_SplitsNullDelimited(t *testing.T) {
 	e = parseDirEntries("x\ny\x00")
 	require.Len(t, e, 1)
 	assert.Equal(t, "x\ny", e[0].Name(), "name with newline must survive")
-}
-
-// TestSSHPtyFactory_CommandBuildsArgv is the regression guard for the
-// double-"ssh" bug on the PTY seam. command() must build exactly
-// `ssh -t <alias> <shell-joined args>`, never re-prepend sshBin. We assert
-// the built command's Args — without launching ssh or allocating a PTY — so
-// a re-introduction of the bug class fails loudly.
-func TestSSHPtyFactory_CommandBuildsArgv(t *testing.T) {
-	f := sshPtyFactory{alias: "dev-machine"}
-	orig := exec.Command("tmux", "attach-session", "-t", "foo")
-	built := f.command(orig)
-
-	// Args[0] is sshBin exactly once; Args[1] is -t; Args[2] is the alias;
-	// Args[3] is the shell-joined-and-quoted original args, which must
-	// round-trip back to the original args via a POSIX shell.
-	require.Equal(t, []string{"ssh", "-t", "dev-machine", "'tmux' 'attach-session' '-t' 'foo'"}, built.Args)
-	assert.Equal(t, orig.Args, shellReparse(t, built.Args[3]),
-		"joined args must re-parse to the original args")
-}
-
-// TestSSHPtyFactory_Command_Quoting proves args survive the remote shell: a
-// session name with a space stays a single arg. Same property as the
-// executor's quoting, on the PTY seam.
-func TestSSHPtyFactory_Command_Quoting(t *testing.T) {
-	orig := exec.Command("tmux", "attach-session", "-t", "my session")
-	built := sshPtyFactory{alias: "h"}.command(orig)
-	require.Len(t, built.Args, 4)
-	assert.Equal(t, orig.Args, shellReparse(t, built.Args[3]))
 }
 
 // TestSSHHost_AttachCmd_BuildsArgv proves AttachCmd produces the interactive

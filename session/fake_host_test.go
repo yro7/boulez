@@ -25,9 +25,6 @@ func (f *fakeHost) AutoYesDefault() bool   { return false }
 func (f *fakeHost) EnsureConnected() error { return nil }
 func (f *fakeHost) Executor() cmd.Executor { return cmd.MakeExecutor() }
 func (f *fakeHost) FS() fs.FS              { return fs.LocalFS{} }
-func (f *fakeHost) PtyFactory() host.PtyFactory {
-	return host.LocalPtyFactory()
-}
 func (f *fakeHost) WorktreeDir() (string, error) { return "/tmp/boulez-fake-wt", nil }
 
 // AttachCmd implements Host: returns a local tmux attach command (the

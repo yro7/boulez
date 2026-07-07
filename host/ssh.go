@@ -149,22 +149,13 @@ func worktreeDirForHome(home string) string {
 // they flow through single-quoted argv where ~ does NOT expand.)
 func (h SSHHost) ResolveRepoPath(path string) string { return path }
 
-// PtyFactory implements Host: a PTY factory that runs `ssh -t <alias> ...`
-// under a local PTY (creack/pty). The -t forces a remote TTY so tmux attach
-// is interactive. -o ControlPath=<socket> (when set) makes the attach ride the
-// master. Used by TmuxSession.Attach/Restore for remote sessions.
-func (h SSHHost) PtyFactory() PtyFactory {
-	return sshPtyFactory{alias: h.alias, socket: h.master.socketForSlave()}
-}
-
 // AttachCmd implements Host: the *exec.Cmd that interactively attaches the
 // user's terminal to a remote tmux session, run via tea.ExecProcess by the
 // TUI. The argv is `ssh -t [control opts] <alias> tmux attach-session -t
 // <name>` — reusing sshInteractiveArgs so the -t / control-opts / shell-
-// joining assembly is shared with sshPtyFactory.command (and its tests). No
-// PTY is allocated by boulez: the local terminal is already a tty, ssh -t
-// allocates the remote one, and tea.ExecProcess releases the Bubbletea
-// terminal for the command's duration.
+// joining assembly is shared (and its tests). No PTY is allocated by boulez:
+// the local terminal is already a tty, ssh -t allocates the remote one, and
+// tea.ExecProcess releases the Bubbletea terminal for the command's duration.
 func (h SSHHost) AttachCmd(sessionName string) *exec.Cmd {
 	args := sshInteractiveArgs(h.alias, h.master.socketForSlave(),
 		[]string{"tmux", "attach-session", "-t", sessionName})
@@ -344,4 +335,17 @@ func (f sshFS) ReadDir(name string) ([]os.DirEntry, error) {
 		return nil, fmt.Errorf("ssh readdir %s: %w", name, err)
 	}
 	return parseDirEntries(string(out)), nil
+}
+
+// sshInteractiveArgs returns the full argv to run a command interactively
+// over ssh with a remote PTY: `ssh -t [control opts] <alias> <shell-joined
+// args>`. The -t forces PTY allocation on the remote so interactive commands
+// (tmux attach-session) work; the control opts (-o ControlPath=<socket>) ride
+// the ControlMaster when one is up (omitted when socket is ""). The single
+// argv builder for SSHHost.AttachCmd; tested without launching ssh.
+func sshInteractiveArgs(alias, socket string, cmdArgs []string) []string {
+	args := []string{sshBin, "-t"}
+	args = append(args, sshControlArgs(socket)...)
+	args = append(args, alias, joinShellQuoted(cmdArgs))
+	return args
 }

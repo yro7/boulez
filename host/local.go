@@ -27,9 +27,6 @@ func (LocalHost) Executor() cmd.Executor { return cmd.MakeExecutor() }
 // FS implements Host: the local filesystem.
 func (LocalHost) FS() fs.FS { return fs.LocalFS{} }
 
-// PtyFactory implements Host: a local PTY factory (creack/pty).
-func (LocalHost) PtyFactory() PtyFactory { return LocalPtyFactory() }
-
 // WorktreeDir implements Host: the local ~/.boulez/worktrees directory.
 func (LocalHost) WorktreeDir() (string, error) {
 	configDir, err := config.GetConfigDir()

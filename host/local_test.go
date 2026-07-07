@@ -46,9 +46,6 @@ func TestLocalHost_Deps(t *testing.T) {
 	// FS is the local filesystem.
 	_, ok = h.FS().(fs.LocalFS)
 	assert.True(t, ok, "LocalHost.FS should be fs.LocalFS")
-
-	// PtyFactory is the local pty factory (non-nil).
-	assert.NotNil(t, h.PtyFactory())
 }
 
 // TestLocalHost_ResolveRepoPath_Absolutizes proves the local branch of
