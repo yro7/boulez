@@ -84,3 +84,26 @@ type Host interface {
 	// returns false (AutoYes is off by default on remote hosts).
 	AutoYesDefault() bool
 }
+
+// attachTmuxArgv builds the tmux argv that attaches the current terminal to a
+// session while binding Ctrl-Q to detach-client for the duration of the attach
+// (and unbinding it afterwards). This restores boulez's Ctrl-Q detach contract
+// after the manual stdin scavenger was removed: tmux owns the keyboard during
+// attach, so the Ctrl-Q → detach mapping must live in tmux's key table, scoped
+// to the attach so it doesn't leak into the user's other tmux usage.
+//
+// The sequence is a single tmux invocation: bind C-q, attach, unbind C-q. The
+// unbind runs after detach (whether via Ctrl-Q, `:detach`, or client death)
+// because tmux executes the post-attach commands only after the client detaches.
+// If the bind already exists (user has rebound C-q), `-T boulez-attach` would
+// be the scoped-table alternative — left as a follow-up if users report clashes.
+//
+// Returned argv is the part after `tmux` (LocalHost) or after the remote
+// `tmux` (SSHHost, via sshInteractiveArgs).
+func attachTmuxArgv(sessionName string) []string {
+	return []string{
+		"bind-key", "C-q", "detach-client",
+		";", "attach-session", "-t", sessionName,
+		";", "unbind-key", "C-q",
+	}
+}

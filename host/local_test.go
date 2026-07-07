@@ -73,8 +73,14 @@ func TestLocalHost_ResolveRepoPath_Absolutizes(t *testing.T) {
 
 // TestLocalHost_AttachCmd_BuildsArgv proves AttachCmd returns the local
 // interactive attach command, run by the TUI via tea.ExecProcess on the real
-// terminal (no PTY allocated by boulez).
+// terminal (no PTY allocated by boulez). The argv binds Ctrl-Q to detach-client
+// for the duration of the attach (then unbinds), preserving boulez's Ctrl-Q
+// detach contract now that the manual stdin scavenger is gone.
 func TestLocalHost_AttachCmd_BuildsArgv(t *testing.T) {
 	cmd := LocalHost{}.AttachCmd("foo")
-	assert.Equal(t, []string{"tmux", "attach-session", "-t", "foo"}, cmd.Args)
+	assert.Equal(t,
+		[]string{"tmux", "bind-key", "C-q", "detach-client",
+			";", "attach-session", "-t", "foo",
+			";", "unbind-key", "C-q"},
+		cmd.Args)
 }

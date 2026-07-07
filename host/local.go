@@ -58,10 +58,13 @@ func (LocalHost) AutoYesDefault() bool { return config.LoadConfig().AutoYes }
 // no connection to establish, commands run in-process.
 func (LocalHost) EnsureConnected() error { return nil }
 
-// AttachCmd implements Host: `tmux attach-session -t <name>`, run on the real
-// terminal by the TUI via tea.ExecProcess. No PTY is allocated by boulez — the
-// local terminal is already a tty, and tmux attach-session takes it over
-// directly while Bubbletea's terminal is released.
+// AttachCmd implements Host: a `tmux` command run on the real terminal by the
+// TUI via tea.ExecProcess. No PTY is allocated by boulez — the local terminal
+// is already a tty, and tmux takes it over directly while Bubbletea's
+// terminal is released. The command binds Ctrl-Q to detach-client for the
+// duration of the attach (then unbinds), preserving boulez's Ctrl-Q detach
+// contract now that the manual stdin scavenger is gone (see attachTmuxArgv).
 func (LocalHost) AttachCmd(sessionName string) *exec.Cmd {
-	return exec.Command("tmux", "attach-session", "-t", sessionName)
+	argv := attachTmuxArgv(sessionName)
+	return exec.Command("tmux", argv...)
 }
