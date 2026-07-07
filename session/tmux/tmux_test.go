@@ -3,44 +3,15 @@ package tmux
 import (
 	"fmt"
 	cmd2 "github.com/yro7/boulez/cmd"
-	"math/rand"
-	"os"
 	"os/exec"
-	"path/filepath"
 	"strings"
 	"testing"
 
-	"github.com/yro7/boulez/cmd/cmd_test"
-
 	"github.com/stretchr/testify/assert"
 	"github.com/stretchr/testify/require"
+
+	"github.com/yro7/boulez/cmd/cmd_test"
 )
-
-type MockPtyFactory struct {
-	t *testing.T
-
-	// Array of commands and the corresponding file handles representing PTYs.
-	cmds  []*exec.Cmd
-	files []*os.File
-}
-
-func (pt *MockPtyFactory) Start(cmd *exec.Cmd) (*os.File, error) {
-	filePath := filepath.Join(pt.t.TempDir(), fmt.Sprintf("pty-%s-%d", pt.t.Name(), rand.Int31()))
-	f, err := os.OpenFile(filePath, os.O_CREATE|os.O_RDWR, 0644)
-	if err == nil {
-		pt.cmds = append(pt.cmds, cmd)
-		pt.files = append(pt.files, f)
-	}
-	return f, err
-}
-
-func (pt *MockPtyFactory) Close() {}
-
-func NewMockPtyFactory(t *testing.T) *MockPtyFactory {
-	return &MockPtyFactory{
-		t: t,
-	}
-}
 
 func TestSanitizeName(t *testing.T) {
 	session := NewTmuxSession("asdf", "program")
@@ -50,13 +21,20 @@ func TestSanitizeName(t *testing.T) {
 	require.Equal(t, TmuxPrefix+"asdf__asdf", session.sanitizedName)
 }
 
+// TestStartTmuxSession pins that Start issues `tmux new-session -d` through
+// the host executor (cmdExec), not via a PTY. The previous implementation ran
+// the detached new-session under a creack/pty (wrong: a detached session
+// never reads a terminal); this test guards against a PTY sneaking back onto
+// the Start path. It also confirms the history-limit and mouse set-options
+// follow.
 func TestStartTmuxSession(t *testing.T) {
-	ptyFactory := NewMockPtyFactory(t)
-
+	var ran []string
 	created := false
 	cmdExec := cmd_test.MockCmdExec{
 		RunFunc: func(cmd *exec.Cmd) error {
-			if strings.Contains(cmd.String(), "has-session") && !created {
+			s := cmd2.ToString(cmd)
+			ran = append(ran, s)
+			if strings.Contains(s, "has-session") && !created {
 				created = true
 				return fmt.Errorf("session already exists")
 			}
@@ -68,24 +46,25 @@ func TestStartTmuxSession(t *testing.T) {
 	}
 
 	workdir := t.TempDir()
-	session := newTmuxSession("test-session", "claude", ptyFactory, cmdExec)
+	session := newTmuxSession("test-session", "claude", cmdExec)
 
-	err := session.Start(workdir)
-	require.NoError(t, err)
-	require.Equal(t, 2, len(ptyFactory.cmds))
-	require.Equal(t, fmt.Sprintf("tmux new-session -d -s boulez_test-session -c %s claude", workdir),
-		cmd2.ToString(ptyFactory.cmds[0]))
-	require.Equal(t, "tmux attach-session -t boulez_test-session",
-		cmd2.ToString(ptyFactory.cmds[1]))
-
-	require.Equal(t, 2, len(ptyFactory.files))
-
-	// File should be closed.
-	_, err = ptyFactory.files[0].Stat()
-	require.Error(t, err)
-	// File should be open
-	_, err = ptyFactory.files[1].Stat()
-	require.NoError(t, err)
+	require.NoError(t, session.Start(workdir))
+	// Find the new-session command (Start begins with a has-session probe, so
+	// it is not necessarily ran[0]).
+	var newSessionCmd string
+	for _, s := range ran {
+		if strings.Contains(s, "new-session") {
+			newSessionCmd = s
+			break
+		}
+	}
+	require.NotEmpty(t, newSessionCmd, "Start must issue new-session via cmdExec")
+	require.Equal(t,
+		fmt.Sprintf("tmux new-session -d -s boulez_test-session -c %s claude", workdir),
+		newSessionCmd,
+		"Start must issue new-session via cmdExec, not a PTY")
+	assert.NotContains(t, ran, "tmux attach-session -t boulez_test-session",
+		"no PTY attach command on the Start path")
 }
 
 // TestClose_IdempotentWhenSessionGone proves the zombie fix: Close() on a
@@ -111,7 +90,7 @@ func TestClose_IdempotentWhenSessionGone(t *testing.T) {
 		OutputFunc: func(c *exec.Cmd) ([]byte, error) { return []byte{}, nil },
 	}
 
-	sess := newTmuxSession("gone-session", "bash", NewMockPtyFactory(t), exec)
+	sess := newTmuxSession("gone-session", "bash", exec)
 	err := sess.Close()
 	require.NoError(t, err, "Close on a gone session is a no-op success")
 }
@@ -137,7 +116,7 @@ func TestStart_TimeoutSurfacesRealHasSessionError(t *testing.T) {
 		OutputFunc: func(c *exec.Cmd) ([]byte, error) { return []byte{}, nil },
 	}
 
-	sess := newTmuxSession("never-appears", "claude", NewMockPtyFactory(t), exec)
+	sess := newTmuxSession("never-appears", "claude", exec)
 	err := sess.Start(t.TempDir())
 	require.Error(t, err)
 	assert.Contains(t, err.Error(), "timed out waiting for tmux session")
@@ -165,7 +144,7 @@ func TestClose_SurfacesErrorOnLiveSession(t *testing.T) {
 		OutputFunc: func(c *exec.Cmd) ([]byte, error) { return []byte{}, nil },
 	}
 
-	sess := newTmuxSession("wedge-session", "bash", NewMockPtyFactory(t), exec)
+	sess := newTmuxSession("wedge-session", "bash", exec)
 	err := sess.Close()
 	require.Error(t, err, "kill failure on a live session is surfaced")
 	assert.Contains(t, err.Error(), "kill-session")
@@ -210,7 +189,7 @@ func TestSendKeys_TapEnter_TapDAndEnter_PinSendKeysArgv(t *testing.T) {
 		},
 		OutputFunc: func(c *exec.Cmd) ([]byte, error) { return []byte{}, nil },
 	}
-	sess := newTmuxSession("keys-test", "bash", NewMockPtyFactory(t), exec)
+	sess := newTmuxSession("keys-test", "bash", exec)
 
 	require.NoError(t, sess.SendKeys("hello world"))
 	require.NoError(t, sess.SendKeys("Enter")) // literal: the word, not the key
@@ -239,7 +218,7 @@ func TestSendKey_PinSendKeyArgv(t *testing.T) {
 		},
 		OutputFunc: func(c *exec.Cmd) ([]byte, error) { return []byte{}, nil },
 	}
-	sess := newTmuxSession("keys-test", "bash", NewMockPtyFactory(t), exec)
+	sess := newTmuxSession("keys-test", "bash", exec)
 
 	require.NoError(t, sess.SendKey("BSpace"))
 	require.NoError(t, sess.SendKey("C-c"))
@@ -282,4 +261,28 @@ func TestSessionExists_and_KillSession(t *testing.T) {
 	// reclaim tolerates it (it checks existence first). We assert the behaviour
 	// is documented: an error is returned, not a silent nil.
 	require.Error(t, KillSession(c, name), "kill-session on absent session exits non-zero")
+}
+
+// TestRestore_InitializesMonitor pins that Restore initializes the status
+// monitor without allocating a PTY (the previous implementation opened a
+// phantom tmux-attach PTY with no reader). HasUpdated must work immediately
+// after Restore on a captured-content stub.
+func TestRestore_InitializesMonitor(t *testing.T) {
+	var output []byte
+	exec := cmd_test.MockCmdExec{
+		RunFunc: func(c *exec.Cmd) error { return nil },
+		OutputFunc: func(c *exec.Cmd) ([]byte, error) {
+			return output, nil
+		},
+	}
+	sess := newTmuxSession("restore-test", "bash", exec)
+	require.NoError(t, sess.Restore())
+
+	output = []byte("first")
+	changed, _, _ := sess.HasUpdated()
+	require.True(t, changed, "first capture after Restore is a change")
+
+	output = []byte("first") // same content
+	changed, _, _ = sess.HasUpdated()
+	require.False(t, changed, "identical content is not a change")
 }

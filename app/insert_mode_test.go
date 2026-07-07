@@ -3,7 +3,6 @@ package app
 import (
 	"context"
 	"fmt"
-	"os"
 	"os/exec"
 	"strings"
 	"sync"
@@ -47,6 +46,8 @@ func (r *recordingCmdExec) RunFunc() func(*exec.Cmd) error {
 }
 
 func (r *recordingCmdExec) OutputFunc() func(*exec.Cmd) ([]byte, error) {
+
+// newStartedMockInstance builds an instance that reports as started with the
 	return func(c *exec.Cmd) ([]byte, error) {
 		r.mu.Lock()
 		defer r.mu.Unlock()
@@ -66,23 +67,6 @@ func (r *recordingCmdExec) sendKeysCmds() []string {
 	}
 	return out
 }
-
-// mockPtyFactoryForApp is a minimal pty factory for app tests: it returns a
-// temp file so Start's PTY bookkeeping doesn't panic. Modeled on
-// ui.MockPtyFactory but kept local to app to avoid an import cycle.
-type mockPtyFactoryForApp struct {
-	t *testing.T
-}
-
-func (m *mockPtyFactoryForApp) Start(c *exec.Cmd) (*os.File, error) {
-	f, err := os.CreateTemp(m.t.TempDir(), "pty-*")
-	if err != nil {
-		return nil, err
-	}
-	return f, nil
-}
-
-func (m *mockPtyFactoryForApp) Close() {}
 
 // newStartedMockInstance builds an instance that reports as started with the
 // given status, wired to a real *tmux.TmuxSession whose commands are captured
@@ -122,8 +106,7 @@ func newStartedMockInstance(t *testing.T, status session.Status) (*session.Insta
 	})
 	require.NoError(t, err)
 
-	ptyFactory := &mockPtyFactoryForApp{t: t}
-	ts := tmux.NewTmuxSessionWithDeps(name, "bash", ptyFactory, cmdExec)
+	ts := tmux.NewTmuxSessionWithDeps(name, "bash", cmdExec)
 	inst.SetTmuxSession(ts)
 	inst.MarkStartedForTest()
 	inst.SetStatus(status)

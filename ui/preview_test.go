@@ -54,14 +54,8 @@ func setupTestEnvironment(t *testing.T, cmdExec cmd_test.MockCmdExec) *testSetup
 	})
 	require.NoError(t, err)
 
-	// Create MockPtyFactory
-	ptyFactory := &MockPtyFactory{
-		t:       t,
-		cmdExec: cmdExec,
-	}
-
 	// Set up tmux session with mocks
-	tmuxSession := tmux.NewTmuxSessionWithDeps(sessionName, "bash", ptyFactory, cmdExec)
+	tmuxSession := tmux.NewTmuxSessionWithDeps(sessionName, "bash", cmdExec)
 	instance.SetTmuxSession(tmuxSession)
 
 	// Start the tmux session
@@ -284,31 +278,6 @@ func TestPreviewScrolling(t *testing.T) {
 	// Verify we exited scrolling mode
 	require.False(t, previewPane.isScrolling, "Should not be in scrolling mode after reset")
 }
-
-// MockPtyFactory for testing tmux sessions
-type MockPtyFactory struct {
-	t       *testing.T
-	cmdExec cmd_test.MockCmdExec
-
-	// Array of commands and the corresponding file handles representing PTYs.
-	cmds  []*exec.Cmd
-	files []*os.File
-}
-
-func (pt *MockPtyFactory) Start(cmd *exec.Cmd) (*os.File, error) {
-	filePath := filepath.Join(pt.t.TempDir(), fmt.Sprintf("pty-%s-%d", pt.t.Name(), len(pt.cmds)))
-	f, err := os.OpenFile(filePath, os.O_CREATE|os.O_RDWR, 0644)
-	if err == nil {
-		pt.cmds = append(pt.cmds, cmd)
-		pt.files = append(pt.files, f)
-
-		// Execute the command through our mock to trigger session creation logic
-		_ = pt.cmdExec.Run(cmd)
-	}
-	return f, err
-}
-
-func (pt *MockPtyFactory) Close() {}
 
 // TestPreviewContentWithoutScrolling tests that the preview pane correctly displays content
 // for a new instance without requiring scrolling

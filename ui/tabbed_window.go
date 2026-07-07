@@ -210,11 +210,6 @@ func (w *TabbedWindow) GetActiveTab() int {
 	return w.activeTab
 }
 
-// AttachTerminal attaches to the terminal tmux session
-func (w *TabbedWindow) AttachTerminal() (chan struct{}, error) {
-	return w.terminal.Attach()
-}
-
 // TerminalSessionName returns the sanitized tmux session name for the terminal
 // tab's current instance session (local tmux), or "" if none. The app builds a
 // local attach command from it for tea.ExecProcess.

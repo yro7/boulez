@@ -189,23 +189,6 @@ func (t *TerminalPane) ensureSessionLocked(instance *session.Instance) error {
 	return nil
 }
 
-// Attach attaches to the terminal tmux session (full-screen).
-func (t *TerminalPane) Attach() (chan struct{}, error) {
-	t.mu.Lock()
-	s, ok := t.sessions[t.currentTitle]
-	if !ok || s.tmuxSession == nil {
-		t.mu.Unlock()
-		return nil, fmt.Errorf("no terminal session to attach to")
-	}
-	if !s.tmuxSession.DoesSessionExist() {
-		t.mu.Unlock()
-		return nil, fmt.Errorf("terminal session does not exist")
-	}
-	ts := s.tmuxSession
-	t.mu.Unlock()
-	return ts.Attach()
-}
-
 // SessionName returns the sanitized tmux session name for the currently
 // displayed instance's terminal session, or "" if none exists. Used to build
 // a local attach command (host.AttachCmd) for tea.ExecProcess — the terminal

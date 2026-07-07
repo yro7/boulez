@@ -598,7 +598,7 @@ func (i *Instance) Start(firstTimeSetup bool) error {
 		// the same name) cannot collide on the same tmux session name. Without
 		// this, the shared session masked orphaned worktrees during liveness
 		// reconciliation (the collision-from-shared-titles regression).
-		tmuxSession = tmux.NewTmuxSessionWithDeps(i.SessionLabel(), i.Program, i.host.PtyFactory(), i.host.Executor())
+		tmuxSession = tmux.NewTmuxSessionWithDeps(i.SessionLabel(), i.Program, i.host.Executor())
 	}
 	i.tmuxSession = tmuxSession
 
@@ -742,13 +742,6 @@ func (i *Instance) TapEnter() {
 	}
 }
 
-func (i *Instance) Attach() (chan struct{}, error) {
-	if !i.started {
-		return nil, fmt.Errorf("cannot attach instance that has not been started")
-	}
-	return i.tmuxSession.Attach()
-}
-
 func (i *Instance) SetPreviewSize(width, height int) error {
 	if !i.started || i.Status == Paused {
 		return fmt.Errorf("cannot set preview size for instance that has not been started or " +
@@ -848,10 +841,6 @@ func (i *Instance) Pause() error {
 	} else if !valid {
 		log.WarningLog.Printf("worktree at %s is orphaned; skipping dirty check and remove",
 			i.gitWorktree.GetWorktreePath())
-		if err := i.tmuxSession.DetachSafely(); err != nil {
-			errs = append(errs, fmt.Errorf("failed to detach tmux session: %w", err))
-			log.ErrorLog.Print(err)
-		}
 		// Drop any leftover directory so a future Resume's `git worktree add` won't conflict.
 		if err := i.gitWorktree.RemoveWorktreeDir(); err != nil {
 			errs = append(errs, fmt.Errorf("failed to remove orphaned worktree directory: %w", err))
@@ -882,13 +871,6 @@ func (i *Instance) Pause() error {
 			// Return early if we can't commit changes to avoid corrupted state
 			return i.combineErrors(errs)
 		}
-	}
-
-	// Detach from tmux session instead of closing to preserve session output
-	if err := i.tmuxSession.DetachSafely(); err != nil {
-		errs = append(errs, fmt.Errorf("failed to detach tmux session: %w", err))
-		log.ErrorLog.Print(err)
-		// Continue with pause process even if detach fails
 	}
 
 	// Check if worktree exists before trying to remove it
