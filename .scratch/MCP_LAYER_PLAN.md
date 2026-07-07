@@ -340,16 +340,36 @@ no longer references the CLI.
 
 Goal: prove a real conductor can drive the fleet.
 
-- Spawn orchestrator with `--program claude` (Claude Code supports MCP via
-  `.mcp.json`). Confirm Claude discovers the `boulez` MCP server and its
-  tools in its tool list.
-- From Claude, ask it to `list_instances`. Confirm a syscall hits the kernel
-  (visible in daemon logs) and the result renders.
-- (Stretch) ask it to `spawn_worker` a trivial task; confirm attribution to
-  the orchestrator's plan.
+Status: **documented, not automated** (requires a live daemon + a real
+conductor). Procedure:
+
+1. Start the daemon: `boulez daemon start` (or any TUI invocation, which
+   auto-launches it).
+2. Spawn an orchestrator with a conductor that supports MCP (Claude Code):
+   launch the TUI with `-p claude`, press `O`. This writes `ORCHESTRATOR.md`
+   + `.mcp.json` into the orchestrator's control dir.
+3. Attach to the orchestrator's pane. Claude Code should discover the `boulez`
+   MCP server via `.mcp.json` and list its tools.
+4. Ask Claude to call `list_instances`. Confirm a syscall hits the kernel
+   (visible in `boulez daemon log`) and the result renders in the pane.
+5. (Stretch) ask Claude to `spawn_worker` a trivial task on this repo; confirm
+   the worker appears in the fleet and the action is attributed to the
+   orchestrator's plan.
+
+Quick wire-level smoke (no conductor): pipe an MCP `initialize` into the
+subcommand and confirm a valid JSON-RPC response:
+
+```sh
+printf '%s\n' '{"jsonrpc":"2.0","id":1,"method":"initialize","params":{"protocolVersion":"2024-11-05","capabilities":{},"clientInfo":{"name":"smoke","version":"0"}}}' \
+  | boulez mcp serve --as <orchestrator-id>
+```
+
+(Against a nonexistent id, the server exits with `authenticate:
+UNKNOWN_INSTANCE: ...` — this proves the dial + authenticate path against
+the live daemon.)
 
 Done when: one full orchestrator→kernel round-trip via MCP succeeds with a
-real conductor. Document the smoke recipe in `.scratch/`.
+real conductor.
 
 ## Definition of done (whole layer)
 
