@@ -109,7 +109,7 @@ func runDaemon() error {
 // If the daemon is already serving it is a no-op; otherwise it auto-starts the
 // daemon detached and waits (5s budget) for the socket to come up.
 func EnsureDaemonRunning() error {
-	return daemon.EnsureRunning(5 * time.Second)
+	return daemon.EnsureRunning(15 * time.Second)
 }
 
 // PrintDaemonFailureHint is the TUI boot failure surface (decision D2): when
@@ -161,8 +161,15 @@ func NewDaemonStartCmd() *cobra.Command {
 				return fmt.Errorf("failed to start daemon: %w", err)
 			}
 			socketPath, _ := kernel.SocketPath()
-			if err := daemon.WaitForSocket(socketPath, 5*time.Second); err != nil {
+			if err := daemon.WaitForSocket(socketPath, 15*time.Second); err != nil {
 				return fmt.Errorf("daemon did not come up (see `boulez daemon log`): %w", err)
+			}
+			// WaitForSocket only stats the socket FILE; a stale socket left by a
+			// crashed daemon passes it. Dial for real so we never report success
+			// over a daemon that bound-then-died (or never served) — the false
+			// "daemon started" that masked the wedge bug.
+			if err := daemon.ProbeSocket(); err != nil {
+				return fmt.Errorf("daemon socket appeared but is not serving (see `boulez daemon log`): %w", err)
 			}
 			pid, _, _ := daemon.ReadPID()
 			fmt.Print("daemon started")

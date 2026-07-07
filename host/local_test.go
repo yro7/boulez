@@ -46,9 +46,6 @@ func TestLocalHost_Deps(t *testing.T) {
 	// FS is the local filesystem.
 	_, ok = h.FS().(fs.LocalFS)
 	assert.True(t, ok, "LocalHost.FS should be fs.LocalFS")
-
-	// PtyFactory is the local pty factory (non-nil).
-	assert.NotNil(t, h.PtyFactory())
 }
 
 // TestLocalHost_ResolveRepoPath_Absolutizes proves the local branch of
@@ -72,4 +69,12 @@ func TestLocalHost_ResolveRepoPath_Absolutizes(t *testing.T) {
 	// ~ is NOT expanded by LocalHost (that is the remote shell's job, not
 	// filepath.Abs's) — pinning so a future "helpful" ~ expansion here fails.
 	assert.Equal(t, filepath.Join(wd, "~/repo"), LocalHost{}.ResolveRepoPath("~/repo"))
+}
+
+// TestLocalHost_AttachCmd_BuildsArgv proves AttachCmd returns the local
+// interactive attach command, run by the TUI via tea.ExecProcess on the real
+// terminal (no PTY allocated by boulez).
+func TestLocalHost_AttachCmd_BuildsArgv(t *testing.T) {
+	cmd := LocalHost{}.AttachCmd("foo")
+	assert.Equal(t, []string{"tmux", "attach-session", "-t", "foo"}, cmd.Args)
 }

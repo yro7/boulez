@@ -35,7 +35,7 @@ func TestHasUpdated_ReadySurvivesStableContent(t *testing.T) {
 			return []byte(paneContent), nil
 		},
 	}
-	s := newTmuxSession("ready-test", "stub", NewMockPtyFactory(t), cmdExec)
+	s := newTmuxSession("ready-test", "stub", cmdExec)
 	s.adapter = stubAdapter{status: program.StatusReady}
 	s.monitor = newStatusMonitor()
 
@@ -63,7 +63,7 @@ func TestHasUpdated_WorkingOnUnknownAdapter(t *testing.T) {
 			return []byte("changing content"), nil
 		},
 	}
-	s := newTmuxSession("unknown-test", "noop", NewMockPtyFactory(t), cmdExec)
+	s := newTmuxSession("unknown-test", "noop", cmdExec)
 	s.adapter = stubAdapter{status: program.StatusUnknown}
 	s.monitor = newStatusMonitor()
 
@@ -93,7 +93,7 @@ func TestHasUpdated_StabilityFallbackForUnknownAgent(t *testing.T) {
 			return []byte(paneContent), nil
 		},
 	}
-	s := newTmuxSession("fallback-test", "noop", NewMockPtyFactory(t), cmdExec)
+	s := newTmuxSession("fallback-test", "noop", cmdExec)
 	s.adapter = stubAdapter{status: program.StatusUnknown} // no ready signal ever
 	s.monitor = newStatusMonitor()
 
@@ -123,7 +123,7 @@ func TestHasUpdated_StabilityResetsOnChange(t *testing.T) {
 			return []byte(content), nil
 		},
 	}
-	s := newTmuxSession("reset-test", "noop", NewMockPtyFactory(t), cmdExec)
+	s := newTmuxSession("reset-test", "noop", cmdExec)
 	s.adapter = stubAdapter{status: program.StatusUnknown}
 	s.monitor = newStatusMonitor()
 

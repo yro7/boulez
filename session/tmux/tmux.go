@@ -2,29 +2,28 @@ package tmux
 
 import (
 	"bytes"
-	"context"
 	"crypto/sha256"
 	"errors"
 	"fmt"
 	"github.com/yro7/boulez/cmd"
-	"github.com/yro7/boulez/host"
 	"github.com/yro7/boulez/log"
 	"github.com/yro7/boulez/program"
-	"io"
-	"os"
 	"os/exec"
 	"regexp"
 	"strings"
-	"sync"
 	"time"
-
-	"github.com/creack/pty"
 )
 
-// TmuxSession represents a managed tmux session
+// TmuxSession represents a managed tmux session. It owns the tmux LIFECYCLE
+// only (Start / has-session / kill-session / capture-pane / send-keys / status
+// monitoring) — all via the SSH-aware cmdExec, no PTY. Interactive attach is
+// NOT here: the TUI runs host.AttachCmd via tea.ExecProcess, which releases
+// the Bubbletea terminal for the command's duration. The previous design kept
+// a local creack/pty + io.Copy + stdin scavenger here, which froze the TUI
+// over SSH (two readers on os.Stdin, no terminal release) — that machinery is
+// gone. Restore exists only to (re)initialize the status monitor when a
+// pre-existing session is reused.
 type TmuxSession struct {
-	// Initialized by NewTmuxSession
-	//
 	// The name of the tmux session and the sanitized name used for tmux commands.
 	sanitizedName string
 	program       string
@@ -32,30 +31,12 @@ type TmuxSession struct {
 	// Resolved once at construction via program.Lookup; tmux.go itself holds no
 	// agent-specific strings. Adding a new agent never touches this file.
 	adapter program.Adapter
-	// ptyFactory is used to create a PTY for the tmux session.
-	ptyFactory host.PtyFactory
 	// cmdExec is used to execute commands in the tmux session.
 	cmdExec cmd.Executor
 
-	// Initialized by Start or Restore
-	//
-	// ptmx is a PTY is running the tmux attach command. This can be resized to change the
-	// stdout dimensions of the tmux pane. On detach, we close it and set a new one.
-	// This should never be nil.
-	ptmx *os.File
-	// monitor monitors the tmux pane content and sends signals to the UI when it's status changes
+	// monitor watches the tmux pane content hash to derive stableFor (the
+	// idle-since signal). Initialized by Start or Restore.
 	monitor *statusMonitor
-
-	// Initialized by Attach
-	// Deinitilaized by Detach
-	//
-	// Channel to be closed at the very end of detaching. Used to signal callers.
-	attachCh chan struct{}
-	// While attached, we use some goroutines to manage the window size and stdin/stdout. This stuff
-	// is used to terminate them on Detach. We don't want them to outlive the attached window.
-	ctx    context.Context
-	cancel func()
-	wg     *sync.WaitGroup
 }
 
 const TmuxPrefix = "boulez_"
@@ -102,20 +83,20 @@ func KillSession(cmdExec cmd.Executor, name string) error {
 
 // NewTmuxSession creates a new TmuxSession with the given name and program.
 func NewTmuxSession(name string, program string) *TmuxSession {
-	return newTmuxSession(name, program, host.LocalPtyFactory(), cmd.MakeExecutor())
+	return newTmuxSession(name, program, cmd.MakeExecutor())
 }
 
-// NewTmuxSessionWithDeps creates a new TmuxSession with provided dependencies for testing.
-func NewTmuxSessionWithDeps(name string, program string, ptyFactory host.PtyFactory, cmdExec cmd.Executor) *TmuxSession {
-	return newTmuxSession(name, program, ptyFactory, cmdExec)
+// NewTmuxSessionWithDeps creates a new TmuxSession with a provided command
+// executor (the SSH-aware transport seam) for testing.
+func NewTmuxSessionWithDeps(name string, program string, cmdExec cmd.Executor) *TmuxSession {
+	return newTmuxSession(name, program, cmdExec)
 }
 
-func newTmuxSession(name string, programCmd string, ptyFactory host.PtyFactory, cmdExec cmd.Executor) *TmuxSession {
+func newTmuxSession(name string, programCmd string, cmdExec cmd.Executor) *TmuxSession {
 	return &TmuxSession{
 		sanitizedName: toBoulezTmuxName(name),
 		program:       programCmd,
 		adapter:       program.Lookup(programCmd),
-		ptyFactory:    ptyFactory,
 		cmdExec:       cmdExec,
 	}
 }
@@ -128,11 +109,13 @@ func (t *TmuxSession) Start(workDir string) error {
 		return fmt.Errorf("tmux session already exists: %s", t.sanitizedName)
 	}
 
-	// Create a new detached tmux session and start claude in it
-	cmd := exec.Command("tmux", "new-session", "-d", "-s", t.sanitizedName, "-c", workDir, t.program)
-
-	ptmx, err := t.ptyFactory.Start(cmd)
-	if err != nil {
+	// Create a new detached tmux session and start the agent in it. This is a
+	// one-shot, non-interactive command, so it goes through the host executor
+	// (cmdExec) — the SSH-aware channel CapturePaneContent/SendKeys already
+	// use — rather than a PTY. A PTY was wrong here: tmux new-session -d is
+	// detached and never reads a terminal.
+	startCmd := exec.Command("tmux", "new-session", "-d", "-s", t.sanitizedName, "-c", workDir, t.program)
+	if err := t.cmdExec.Run(startCmd); err != nil {
 		// Cleanup any partially created session if any exists.
 		if t.DoesSessionExist() {
 			cleanupCmd := exec.Command("tmux", "kill-session", "-t", t.sanitizedName)
@@ -172,7 +155,6 @@ func (t *TmuxSession) Start(workDir string) error {
 			}
 		}
 	}
-	ptmx.Close()
 
 	// Set history limit to enable scrollback (default is 2000, we'll use 10000 for more history)
 	historyCmd := exec.Command("tmux", "set-option", "-t", t.sanitizedName, "history-limit", "10000")
@@ -186,10 +168,9 @@ func (t *TmuxSession) Start(workDir string) error {
 		log.InfoLog.Printf("Warning: failed to enable mouse scrolling for session %s: %v", t.sanitizedName, err)
 	}
 
-	err = t.Restore()
-	if err != nil {
+	if err := t.Restore(); err != nil {
 		if cleanupErr := t.Close(); cleanupErr != nil {
-			err = fmt.Errorf("%v (cleanup error: %v)", err, cleanupErr)
+			return fmt.Errorf("%v (cleanup error: %v)", err, cleanupErr)
 		}
 		return fmt.Errorf("error restoring tmux session: %w", err)
 	}
@@ -221,13 +202,15 @@ func (t *TmuxSession) CheckAndHandleTrustPrompt() bool {
 	return true
 }
 
-// Restore attaches to an existing session and restores the window size
+// Restore initializes the status monitor for a pre-existing session (used
+// when Start reuses a session that survived a pause, or when the daemon
+// rebinds to a session from a previous run). It no longer allocates a PTY —
+// the interactive attach is now host.AttachCmd + tea.ExecProcess, which does
+// not need a long-lived PTY on the TmuxSession. Keeping a phantom PTY here
+// was the second half of the PTY-machinery smell: Restore was allocating a
+// tmux-attach PTY with no reader, purely to satisfy the (now-removed) Attach
+// path's invariant that ptmx was non-nil.
 func (t *TmuxSession) Restore() error {
-	ptmx, err := t.ptyFactory.Start(exec.Command("tmux", "attach-session", "-t", t.sanitizedName))
-	if err != nil {
-		return fmt.Errorf("error opening PTY: %w", err)
-	}
-	t.ptmx = ptmx
 	t.monitor = newStatusMonitor()
 	return nil
 }
@@ -366,185 +349,9 @@ func (t *TmuxSession) HasUpdated() (updated bool, status program.Status, stableF
 	return false, status, now.Sub(t.monitor.lastChangeAt)
 }
 
-func (t *TmuxSession) Attach() (chan struct{}, error) {
-	t.attachCh = make(chan struct{})
-
-	t.wg = &sync.WaitGroup{}
-	t.wg.Add(1)
-	t.ctx, t.cancel = context.WithCancel(context.Background())
-
-	// The first goroutine copies tmux output to stdout while attached. We
-	// abort it on context cancellation (detach) rather than waiting for its
-	// blocked read() to return: on macOS, closing the ptmx master from
-	// another goroutine does NOT interrupt a pending read() on that fd, so
-	// io.Copy would otherwise block until the lingering old tmux client
-	// finally exits (~4.5s when the pane is idle and the client isn't
-	// writing). The orphaned inner io.Copy self-resolves within that same
-	// ~4.5s window once the old client notices its master is gone — bounded,
-	// and no longer on the user's critical path.
-	// The 2nd goroutine returns when you press Ctrl-Q to Detach. It doesn't
-	// need to be in the waitgroup because it is the goroutine doing the
-	// Detaching; it waits for all the other ones.
-	go func() {
-		defer t.wg.Done()
-		done := make(chan struct{})
-		go func() {
-			_, _ = io.Copy(os.Stdout, t.ptmx)
-			close(done)
-		}()
-		select {
-		case <-done:
-		case <-t.ctx.Done():
-		}
-		// When io.Copy returns, it means the connection was closed
-		// This could be due to normal detach or Ctrl-D
-		// Check if the context is done to determine if it was a normal detach
-		select {
-		case <-t.ctx.Done():
-			// Normal detach, do nothing
-		default:
-			// If context is not done, it was likely an abnormal termination (Ctrl-D)
-			// Print warning message
-			fmt.Fprintf(os.Stderr, "\n\033[31mError: Session terminated without detaching. Use Ctrl-Q to properly detach from tmux sessions.\033[0m\n")
-		}
-	}()
-
-	go func() {
-		// Close the channel after 50ms
-		timeoutCh := make(chan struct{})
-		go func() {
-			time.Sleep(50 * time.Millisecond)
-			close(timeoutCh)
-		}()
-
-		// Read input from stdin and check for Ctrl+q
-		buf := make([]byte, 32)
-		for {
-			nr, err := os.Stdin.Read(buf)
-			if err != nil {
-				if err == io.EOF {
-					break
-				}
-				continue
-			}
-
-			// Nuke the first bytes of stdin, up to 64, to prevent tmux from reading it.
-			// When we attach, there tends to be terminal control sequences like ?[?62c0;95;0c or
-			// ]10;rgb:f8f8f8. The control sequences depend on the terminal (warp vs iterm). We should use regex ideally
-			// but this works well for now. Log this for debugging.
-			//
-			// There seems to always be control characters, but I think it's possible for there not to be. The heuristic
-			// here can be: if there's characters within 50ms, then assume they are control characters and nuke them.
-			select {
-			case <-timeoutCh:
-			default:
-				log.InfoLog.Printf("nuked first stdin: %s", buf[:nr])
-				continue
-			}
-
-			// Check for Ctrl+q (ASCII 17)
-			if nr == 1 && buf[0] == 17 {
-				// Detach from the session
-				t.Detach()
-				return
-			}
-
-			// Forward other input to tmux
-			_, _ = t.ptmx.Write(buf[:nr])
-		}
-	}()
-
-	t.monitorWindowSize()
-	return t.attachCh, nil
-}
-
-// DetachSafely disconnects from the current tmux session without panicking
-func (t *TmuxSession) DetachSafely() error {
-	// Only detach if we're actually attached
-	if t.attachCh == nil {
-		return nil // Already detached
-	}
-
-	var errs []error
-
-	// Close the attached pty session.
-	if t.ptmx != nil {
-		if err := t.ptmx.Close(); err != nil {
-			errs = append(errs, fmt.Errorf("error closing attach pty session: %w", err))
-		}
-		t.ptmx = nil
-	}
-
-	// Clean up attach state
-	if t.attachCh != nil {
-		close(t.attachCh)
-		t.attachCh = nil
-	}
-
-	if t.cancel != nil {
-		t.cancel()
-		t.cancel = nil
-	}
-
-	if t.wg != nil {
-		t.wg.Wait()
-		t.wg = nil
-	}
-
-	t.ctx = nil
-
-	if len(errs) > 0 {
-		return fmt.Errorf("errors during detach: %v", errs)
-	}
-	return nil
-}
-
-// Detach disconnects from the current tmux session. It panics if detaching fails. At the moment, there's no
-// way to recover from a failed detach.
-func (t *TmuxSession) Detach() {
-	// TODO: control flow is a bit messy here. If there's an error,
-	// I'm not sure if we get into a bad state. Needs testing.
-	defer func() {
-		close(t.attachCh)
-		t.attachCh = nil
-		t.cancel = nil
-		t.ctx = nil
-		t.wg = nil
-	}()
-
-	// Close the attached pty session.
-	err := t.ptmx.Close()
-	if err != nil {
-		// This is a fatal error. We can't detach if we can't close the PTY. It's better to just panic and have the
-		// user re-invoke the program than to ruin their terminal pane.
-		msg := fmt.Sprintf("error closing attach pty session: %v", err)
-		log.ErrorLog.Println(msg)
-		panic(msg)
-	}
-	// Attach goroutines should die on EOF due to the ptmx closing. Call
-	// t.Restore to set a new t.ptmx.
-	if err = t.Restore(); err != nil {
-		// This is a fatal error. Our invariant that a started TmuxSession always has a valid ptmx is violated.
-		msg := fmt.Sprintf("error closing attach pty session: %v", err)
-		log.ErrorLog.Println(msg)
-		panic(msg)
-	}
-
-	// Cancel goroutines created by Attach.
-	t.cancel()
-	t.wg.Wait()
-}
-
 // Close terminates the tmux session and cleans up resources
 func (t *TmuxSession) Close() error {
 	var errs []error
-
-	if t.ptmx != nil {
-		if err := t.ptmx.Close(); err != nil {
-			errs = append(errs, fmt.Errorf("error closing PTY: %w", err))
-		}
-		t.ptmx = nil
-	}
 
 	cmd := exec.Command("tmux", "kill-session", "-t", t.sanitizedName)
 	if err := t.cmdExec.Run(cmd); err != nil {
@@ -580,14 +387,25 @@ func (t *TmuxSession) SetDetachedSize(width, height int) error {
 	return t.updateWindowSize(width, height)
 }
 
-// updateWindowSize updates the window size of the PTY.
+// updateWindowSize updates the detached session's window size via
+// `tmux resize-window`, routed through the host executor (SSH-aware). The
+// previous implementation resized a local PTY (pty.Setsize on t.ptmx), which
+// is gone now that interactive attach is tea.ExecProcess — and which never
+// worked for a remote instance anyway (the PTY was local; the remote tmux
+// pane kept its old size). resize-window operates on the session itself, so
+// it works on both transports.
 func (t *TmuxSession) updateWindowSize(cols, rows int) error {
-	return pty.Setsize(t.ptmx, &pty.Winsize{
-		Rows: uint16(rows),
-		Cols: uint16(cols),
-		X:    0,
-		Y:    0,
-	})
+	return t.cmdExec.Run(exec.Command("tmux",
+		"resize-window", "-t", t.sanitizedName,
+		"-x", fmt.Sprintf("%d", cols), "-y", fmt.Sprintf("%d", rows)))
+}
+
+// Name returns the sanitized tmux session name used in tmux commands
+// (has-session, kill-session, capture-pane, attach-session, ...). Exposed so a
+// caller can build an attach command (e.g. host.AttachCmd) without re-deriving
+// the sanitization.
+func (t *TmuxSession) Name() string {
+	return t.sanitizedName
 }
 
 func (t *TmuxSession) DoesSessionExist() bool {

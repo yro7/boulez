@@ -68,6 +68,14 @@ func TestWorktreeDirForHome(t *testing.T) {
 	assert.Equal(t, "/home/me/.boulez/worktrees", worktreeDirForHome("/home/me"))
 }
 
+// sshArgv builds an expected slave argv: `ssh <hardening opts> <tail...>`.
+// Non-interactive slaves always carry sshHardenArgs (BatchMode + ConnectTimeout)
+// right after the binary; referencing the production helper keeps these
+// expectations in lockstep if the hardening set changes.
+func sshArgv(tail ...string) []string {
+	return append(append([]string{"ssh"}, sshHardenArgs()...), tail...)
+}
+
 // TestSSHExecutor_Wrap_InjectsControlPath proves that when a master socket is
 // configured (i.e. EnsureConnected has armed muxing), the slave command carries
 // -o ControlPath=<socket> so it rides the master. With socket="" the option is
@@ -79,36 +87,23 @@ func TestSSHExecutor_Wrap_InjectsControlPath(t *testing.T) {
 	// Muxing armed: -o ControlPath=<socket> precedes the alias.
 	withSock := sshExecutor{alias: "dev-machine", socket: "/tmp/x.sock"}.wrap(orig.Args)
 	assert.Equal(t,
-		[]string{"ssh", "-o", "ControlPath=/tmp/x.sock", "dev-machine", "'git' 'status'"},
+		sshArgv("-o", "ControlPath=/tmp/x.sock", "dev-machine", "'git' 'status'"),
 		withSock)
 
 	// Muxing unarmed: no control option, plain one-shot ssh.
 	noSock := sshExecutor{alias: "dev-machine"}.wrap(orig.Args)
-	assert.Equal(t, []string{"ssh", "dev-machine", "'git' 'status'"}, noSock)
+	assert.Equal(t, sshArgv("dev-machine", "'git' 'status'"), noSock)
 }
 
 // TestSSHFS_CommandInjectsControlPath proves the FS seam rides the master too.
 func TestSSHFS_CommandInjectsControlPath(t *testing.T) {
 	withSock := sshFS{alias: "dev-machine", socket: "/tmp/x.sock"}.command("echo hi")
 	assert.Equal(t,
-		[]string{"ssh", "-o", "ControlPath=/tmp/x.sock", "dev-machine", "echo hi"},
+		sshArgv("-o", "ControlPath=/tmp/x.sock", "dev-machine", "echo hi"),
 		withSock.Args)
 
 	noSock := sshFS{alias: "dev-machine"}.command("echo hi")
-	assert.Equal(t, []string{"ssh", "dev-machine", "echo hi"}, noSock.Args)
-}
-
-// TestSSHPtyFactory_CommandInjectsControlPath proves the PTY seam rides the
-// master (the -t comes before the control opts).
-func TestSSHPtyFactory_CommandInjectsControlPath(t *testing.T) {
-	orig := exec.Command("tmux", "attach-session", "-t", "foo")
-	withSock := sshPtyFactory{alias: "dev-machine", socket: "/tmp/x.sock"}.command(orig)
-	assert.Equal(t,
-		[]string{"ssh", "-t", "-o", "ControlPath=/tmp/x.sock", "dev-machine", "'tmux' 'attach-session' '-t' 'foo'"},
-		withSock.Args)
-
-	noSock := sshPtyFactory{alias: "dev-machine"}.command(orig)
-	assert.Equal(t, []string{"ssh", "-t", "dev-machine", "'tmux' 'attach-session' '-t' 'foo'"}, noSock.Args)
+	assert.Equal(t, sshArgv("dev-machine", "echo hi"), noSock.Args)
 }
 
 // TestSSHHost_EnsureConnected_Delegates proves EnsureConnected drives the
@@ -142,11 +137,13 @@ func TestSSHExecutor_Wrap(t *testing.T) {
 	// Every arg is shell-quoted (even safe words like "git") — conservative but
 	// correct. The joined string re-parses back to the original args.
 	require.Equal(t,
-		[]string{"ssh", "dev-machine", "'git' '-C' '/repo' 'status' '--porcelain'"},
+		sshArgv("dev-machine", "'git' '-C' '/repo' 'status' '--porcelain'"),
 		got)
 
-	// And it round-trips back to the original args via a POSIX shell.
-	assert.Equal(t, orig.Args, shellReparse(t, got[2]))
+	// And it round-trips back to the original args via a POSIX shell. The joined
+	// command is the last argv element (after ssh, the hardening opts, and the
+	// alias).
+	assert.Equal(t, orig.Args, shellReparse(t, got[len(got)-1]))
 }
 
 // TestSSHExecutor_Wrap_Quoting proves args survive the remote shell: a path
@@ -178,15 +175,17 @@ func TestSSHExecutor_Wrap_Quoting(t *testing.T) {
 	for _, tc := range cases {
 		t.Run(tc.name, func(t *testing.T) {
 			got := sshExecutor{alias: "h"}.wrap(tc.args)
-			require.Len(t, got, 3)
+			// argv shape: ssh <hardening opts> <alias> <joined>. The alias is
+			// second-to-last and the joined command is last.
+			require.GreaterOrEqual(t, len(got), 3)
 			assert.Equal(t, "ssh", got[0])
-			assert.Equal(t, "h", got[1])
+			assert.Equal(t, "h", got[len(got)-2])
 
 			// Round-trip: a real POSIX shell must re-parse the joined string
 			// back into the original args. This is exactly what ssh's remote
 			// shell does, so it's a faithful end-to-end check of the quoting —
 			// even a path with a space or a quote stays one arg remotely.
-			reparsed := shellReparse(t, got[2])
+			reparsed := shellReparse(t, got[len(got)-1])
 			assert.Equal(t, tc.args, reparsed,
 				"joined %q must re-parse to original args", got[2])
 		})
@@ -261,8 +260,8 @@ func TestSSHHost_ResolveRepoPath_Passthrough(t *testing.T) {
 func TestSSHFS_CommandBuildsArgv(t *testing.T) {
 	f := sshFS{alias: "dev-machine"}
 	built := f.command("echo hi")
-	assert.Equal(t, []string{"ssh", "dev-machine", "echo hi"}, built.Args,
-		"sshFS.command must build exactly [ssh alias script]; never re-prepend sshBin")
+	assert.Equal(t, sshArgv("dev-machine", "echo hi"), built.Args,
+		"sshFS.command must build exactly [ssh <hardening opts> alias script]; never re-prepend sshBin")
 }
 
 // TestSSHFS_StatScript_QuotesPath proves the remote test script quotes the
@@ -352,30 +351,37 @@ func TestSSHFS_ParseDirEntries_SplitsNullDelimited(t *testing.T) {
 	assert.Equal(t, "x\ny", e[0].Name(), "name with newline must survive")
 }
 
-// TestSSHPtyFactory_CommandBuildsArgv is the regression guard for the
-// double-"ssh" bug on the PTY seam. command() must build exactly
-// `ssh -t <alias> <shell-joined args>`, never re-prepend sshBin. We assert
-// the built command's Args — without launching ssh or allocating a PTY — so
-// a re-introduction of the bug class fails loudly.
-func TestSSHPtyFactory_CommandBuildsArgv(t *testing.T) {
-	f := sshPtyFactory{alias: "dev-machine"}
-	orig := exec.Command("tmux", "attach-session", "-t", "foo")
-	built := f.command(orig)
+// TestSSHHost_AttachCmd_BuildsArgv proves AttachCmd produces the interactive
+// attach command: `ssh -t [control opts] <alias> tmux attach-session -t <name>`.
+// It rides the master when a socket is set (mirroring sshPtyFactory.command)
+// and omits the control opts when socket is "". The -t forces a remote PTY so
+// the attach is interactive under tea.ExecProcess. Asserted without launching
+// ssh — the argv is the contract.
+func TestSSHHost_AttachCmd_BuildsArgv(t *testing.T) {
+	h := NewSSHHost("dev-machine")
+	h.master = sshMaster{alias: "dev-machine", socket: "/tmp/x.sock"}
 
-	// Args[0] is sshBin exactly once; Args[1] is -t; Args[2] is the alias;
-	// Args[3] is the shell-joined-and-quoted original args, which must
-	// round-trip back to the original args via a POSIX shell.
-	require.Equal(t, []string{"ssh", "-t", "dev-machine", "'tmux' 'attach-session' '-t' 'foo'"}, built.Args)
-	assert.Equal(t, orig.Args, shellReparse(t, built.Args[3]),
-		"joined args must re-parse to the original args")
+	withSock := h.AttachCmd("foo")
+	assert.Equal(t,
+		[]string{"ssh", "-t", "-o", "ControlPath=/tmp/x.sock", "dev-machine", "'tmux' 'attach-session' '-t' 'foo'"},
+		withSock.Args)
+
+	h.master = sshMaster{alias: "dev-machine"} // socket "" => plain one-shot
+	noSock := h.AttachCmd("foo")
+	assert.Equal(t,
+		[]string{"ssh", "-t", "dev-machine", "'tmux' 'attach-session' '-t' 'foo'"},
+		noSock.Args)
 }
 
-// TestSSHPtyFactory_Command_Quoting proves args survive the remote shell: a
-// session name with a space stays a single arg. Same property as the
-// executor's quoting, on the PTY seam.
-func TestSSHPtyFactory_Command_Quoting(t *testing.T) {
-	orig := exec.Command("tmux", "attach-session", "-t", "my session")
-	built := sshPtyFactory{alias: "h"}.command(orig)
+// TestSSHHost_AttachCmd_Quoting proves a session name with a space survives the
+// remote shell round-trip (stays a single arg), the same property
+// sshPtyFactory.command enjoys.
+func TestSSHHost_AttachCmd_Quoting(t *testing.T) {
+	h := NewSSHHost("dev-machine")
+	h.master = sshMaster{alias: "dev-machine"} // socket "" => no control opts
+	built := h.AttachCmd("my session")
 	require.Len(t, built.Args, 4)
-	assert.Equal(t, orig.Args, shellReparse(t, built.Args[3]))
+	assert.Equal(t,
+		[]string{"tmux", "attach-session", "-t", "my session"},
+		shellReparse(t, built.Args[3]))
 }

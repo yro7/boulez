@@ -9,8 +9,13 @@ import (
 type TextOverlay struct {
 	// Whether the overlay has been dismissed
 	Dismissed bool
-	// Callback function to be called when the overlay is dismissed
-	OnDismiss func()
+	// OnDismiss is called when the overlay is dismissed. It returns a tea.Cmd
+	// the caller runs on dismissal (e.g. a tea.ExecProcess attach command). It
+	// must NOT block: the long-running work belongs to the returned Cmd, not to
+	// this callback. This keeps the overlay's contract instantaneous (report
+	// dismissal + hand off a Cmd) — the SRP the original blocking onDismiss
+	// violated, which was the root cause of the SSH attach freeze.
+	OnDismiss func() tea.Cmd
 	// Content to display in the overlay
 	content string
 
@@ -30,10 +35,6 @@ func NewTextOverlay(content string) *TextOverlay {
 func (t *TextOverlay) HandleKeyPress(msg tea.KeyMsg) bool {
 	// Close on any key
 	t.Dismissed = true
-	// Call the OnDismiss callback if it exists
-	if t.OnDismiss != nil {
-		t.OnDismiss()
-	}
 	return true
 }
 

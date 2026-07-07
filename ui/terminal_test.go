@@ -18,11 +18,7 @@ import (
 // The returned session will report as existing and support capture-pane commands.
 func newMockTmuxSession(t *testing.T, name string, cmdExec cmd_test.MockCmdExec) *tmux.TmuxSession {
 	t.Helper()
-	ptyFactory := &MockPtyFactory{
-		t:       t,
-		cmdExec: cmdExec,
-	}
-	return tmux.NewTmuxSessionWithDeps(name, "bash", ptyFactory, cmdExec)
+	return tmux.NewTmuxSessionWithDeps(name, "bash", cmdExec)
 }
 
 // mockCmdExec returns a MockCmdExec that simulates a working tmux session.
@@ -93,11 +89,7 @@ func makeStartedInstance(t *testing.T, title string) *session.Instance {
 	})
 	require.NoError(t, err)
 
-	ptyFactory := &MockPtyFactory{
-		t:       t,
-		cmdExec: cmdExec,
-	}
-	tmuxSession := tmux.NewTmuxSessionWithDeps(sessionName, "bash", ptyFactory, cmdExec)
+	tmuxSession := tmux.NewTmuxSessionWithDeps(sessionName, "bash", cmdExec)
 	instance.SetTmuxSession(tmuxSession)
 
 	err = instance.Start(true)

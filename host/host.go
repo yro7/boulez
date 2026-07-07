@@ -15,6 +15,8 @@
 package host
 
 import (
+	"os/exec"
+
 	"github.com/yro7/boulez/cmd"
 	"github.com/yro7/boulez/session/fs"
 )
@@ -38,18 +40,6 @@ type Host interface {
 	// routes over ssh.
 	FS() fs.FS
 
-	// PtyFactory allocates PTYs for tmux attach/restore. LocalHost uses
-	// creack/pty directly; SSHHost starts `ssh -t <alias> ...` under a PTY.
-	PtyFactory() PtyFactory
-
-	// WorktreeDir is the directory under which boulez worktrees for this host
-	// are created. LocalHost returns an absolute local path; SSHHost returns
-	// an absolute remote path (<remote-$HOME>/.boulez/worktrees), resolving
-	// $HOME on the remote at Start. The path is absolute (not ~-relative)
-	// because it flows through single-quoted argv (joinShellQuoted) and
-	// `git -C`, neither of which expands ~.
-	WorktreeDir() (string, error)
-
 	// ResolveRepoPath normalizes a user-supplied repo path for this host's
 	// transport. LocalHost resolves it against the process working directory
 	// (filepath.Abs, best-effort) so a stored path survives a cwd change;
@@ -58,6 +48,14 @@ type Host interface {
 	// at a path on the wrong machine. Called once at Start, after the host is
 	// known, before the worktree is built.
 	ResolveRepoPath(path string) string
+
+	// WorktreeDir is the directory under which boulez worktrees for this host
+	// are created. LocalHost returns an absolute local path; SSHHost returns
+	// an absolute remote path (<remote-$HOME>/.boulez/worktrees), resolving
+	// $HOME on the remote at Start. The path is absolute (not ~-relative)
+	// because it flows through single-quoted argv (joinShellQuoted) and
+	// `git -C`, neither of which expands ~.
+	WorktreeDir() (string, error)
 
 	// EnsureConnected establishes any long-lived transport connection needed
 	// before the instance issues commands. For SSHHost this starts (or verifies)
@@ -68,6 +66,18 @@ type Host interface {
 	// a failure is logged and boulez falls back to one-shot transport; it never
 	// aborts Start.
 	EnsureConnected() error
+
+	// AttachCmd returns the *exec.Cmd that interactively attaches the user's
+	// terminal to a named tmux session on this host. The TUI runs it via
+	// tea.ExecProcess, which releases the Bubbletea terminal (alt-screen, raw
+	// mode, mouse) for the command's duration and restores it on exit. LocalHost
+	// returns `tmux attach-session -t <name>`; SSHHost returns
+	// `ssh -t [control opts] <alias> tmux attach-session -t <name>` — the -t
+	// forces a remote PTY so the attach is interactive, and the control opts
+	// ride the ControlMaster when one is up. The returned command is run on the
+	// real terminal; boulez does not allocate its own PTY for it (the local
+	// terminal is already a tty, and ssh -t allocates the remote one).
+	AttachCmd(sessionName string) *exec.Cmd
 
 	// AutoYesDefault is whether new instances on this host start with
 	// AutoYes enabled. LocalHost follows the global config flag; SSHHost
