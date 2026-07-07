@@ -75,17 +75,18 @@ func TestLocalHost_ResolveRepoPath_Absolutizes(t *testing.T) {
 // interactive attach command, run by the TUI via tea.ExecProcess on the real
 // terminal (no PTY allocated by boulez). The argv (1) resets window-size to
 // latest so the attach resizes to the real terminal (the preview/terminal
-// panes flip it to `manual` at a small size), (2) binds Ctrl-Q to
-// detach-client in the root table for the duration of the attach (then
-// unbinds), preserving boulez's Ctrl-Q detach contract now that the manual
-// stdin scavenger is gone.
+// panes flip it to `manual` at a small size), (2) binds Ctrl-Q to a
+// self-cleaning detach-client (root table; the bound command detaches AND
+// unbinds itself on keypress — attach-session does not block in a tmux
+// command sequence, so a trailing unbind would fire immediately and remove
+// the binding before C-q could be pressed). Preserves boulez's Ctrl-Q detach
+// contract now that the manual stdin scavenger is gone.
 func TestLocalHost_AttachCmd_BuildsArgv(t *testing.T) {
 	cmd := LocalHost{}.AttachCmd("foo")
 	assert.Equal(t,
 		[]string{"tmux",
 			"set-option", "-t", "foo", "window-size", "latest",
-			";", "bind-key", "-n", "C-q", "detach-client",
-			";", "attach-session", "-t", "foo",
-			";", "unbind-key", "-n", "C-q"},
+			";", "bind-key", "-n", "C-q", "detach-client ; unbind-key -n C-q",
+			";", "attach-session", "-t", "foo"},
 		cmd.Args)
 }
