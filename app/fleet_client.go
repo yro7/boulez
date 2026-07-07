@@ -216,9 +216,31 @@ func (m *home) reconcileFleet(data []session.InstanceData) {
 		seen[d.ID] = struct{}{}
 		if inst, ok := byID[d.ID]; ok {
 			// Reuse the existing view handle: keep its tmux/worktree binding,
-			// only refresh the lightweight state the kernel owns.
+			// only refresh the lightweight state the kernel owns. The status
+			// is the daemon's authority (it observes + stabilizes + pushes via
+			// k.UpdateStatus); the TUI only renders it.
 			inst.Status = d.Status
 			inst.AutoYes = d.AutoYes
+			// Render-only side effects of the Ready transition, formerly done in
+			// the metadataUpdateDoneMsg handler. The agent finished a turn after
+			// resuming work (Running → Ready): the displayed version no longer
+			// matches what was last landed, so clear the TUI-only landed hint
+			// (the dimmed row + checkmark disappears). Notify when configured.
+			// This is pure view state (the kernel's own Landed flag, set on Land,
+			// is untouched) — same split as before the refactor.
+			//
+			// prev is compared against the last KERNEL-reported status
+			// (m.prevStatus), not inst.Status: a freshly-reconstructed view
+			// handle (FromInstanceData → Start) has its status forced to Running
+			// by Start regardless of d.Status, so inst.Status is unreliable right
+			// after reconstruction and would produce a spurious transition.
+			if last, ok := m.prevStatus[d.ID]; ok && last != session.Ready && d.Status == session.Ready {
+				inst.SetLanded(false)
+				if m.appConfig.NotifyOnReady {
+					m.notifyReady(inst)
+				}
+			}
+			m.prevStatus[d.ID] = d.Status
 			out = append(out, inst)
 			continue
 		}
@@ -233,6 +255,13 @@ func (m *home) reconcileFleet(data []session.InstanceData) {
 			log.ErrorLog.Printf("fleet: could not reconstruct instance %s (%s): %v", d.ID, d.Title, err)
 			continue
 		}
+		// Seed the last-seen kernel status so the next tick can detect a
+		// real transition (no side effects on the first appearance: the
+		// instance is brand new to the view, there is no prior state).
+		if m.prevStatus == nil {
+			m.prevStatus = make(map[string]session.Status)
+		}
+		m.prevStatus[d.ID] = d.Status
 		out = append(out, inst)
 	}
 
@@ -256,14 +285,11 @@ func (m *home) reconcileFleet(data []session.InstanceData) {
 	// TUI's default selection is index 0, so the orchestrator must be first.
 	out = pinOrchestratorsFirst(out)
 
-	// Prune the working-streak hysteresis counters for instances no longer in
-	// the kernel's snapshot. Without this a long-running daemon would leak an
-	// entry per ever-seen instance ID. The streak is pure TUI view state.
-	if m.workingStreak != nil {
-		for id := range m.workingStreak {
-			if _, ok := seen[id]; !ok {
-				delete(m.workingStreak, id)
-			}
+	// Prune transition-tracking state for instances no longer in the kernel's
+	// snapshot so the map does not leak an entry per ever-seen instance ID.
+	for id := range m.prevStatus {
+		if _, ok := seen[id]; !ok {
+			delete(m.prevStatus, id)
 		}
 	}
 
