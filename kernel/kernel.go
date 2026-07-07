@@ -301,6 +301,39 @@ func (k *Kernel) SendPrompt(id, prompt string) error {
 	return inst.SendPrompt(prompt)
 }
 
+// UpdateStatus sets an instance's status, persisting the fleet on a transition.
+// It is the status-authority syscall: the daemon's poll loop calls it with the
+// stabilized status derived from each instance's observation source (adapter
+// Detect + session.Stabilize). Lifecycle syscalls (Spawn sets Running, Pause
+// sets Paused, ReconcileLiveness sets Dead) set the status directly on the
+// instance; UpdateStatus is the steady-state path that keeps the kernel's
+// persisted state in sync with what the agent is actually doing, so
+// `boulez ctl list_instances` and a reconnecting TUI see Ready/Running
+// instead of a stale Running frozen at spawn time.
+//
+// A no-op (not found, or unchanged) touches nothing. Persisting only on a
+// real transition avoids a disk write per poll tick for an idle instance.
+// Best-effort persistence: a save failure is logged, not returned, matching
+// the other mutating syscalls.
+func (k *Kernel) UpdateStatus(id string, status session.Status) {
+	k.mu.Lock()
+	inst, ok := k.findLocked(id)
+	if !ok {
+		k.mu.Unlock()
+		return
+	}
+	changed := inst.Status != status
+	if changed {
+		inst.SetStatus(status)
+	}
+	storage := k.storage
+	autosave := k.autosave
+	k.mu.Unlock()
+	if changed && autosave && storage != nil {
+		_ = k.persist(storage, nil)
+	}
+}
+
 // Pause pauses an instance by ID. Mutating syscall.
 func (k *Kernel) Pause(id string) error {
 	k.mu.Lock()
