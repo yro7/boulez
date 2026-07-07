@@ -204,6 +204,102 @@ func TestServer_SpawnWorker(t *testing.T) {
 	}
 }
 
+// TestServer_SendPrompt proves a single-instance mutate tool forwards its
+// params (id + prompt) and surfaces the kernel's {ok:true} response.
+func TestServer_SendPrompt(t *testing.T) {
+	fake := boulezmcp.NewFakeCallerForTest()
+	fake.StubResult("send_prompt", mustJSON(t, map[string]bool{"ok": true}))
+
+	cs := connect(t, boulezmcp.NewServer(fake))
+	defer cs.Close()
+
+	res, err := cs.CallTool(context.Background(), &mcpsdk.CallToolParams{
+		Name:      "send_prompt",
+		Arguments: map[string]any{"id": "w1", "prompt": "also add tests"},
+	})
+	if err != nil {
+		t.Fatalf("CallTool: %v", err)
+	}
+	if res.IsError {
+		t.Fatalf("tool returned error: %+v", res.Content)
+	}
+	calls := fake.Calls()
+	if len(calls) != 1 || calls[0].Method != "send_prompt" {
+		t.Fatalf("expected one send_prompt call, got %+v", calls)
+	}
+	var got map[string]any
+	if err := json.Unmarshal(calls[0].Params, &got); err != nil {
+		t.Fatalf("unmarshal params: %v", err)
+	}
+	if got["id"] != "w1" || got["prompt"] != "also add tests" {
+		t.Fatalf("params not forwarded: %v", got)
+	}
+}
+
+// TestServer_Pause proves the single-ID tools (pause/resume/kill) forward the
+// id. pause is representative; the others share callSimple.
+func TestServer_Pause(t *testing.T) {
+	fake := boulezmcp.NewFakeCallerForTest()
+	fake.StubResult("pause", mustJSON(t, map[string]bool{"ok": true}))
+
+	cs := connect(t, boulezmcp.NewServer(fake))
+	defer cs.Close()
+
+	if _, err := cs.CallTool(context.Background(), &mcpsdk.CallToolParams{
+		Name:      "pause",
+		Arguments: map[string]any{"id": "w1"},
+	}); err != nil {
+		t.Fatalf("CallTool: %v", err)
+	}
+	calls := fake.Calls()
+	if len(calls) != 1 || calls[0].Method != "pause" {
+		t.Fatalf("expected one pause call, got %+v", calls)
+	}
+	var got map[string]any
+	if err := json.Unmarshal(calls[0].Params, &got); err != nil {
+		t.Fatalf("unmarshal params: %v", err)
+	}
+	if got["id"] != "w1" {
+		t.Fatalf("id not forwarded: %v", got["id"])
+	}
+}
+
+// TestServer_MergeProtectedBranch proves a structured kernel error code
+// (PROTECTED_BRANCH) is surfaced as an MCP tool error the agent can branch on
+// by the code text, not by parsing a message.
+func TestServer_MergeProtectedBranch(t *testing.T) {
+	fake := boulezmcp.NewFakeCallerForTest()
+	fake.StubError("merge", &kernel.ErrorInfo{
+		Code:    kernel.CodeProtectedBranch,
+		Message: "target branch 'main' is protected",
+	})
+
+	cs := connect(t, boulezmcp.NewServer(fake))
+	defer cs.Close()
+
+	res, err := cs.CallTool(context.Background(), &mcpsdk.CallToolParams{
+		Name: "merge",
+		Arguments: map[string]any{
+			"target_repo":     "/path/to/boulez",
+			"target_branch":   "main",
+			"source_branches": []string{"fix-bug"},
+		},
+	})
+	if err != nil {
+		t.Fatalf("CallTool: %v", err)
+	}
+	if !res.IsError {
+		t.Fatalf("expected an error result, got success: %+v", res.Content)
+	}
+	text := res.Content[0].(*mcpsdk.TextContent).Text
+	if !contains(text, string(kernel.CodeProtectedBranch)) {
+		t.Fatalf("error result missing code %q: %q", kernel.CodeProtectedBranch, text)
+	}
+	if !contains(text, "main") {
+		t.Fatalf("error result missing the message: %q", text)
+	}
+}
+
 func mustJSON(t *testing.T, v any) json.RawMessage {
 	t.Helper()
 	b, err := json.Marshal(v)
