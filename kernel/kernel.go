@@ -19,6 +19,7 @@ package kernel
 import (
 	"fmt"
 	"github.com/yro7/boulez/host"
+	"github.com/yro7/boulez/log"
 	"github.com/yro7/boulez/session"
 	"github.com/yro7/boulez/session/git"
 	"sync"
@@ -441,6 +442,57 @@ func (k *Kernel) Kill(id string) error {
 		_ = k.persist(storage, inst)
 	}
 	return killErr
+}
+
+// Restore un-archives a soft-deleted instance: recreates its tmux session,
+// returns it to Ready, and clears the archive timestamp. Inverse of Archive.
+// Mutating syscall. Only restorable while still Archived (i.e. before
+// ReapArchived has destroyed it).
+func (k *Kernel) Restore(id string) error {
+	k.mu.Lock()
+	inst, ok := k.findLocked(id)
+	storage := k.storage
+	autosave := k.autosave
+	k.mu.Unlock()
+	if !ok {
+		return ErrUnknownInstance{ID: id}
+	}
+	if err := inst.Restore(); err != nil {
+		return err
+	}
+	if autosave && storage != nil {
+		_ = k.persist(storage, inst)
+	}
+	return nil
+}
+
+// ReapArchived truly destroys every Archived instance whose retention window
+// has expired (now - ArchivedAt > retention). This is the hard-delete back half
+// of the soft delete: Archive keeps the work; ReapArchived cleans it up once
+// the grace period ends. Called by the daemon's poll loop (same cadence as
+// ReconcileLiveness) and once at boot. Instances still within the window are
+// left untouched. A zero retention reaps everything archived (used by tests).
+func (k *Kernel) ReapArchived(retention time.Duration) {
+	k.mu.Lock()
+	candidates := make([]*session.Instance, 0)
+	for _, inst := range k.instancesLocked() {
+		if inst.Status != session.Archived {
+			continue
+		}
+		if retention == 0 || time.Since(inst.ArchivedAt()) > retention {
+			candidates = append(candidates, inst)
+		}
+	}
+	k.mu.Unlock()
+
+	for _, inst := range candidates {
+		// The true hard delete: Kill destroys the worktree+branch and removes
+		// the record. Errors are logged, not returned — a reap failure must
+		// not abort the sweep (the next tick retries).
+		if err := k.Kill(inst.GetID()); err != nil {
+			log.WarningLog.Printf("kernel: reap failed for %s: %v", inst.GetID(), err)
+		}
+	}
 }
 
 // Merge merges source branches into a target branch of a repo. The guarded

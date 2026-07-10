@@ -28,6 +28,7 @@ type fakeFleetClient struct {
 	resumed  []string
 	killed   []string
 	archived []string
+	restored []string
 }
 
 func (f *fakeFleetClient) ListInstances() ([]session.InstanceData, error) {
@@ -46,6 +47,7 @@ func (f *fakeFleetClient) Pause(id string) error    { f.paused = append(f.paused
 func (f *fakeFleetClient) Resume(id string) error   { f.resumed = append(f.resumed, id); return nil }
 func (f *fakeFleetClient) Kill(id string) error     { f.killed = append(f.killed, id); return nil }
 func (f *fakeFleetClient) Archive(id string) error  { f.archived = append(f.archived, id); return nil }
+func (f *fakeFleetClient) Restore(id string) error { f.restored = append(f.restored, id); return nil }
 
 func newReconcileHome(t *testing.T, fleet fleetClient) *home {
 	t.Helper()
