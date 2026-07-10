@@ -61,6 +61,12 @@ const (
 	// on-demand replacement for the old always-on "instance 0" bootstrap: the
 	// user spawns one when they want one, nothing is auto-spawned at startup.
 	KeySpawnOrchestrator
+
+	// KeyRestore opens the archived-instances picker (U for Undo delete):
+	// lists soft-deleted instances still within their retention window so the
+	// user can restore one. Restoring recreates the tmux session and returns
+	// the instance to Ready.
+	KeyRestore
 )
 
 // GlobalKeyStringsMap is a global, immutable map string to keybinding.
@@ -77,6 +83,7 @@ var GlobalKeyStringsMap = map[string]KeyName{
 	"N":          KeyPrompt,
 	"R":          KeyQuickSession,
 	"O":          KeySpawnOrchestrator,
+	"U":          KeyRestore,
 	"i":          KeyInsert,
 	"enter":      KeyEnter,
 	"o":          KeyEnter,
@@ -175,6 +182,10 @@ var GlobalkeyBindings = map[KeyName]key.Binding{
 	KeySpawnOrchestrator: key.NewBinding(
 		key.WithKeys("O"),
 		key.WithHelp("O", "spawn orchestrator"),
+	),
+	KeyRestore: key.NewBinding(
+		key.WithKeys("U"),
+		key.WithHelp("U", "restore archived"),
 	),
 	KeyInsert: key.NewBinding(
 		key.WithKeys("i"),
