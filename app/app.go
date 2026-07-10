@@ -16,8 +16,6 @@ import (
 	"github.com/yro7/boulez/ui"
 	"github.com/yro7/boulez/ui/overlay"
 	"os"
-	"os/exec"
-	"runtime"
 	"strings"
 	"sync"
 	"time"
@@ -187,14 +185,18 @@ type home struct {
 	landInFlight map[string]struct{}
 
 	// prevStatus tracks the last KERNEL-reported status per instance, used in
-	// reconcileFleet to detect Ready transitions for render-only side effects
-	// (clearing the TUI-only landed hint + desktop notification). This is
-	// legitimate view state — not the status de-noising hysteresis (that was
-	// the daemon's job and moved there): it only records what the authority
-	// last said so the viewer can react to a transition. A freshly-
+	// reconcileFleet to detect Ready transitions for the render-only side
+	// effect of clearing the TUI-only landed hint (the dimmed row +
+	// checkmark). This is legitimate view state — not the status de-noising
+	// hysteresis (that is the daemon's job): it only records what the
+	// authority last said so the viewer can react to a transition. A freshly-
 	// reconstructed view handle's inst.Status is unreliable for this because
 	// FromInstanceData → Start forces it to Running. Pruned in reconcileFleet
 	// of instances no longer in the kernel's snapshot.
+	//
+	// Desktop notification on Ready is NOT done here anymore: the daemon fires
+	// it directly (see daemon.notifyReadyTransition), so the ping works even
+	// when the TUI is closed and covers remote (SSH) instances too.
 	prevStatus map[string]session.Status
 
 	// previewCaptureInFlight is the single-flight guard for the async preview
@@ -1155,30 +1157,6 @@ func (m *home) handleError(err error) tea.Cmd {
 
 		return hideErrMsg{}
 	}
-}
-
-// notifyReady fires a desktop notification when an instance transitions to
-// Ready. Best-effort: failures are logged, never surfaced to the user, since a
-// missing notification must never break the TUI loop. Runs in a background
-// goroutine so the shell-out never blocks rendering.
-func (m *home) notifyReady(instance *session.Instance) {
-	title := fmt.Sprintf("boulez: %s ready", instance.Title)
-	body := fmt.Sprintf("Instance '%s' finished and is waiting for input.", instance.Title)
-	go func() {
-		var c *exec.Cmd
-		switch runtime.GOOS {
-		case "darwin":
-			c = exec.Command("osascript", "-e",
-				fmt.Sprintf("display notification %q with title %q", body, title))
-		case "linux":
-			c = exec.Command("notify-send", title, body)
-		default:
-			return // unsupported, silently skip
-		}
-		if err := c.Run(); err != nil {
-			log.WarningLog.Printf("notify ready failed for %s: %v", instance.Title, err)
-		}
-	}()
 }
 
 func (m *home) newPromptOverlay(repoPath string) *overlay.TextInputOverlay {
