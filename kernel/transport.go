@@ -201,6 +201,8 @@ func dispatch(k *Kernel, sess *ctlSession, req Request) Response {
 		return simpleByID(k, "resume", func(id string) error { return k.Resume(id) }, req.Params)
 	case "kill":
 		return simpleByID(k, "kill", func(id string) error { return k.Kill(id) }, req.Params)
+	case "archive":
+		return simpleByID(k, "archive", func(id string) error { return k.Archive(id) }, req.Params)
 	case "merge":
 		var p mergeParams
 		if err := json.Unmarshal(req.Params, &p); err != nil {

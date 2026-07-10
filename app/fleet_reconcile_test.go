@@ -24,9 +24,10 @@ type fakeFleetClient struct {
 	spawnID  string
 	spawnErr error
 
-	paused  []string
-	resumed []string
-	killed  []string
+	paused   []string
+	resumed  []string
+	killed   []string
+	archived []string
 }
 
 func (f *fakeFleetClient) ListInstances() ([]session.InstanceData, error) {
@@ -41,9 +42,10 @@ func (f *fakeFleetClient) Spawn(opts SpawnOptions) (string, error) {
 	return f.spawnID, nil
 }
 
-func (f *fakeFleetClient) Pause(id string) error  { f.paused = append(f.paused, id); return nil }
-func (f *fakeFleetClient) Resume(id string) error { f.resumed = append(f.resumed, id); return nil }
-func (f *fakeFleetClient) Kill(id string) error   { f.killed = append(f.killed, id); return nil }
+func (f *fakeFleetClient) Pause(id string) error    { f.paused = append(f.paused, id); return nil }
+func (f *fakeFleetClient) Resume(id string) error   { f.resumed = append(f.resumed, id); return nil }
+func (f *fakeFleetClient) Kill(id string) error     { f.killed = append(f.killed, id); return nil }
+func (f *fakeFleetClient) Archive(id string) error  { f.archived = append(f.archived, id); return nil }
 
 func newReconcileHome(t *testing.T, fleet fleetClient) *home {
 	t.Helper()

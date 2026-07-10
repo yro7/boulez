@@ -44,6 +44,9 @@ type fleetClient interface {
 	Pause(id string) error
 	Resume(id string) error
 	Kill(id string) error
+	// Archive soft-deletes an instance (kills tmux, keeps worktree+branch)
+	// so it can be restored within the retention window.
+	Archive(id string) error
 }
 
 // socketFleetClient is the production fleetClient backed by the daemon's
@@ -143,6 +146,11 @@ func (socketFleetClient) Resume(id string) error {
 
 func (socketFleetClient) Kill(id string) error {
 	_, err := callFleet("kill", map[string]interface{}{"id": id})
+	return err
+}
+
+func (socketFleetClient) Archive(id string) error {
+	_, err := callFleet("archive", map[string]interface{}{"id": id})
 	return err
 }
 

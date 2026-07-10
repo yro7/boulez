@@ -372,6 +372,34 @@ func (k *Kernel) Resume(id string) error {
 	return nil
 }
 
+// Archive soft-deletes an instance by ID: it kills the tmux session but
+// PRESERVES the git worktree and branch, marks the instance Archived with
+// the current time, and persists the record (kept in the fleet, NOT removed).
+// The instance becomes invisible to the normal fleet view and is restorable
+// (Restore) until ReapArchived truly destroys it once the retention window
+// expires. Mutating syscall — the soft-delete counterpart to Kill.
+//
+// Unlike Kill, the record is intentionally retained: the whole point is that
+// the work survives a premature delete for the retention window. A tmux close
+// error is surfaced to the caller but does NOT prevent the archive (the
+// instance is archived regardless; a half-closed tmux is reaped later).
+func (k *Kernel) Archive(id string) error {
+	k.mu.Lock()
+	inst, ok := k.findLocked(id)
+	storage := k.storage
+	autosave := k.autosave
+	k.mu.Unlock()
+	if !ok {
+		return ErrUnknownInstance{ID: id}
+	}
+	archiveErr := inst.Archive()
+	inst.SetArchivedAt(time.Now())
+	if autosave && storage != nil {
+		_ = k.persist(storage, inst)
+	}
+	return archiveErr
+}
+
 // Kill terminates an instance by ID and removes it from the fleet. Mutating.
 //
 // The record is ALWAYS removed from the in-memory fleet and persisted, even
