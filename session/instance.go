@@ -353,8 +353,12 @@ func FromInstanceData(data InstanceData) (*Instance, error) {
 		// An archived instance was soft-deleted: its tmux session is killed and
 		// must NOT be recreated on reload. The worktree + branch are preserved
 		// (started=true so the instance knows it has been set up); Restore
-		// recreates the tmux session on demand.
+		// recreates the tmux session on demand. A fresh tmuxSession handle is
+		// bound (host-aware, like Start does) so Restore has something to drive
+		// after a daemon restart — without it Restore hits "cannot restore: no
+		// tmux session handle" and an archived instance becomes un-restorable.
 		instance.started = true
+		instance.tmuxSession = tmux.NewTmuxSessionWithDeps(instance.SessionLabel(), instance.Program, h.Executor())
 	} else {
 		if err := instance.Start(false); err != nil {
 			return nil, err
