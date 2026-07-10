@@ -105,7 +105,7 @@ func TestDefaultConfig(t *testing.T) {
 		assert.NotNil(t, config)
 		assert.NotEmpty(t, config.DefaultProgram)
 		assert.False(t, config.AutoYes)
-		assert.False(t, config.NotifyOnReady)
+		assert.True(t, config.NotifyOnReady)
 		assert.Equal(t, 1000, config.DaemonPollInterval)
 		assert.Equal(t, 24, config.ArchiveRetentionHours, "default archive retention is 24h")
 		assert.NotEmpty(t, config.BranchPrefix)
