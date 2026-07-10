@@ -252,13 +252,16 @@ func (m *home) reconcileFleet(data []session.InstanceData) {
 			// k.UpdateStatus); the TUI only renders it.
 			inst.Status = d.Status
 			inst.AutoYes = d.AutoYes
-			// Render-only side effects of the Ready transition, formerly done in
-			// the metadataUpdateDoneMsg handler. The agent finished a turn after
-			// resuming work (Running → Ready): the displayed version no longer
-			// matches what was last landed, so clear the TUI-only landed hint
-			// (the dimmed row + checkmark disappears). Notify when configured.
-			// This is pure view state (the kernel's own Landed flag, set on Land,
-			// is untouched) — same split as before the refactor.
+			// Render-only side effect of the Ready transition: the agent
+			// finished a turn after resuming work (Running → Ready), so the
+			// displayed version no longer matches what was last landed — clear
+			// the TUI-only landed hint (the dimmed row + checkmark
+			// disappears). This is pure view state (the kernel's own Landed
+			// flag, set on Land, is untouched).
+			//
+			// Desktop notification on this transition is handled by the daemon
+			// (daemon.notifyReadyTransition), not here: the daemon detects the
+			// transition at its source and fires even when the TUI is closed.
 			//
 			// prev is compared against the last KERNEL-reported status
 			// (m.prevStatus), not inst.Status: a freshly-reconstructed view
@@ -267,9 +270,6 @@ func (m *home) reconcileFleet(data []session.InstanceData) {
 			// after reconstruction and would produce a spurious transition.
 			if last, ok := m.prevStatus[d.ID]; ok && last != session.Ready && d.Status == session.Ready {
 				inst.SetLanded(false)
-				if m.appConfig.NotifyOnReady {
-					m.notifyReady(inst)
-				}
 			}
 			m.prevStatus[d.ID] = d.Status
 			out = append(out, inst)

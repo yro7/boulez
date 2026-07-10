@@ -6,6 +6,7 @@ import (
 	"github.com/yro7/boulez/host"
 	"github.com/yro7/boulez/kernel"
 	"github.com/yro7/boulez/log"
+	"github.com/yro7/boulez/notify"
 	"github.com/yro7/boulez/program"
 	"github.com/yro7/boulez/protected"
 	"github.com/yro7/boulez/session"
@@ -128,6 +129,18 @@ func RunDaemon(cfg *config.Config) error {
 	// background so it can never gate the serve loop.
 	go k.ReapArchived(time.Duration(cfg.ArchiveRetentionHours) * time.Hour)
 
+	// The notifier delivers instance events (e.g. an agent finished a turn:
+	// Running → Ready) to the user's attention. It lives in the daemon — not
+	// the TUI — so the ping fires even when the TUI is closed, and covers
+	// remote (SSH) instances too (the daemon polls the remote tmux locally,
+	// so the transition is detected on the user's machine). Noop when
+	// cfg.NotifyOnReady is off keeps the poll-loop code path identical whether
+	// or not notifications are on — no nil check at the call site.
+	var notifier notify.Notifier = notify.Noop{}
+	if cfg.NotifyOnReady {
+		notifier = notify.Desktop{}
+	}
+
 	pollInterval := time.Duration(cfg.DaemonPollInterval) * time.Millisecond
 	// If we get an error for a session, it's likely that we'll keep getting the error. Log every 30 seconds.
 	everyN := log.NewEvery(60 * time.Second)
@@ -166,6 +179,15 @@ func RunDaemon(cfg *config.Config) error {
 				prev := instance.Status
 				stable := session.Stabilize(streaks, instance.GetID(), observed, updated, stableFor, prev)
 				k.UpdateStatus(instance.GetID(), stable)
+
+				// Notify on the Running→Ready transition: an agent finished a
+				// turn and is waiting for input. prev (before stabilization) vs
+				// stable (after) is the canonical detection point — the daemon
+				// already computes both to drive UpdateStatus, so the transition
+				// is detected exactly once here rather than re-derived by every
+				// consumer (the TUI used to re-diff snapshots for this, which
+				// meant no ping when the TUI was closed).
+				notifyReadyTransition(notifier, instance.GetID(), instance.Title, instance.Host().Name(), prev, stable)
 
 				// Prompt resolution. Only resolve prompts the agent's adapter knows
 				// how to dismiss (permissions/trust) and only when AutoYes is on: the
