@@ -34,6 +34,13 @@ const (
 	// is kept visible so the user can inspect/kill it, but it is not running
 	// and cannot be resumed or checked out — only killed. C4.4.
 	Dead
+	// Archived is the "soft delete" status: the user hit Ctrl+D, the tmux
+	// session is killed, but the worktree + branch + record are preserved
+	// for a retention window (default 24h) so the work can be recovered if
+	// the deletion was premature. Archived instances are hidden from the
+	// normal fleet view and reaped (truly destroyed) by ReapArchived once the
+	// retention expires. Restorable until reaped.
+	Archived
 )
 
 // String renders the Status for logging and for the wire (JSON consumers
@@ -50,6 +57,8 @@ func (s Status) String() string {
 		return "paused"
 	case Dead:
 		return "dead"
+	case Archived:
+		return "archived"
 	default:
 		return "unknown"
 	}
@@ -79,8 +88,10 @@ func (s *Status) UnmarshalJSON(data []byte) error {
 			*s = Paused
 		case "dead":
 			*s = Dead
+		case "archived":
+			*s = Archived
 		default:
-			return fmt.Errorf("invalid Status %q (want running|ready|loading|paused)", str)
+			return fmt.Errorf("invalid Status %q (want running|ready|loading|paused|dead|archived)", str)
 		}
 		return nil
 	}
@@ -90,7 +101,7 @@ func (s *Status) UnmarshalJSON(data []byte) error {
 	}
 	st := Status(n)
 	switch st {
-	case Running, Ready, Loading, Paused, Dead:
+	case Running, Ready, Loading, Paused, Dead, Archived:
 		*s = st
 		return nil
 	default:
@@ -236,6 +247,11 @@ type Instance struct {
 	// view-only and not persisted. Set true when the land Cmd is dispatched,
 	// cleared on landDoneMsg (success, conflict, or error).
 	landing bool
+	// archivedAt is the zero time while the instance is live; set to the
+	// archive time by the kernel's Archive syscall. Persisted in
+	// InstanceData.ArchivedAt so the retention survives a daemon restart.
+	// ReapArchived destroys the instance once now - archivedAt > retention.
+	archivedAt time.Time
 	// tmuxSession is the tmux session for the instance.
 	tmuxSession *tmux.TmuxSession
 	// gitWorktree is the worktree for the instance. Polymorphic: a Worker gets
@@ -248,20 +264,21 @@ type Instance struct {
 // ToInstanceData converts an Instance to its serializable form
 func (i *Instance) ToInstanceData() InstanceData {
 	data := InstanceData{
-		ID:        i.ID,
-		Title:     i.Title,
-		Path:      i.Path,
-		Branch:    i.Branch,
-		Status:    i.Status,
-		Kind:      i.kind,
-		Height:    i.Height,
-		Width:     i.Width,
-		CreatedAt: i.CreatedAt,
-		UpdatedAt: time.Now(),
-		Program:   i.Program,
-		Host:      i.host.Name(),
-		AutoYes:   i.AutoYes,
-		Landed:    i.landed,
+		ID:         i.ID,
+		Title:      i.Title,
+		Path:       i.Path,
+		Branch:     i.Branch,
+		Status:     i.Status,
+		Kind:       i.kind,
+		Height:     i.Height,
+		Width:      i.Width,
+		CreatedAt:  i.CreatedAt,
+		UpdatedAt:  time.Now(),
+		Program:    i.Program,
+		Host:       i.host.Name(),
+		AutoYes:    i.AutoYes,
+		Landed:     i.landed,
+		ArchivedAt: i.archivedAt,
 	}
 
 	// Only include worktree data if gitWorktree is initialized
@@ -302,20 +319,21 @@ func FromInstanceData(data InstanceData) (*Instance, error) {
 	}
 	h := host.Lookup(data.Host)
 	instance := &Instance{
-		ID:        data.ID,
-		Title:     data.Title,
-		Path:      data.Path,
-		Branch:    data.Branch,
-		Status:    data.Status,
-		kind:      data.Kind,
-		Height:    data.Height,
-		Width:     data.Width,
-		CreatedAt: data.CreatedAt,
-		UpdatedAt: data.UpdatedAt,
-		Program:   data.Program,
-		AutoYes:   data.AutoYes,
-		landed:    data.Landed,
-		host:      h,
+		ID:         data.ID,
+		Title:      data.Title,
+		Path:       data.Path,
+		Branch:     data.Branch,
+		Status:     data.Status,
+		kind:       data.Kind,
+		Height:     data.Height,
+		Width:      data.Width,
+		CreatedAt:  data.CreatedAt,
+		UpdatedAt:  data.UpdatedAt,
+		Program:    data.Program,
+		AutoYes:    data.AutoYes,
+		landed:     data.Landed,
+		archivedAt: data.ArchivedAt,
+		host:       h,
 	}
 	wt, err := restoreWorktree(data.Kind, data.ID, data.Worktree, h)
 	if err != nil {
@@ -331,6 +349,12 @@ func FromInstanceData(data InstanceData) (*Instance, error) {
 	if instance.Paused() {
 		instance.started = true
 		instance.tmuxSession = tmux.NewTmuxSession(instance.SessionLabel(), instance.Program)
+	} else if instance.Status == Archived {
+		// An archived instance was soft-deleted: its tmux session is killed and
+		// must NOT be recreated on reload. The worktree + branch are preserved
+		// (started=true so the instance knows it has been set up); Restore
+		// recreates the tmux session on demand.
+		instance.started = true
 	} else {
 		if err := instance.Start(false); err != nil {
 			return nil, err
@@ -484,6 +508,15 @@ func (i *Instance) Landing() bool { return i.landing }
 // SetLanding sets the TUI-only "landing" hint. Set true when the land Cmd is
 // dispatched, cleared on landDoneMsg (success, conflict, or error).
 func (i *Instance) SetLanding(on bool) { i.landing = on }
+
+// ArchivedAt returns the time the instance was archived (soft-deleted). The
+// zero time means the instance is not archived. Used by the kernel's
+// ReapArchived sweep to decide whether the retention window has expired.
+func (i *Instance) ArchivedAt() time.Time { return i.archivedAt }
+
+// SetArchivedAt records the archive time. Called by the kernel's Archive
+// syscall (and cleared by Restore). Persisted via ToInstanceData.
+func (i *Instance) SetArchivedAt(t time.Time) { i.archivedAt = t }
 
 // SetSelectedBranch sets the branch to use when starting the instance.
 func (i *Instance) SetSelectedBranch(branch string) {

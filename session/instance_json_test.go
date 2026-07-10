@@ -3,6 +3,7 @@ package session
 import (
 	"encoding/json"
 	"testing"
+	"time"
 
 	"github.com/stretchr/testify/assert"
 	"github.com/stretchr/testify/require"
@@ -63,6 +64,8 @@ func TestStatus_MarshalJSON_String(t *testing.T) {
 		{Ready, `"ready"`},
 		{Loading, `"loading"`},
 		{Paused, `"paused"`},
+		{Dead, `"dead"`},
+		{Archived, `"archived"`},
 	}
 	for _, c := range cases {
 		b, err := json.Marshal(c.s)
@@ -81,6 +84,8 @@ func TestStatus_UnmarshalJSON_AcceptsStringOrInt(t *testing.T) {
 		{`"ready"`, Ready},
 		{`"loading"`, Loading},
 		{`"paused"`, Paused},
+		{`"dead"`, Dead},
+		{`"archived"`, Archived},
 		{`0`, Running},
 		{`1`, Ready},
 		{`2`, Loading},
@@ -108,4 +113,21 @@ func TestKind_RoundTripInInstanceData(t *testing.T) {
 	require.NoError(t, json.Unmarshal(b, &back))
 	assert.Equal(t, KindOrchestrator, back.Kind)
 	assert.Equal(t, Paused, back.Status)
+}
+
+// TestArchived_RoundTripInInstanceData proves the soft-delete state survives a
+// daemon restart: an Archived instance with a set ArchivedAt serialises with
+// the string status and a non-zero timestamp, and deserialises losslessly.
+func TestArchived_RoundTripInInstanceData(t *testing.T) {
+	when := time.Date(2026, 7, 10, 12, 0, 0, 0, time.UTC)
+	orig := InstanceData{Title: "soft", Status: Archived, ArchivedAt: when}
+	b, err := json.Marshal(orig)
+	require.NoError(t, err)
+	assert.Contains(t, string(b), `"status":"archived"`)
+	assert.Contains(t, string(b), `"archived_at":"2026-07-10T12:00:00Z"`)
+
+	var back InstanceData
+	require.NoError(t, json.Unmarshal(b, &back))
+	assert.Equal(t, Archived, back.Status)
+	assert.True(t, back.ArchivedAt.Equal(when), "archived_at round-trips: got %v", back.ArchivedAt)
 }
