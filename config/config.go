@@ -86,6 +86,10 @@ type Config struct {
 	NotifyOnReady bool `json:"notify_on_ready"`
 	// DaemonPollInterval is the interval (ms) at which the daemon polls sessions for autoyes mode.
 	DaemonPollInterval int `json:"daemon_poll_interval"`
+	// ArchiveRetentionHours is how long a soft-deleted (Archived) instance is
+	// kept before ReapArchived truly destroys it. Default 24h: a grace window
+	// to recover a worktree if the deletion was premature.
+	ArchiveRetentionHours int `json:"archive_retention_hours"`
 	// BranchPrefix is the prefix used for git branches created by the application.
 	BranchPrefix string `json:"branch_prefix"`
 	// Profiles is a list of named program profiles.
@@ -151,6 +155,7 @@ func DefaultConfig() *Config {
 		DefaultProgram:     program,
 		AutoYes:            false,
 		DaemonPollInterval: 1000,
+		ArchiveRetentionHours: 24,
 		// BranchPrefix is a neutral, non-personal prefix for boulez-created branches.
 		// It must NOT derive from the OS username: branches get pushed to remotes
 		// (e.g. a public fork) where the name would leak the user's identity.
