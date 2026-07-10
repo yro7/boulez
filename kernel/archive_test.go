@@ -94,3 +94,68 @@ func storedInstances(t *testing.T, state *memStorage) []session.InstanceData {
 	require.NoError(t, json.Unmarshal(state.GetInstances(), &data))
 	return data
 }
+
+// TestKernel_ReapArchived_PreservesFreshDestroysExpired proves the retention
+// sweep: an Archived instance within the window is left alone; one past it is
+// truly destroyed (record removed, no longer in the fleet).
+func TestKernel_ReapArchived_PreservesFreshDestroysExpired(t *testing.T) {
+	k, _, _ := newStorageKernel(t)
+	freshID, err := k.Spawn(CallerContext{}, SpawnOptions{Repo: "/r", Title: "fresh", Program: "bash"})
+	require.NoError(t, err)
+	staleID, err := k.Spawn(CallerContext{}, SpawnOptions{Repo: "/r", Title: "stale", Program: "bash"})
+	require.NoError(t, err)
+
+	require.NoError(t, k.Archive(freshID))
+	require.NoError(t, k.Archive(staleID))
+
+	// Backdate the stale one past the retention window.
+	require.NoError(t, k.Archive(staleID))
+	backdateInstance(t, k, staleID, 25*time.Hour)
+	backdateInstance(t, k, freshID, 1*time.Hour)
+
+	k.ReapArchived(24 * time.Hour)
+
+	live := k.LiveInstances()
+	// Only the fresh archived instance remains; the stale one was reaped.
+	require.Len(t, live, 1)
+	assert.Equal(t, freshID, live[0].GetID(), "fresh archived instance preserved")
+	assert.Equal(t, "archived", live[0].Status.String())
+}
+
+// TestKernel_ReapArchived_ZeroRetentionReapsAll proves a zero retention reaps
+// every archived instance (used by tests / `boulez reset`-style flushes).
+func TestKernel_ReapArchived_ZeroRetentionReapsAll(t *testing.T) {
+	k, _, _ := newStorageKernel(t)
+	idA, err := k.Spawn(CallerContext{}, SpawnOptions{Repo: "/r", Title: "a", Program: "bash"})
+	require.NoError(t, err)
+	idB, err := k.Spawn(CallerContext{}, SpawnOptions{Repo: "/r", Title: "b", Program: "bash"})
+	require.NoError(t, err)
+	require.NoError(t, k.Archive(idA))
+	require.NoError(t, k.Archive(idB))
+
+	k.ReapArchived(0)
+
+	assert.Empty(t, k.LiveInstances(), "all archived instances reaped")
+}
+
+// TestKernel_ReapArchived_LeavesLiveInstancesAlone proves the sweep only
+// touches Archived instances — Running/Ready/Paused are never reaped.
+func TestKernel_ReapArchived_LeavesLiveInstancesAlone(t *testing.T) {
+	k, _, _ := newStorageKernel(t)
+	_, err := k.Spawn(CallerContext{}, SpawnOptions{Repo: "/r", Title: "live", Program: "bash"})
+	require.NoError(t, err)
+
+	k.ReapArchived(0)
+
+	assert.Len(t, k.LiveInstances(), 1, "live instance not reaped")
+}
+
+// backdateInstance sets the instance's ArchivedAt to now - age, by reaching
+// into the kernel's live instance pointer.
+func backdateInstance(t *testing.T, k *Kernel, id string, age time.Duration) {
+	t.Helper()
+	inst, err := k.InstanceByID(id)
+	require.NoError(t, err)
+	inst.SetArchivedAt(time.Now().Add(-age))
+}
+

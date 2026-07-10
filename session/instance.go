@@ -1009,6 +1009,26 @@ func (i *Instance) Resume() error {
 	return nil
 }
 
+// Restore recreates the tmux session for an Archived instance and returns it
+// to Ready, clearing the archive timestamp. The worktree and branch were
+// preserved by Archive, so unlike Resume there is no worktree setup to do —
+// only the tmux session needs recreating. Inverse of Archive.
+func (i *Instance) Restore() error {
+	if i.Status != Archived {
+		return fmt.Errorf("can only restore archived instances")
+	}
+	if i.tmuxSession == nil {
+		return fmt.Errorf("cannot restore: no tmux session handle")
+	}
+	// The tmux session was killed by Archive; recreate it in the worktree.
+	if err := i.tmuxSession.Start(i.gitWorktree.GetWorktreePath()); err != nil {
+		return fmt.Errorf("failed to start tmux session on restore: %w", err)
+	}
+	i.SetStatus(Ready)
+	i.SetArchivedAt(time.Time{})
+	return nil
+}
+
 // UpdateDiffStats updates the git diff statistics for this instance
 func (i *Instance) UpdateDiffStats() error {
 	if !i.started {
