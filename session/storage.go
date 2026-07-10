@@ -41,6 +41,13 @@ type InstanceData struct {
 	// Status/AutoYes), so the TUI's own Running→Ready clear is not fought by
 	// a fleet refresh.
 	Landed bool `json:"landed"`
+
+	// ArchivedAt is the time the instance was soft-deleted (archived) via the
+	// kernel's Archive syscall; the zero time means the instance is live.
+	// The daemon's ReapArchived sweep truly destroys the instance once
+	// now - ArchivedAt > retention (default 24h). Persisted so the retention
+	// survives a daemon restart.
+	ArchivedAt time.Time `json:"archived_at"`
 }
 
 // GitWorktreeData represents the serializable data of a GitWorktree
