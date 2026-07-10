@@ -681,43 +681,28 @@ func (m *home) handleKeyPress(msg tea.KeyMsg) (mod tea.Model, cmd tea.Cmd) {
 			return m, nil
 		}
 
-		// Create the kill action as a tea.Cmd
-		killAction := func() tea.Msg {
-			// Get worktree and check if branch is checked out
-			worktree, err := selected.GetGitWorktree()
-			if err != nil {
-				return err
-			}
-
-			checkedOut, err := worktree.IsBranchCheckedOut()
-			if err != nil {
-				return err
-			}
-
-			if checkedOut {
-				return fmt.Errorf("instance %s is currently checked out", selected.Title)
-			}
-
+		// Create the archive action as a tea.Cmd (soft delete: kills tmux, keeps
+		// worktree+branch for the retention window so the work is recoverable).
+		archiveAction := func() tea.Msg {
 			// Clean up terminal session for this instance
 			m.tabbedWindow.CleanupTerminalForInstance(selected.Title)
 
-			// Route kill through the kernel (C3.4): the kernel is the single
-			// writer, so the kill (and the remove from the kernel's fleet) takes
-			// effect on the authoritative copy. The TUI's view is reconciled by
-			// the post-mutation fleet refresh, which surfaces the removal.
-			if err := m.resolveFleet().Kill(selected.GetID()); err != nil {
+			// Route through the kernel (single writer): Archive kills the tmux
+			// session but preserves the worktree+branch, and keeps the record
+			// in the fleet as Archived. The TUI hides Archived instances from
+			// the normal view (reconcileFleet filters them), so the user sees a
+			// delete; ReapArchived truly destroys it after the retention window.
+			if err := m.resolveFleet().Archive(selected.GetID()); err != nil {
 				return err
 			}
-			// Re-read the fleet so the killed instance drops from the view.
-			// Best-effort: a refresh failure only means the view is briefly
-			// stale (the next fleet tick reconciles).
+			// Re-read the fleet so the archived instance drops from the view.
 			_ = m.refreshFleetFromKernel()
 			return instanceChangedMsg{}
 		}
 
 		// Show confirmation modal
-		message := fmt.Sprintf("[!] Kill session '%s'?", selected.Title)
-		return m, m.confirmAction(message, killAction)
+		message := fmt.Sprintf("[!] Delete session '%s'? (archived %dh)", selected.Title, m.archiveRetentionHours())
+		return m, m.confirmAction(message, archiveAction)
 	case keys.KeySubmit:
 		selected := m.list.GetSelectedInstance()
 		if selected == nil || selected.Status == session.Loading {
