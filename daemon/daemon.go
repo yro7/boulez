@@ -123,6 +123,11 @@ func RunDaemon(cfg *config.Config) error {
 	// system. It must never gate the serve loop.
 	go k.ReconcileLiveness()
 
+	// Reap soft-deleted instances whose retention window has expired, once at
+	// boot, then on each poll tick. Like ReconcileLiveness, this runs in the
+	// background so it can never gate the serve loop.
+	go k.ReapArchived(time.Duration(cfg.ArchiveRetentionHours) * time.Hour)
+
 	pollInterval := time.Duration(cfg.DaemonPollInterval) * time.Millisecond
 	// If we get an error for a session, it's likely that we'll keep getting the error. Log every 30 seconds.
 	everyN := log.NewEvery(60 * time.Second)
@@ -195,6 +200,10 @@ func RunDaemon(cfg *config.Config) error {
 					delete(streaks, id)
 				}
 			}
+
+			// Reap soft-deleted instances past their retention window (best-effort;
+			// errors are logged inside ReapArchived, not returned).
+			k.ReapArchived(time.Duration(cfg.ArchiveRetentionHours) * time.Hour)
 
 			// Handle stop before ticker.
 			select {
