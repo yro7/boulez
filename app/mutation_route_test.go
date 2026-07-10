@@ -83,11 +83,11 @@ func TestPause_RoutesThroughKernel(t *testing.T) {
 	assert.Equal(t, inst.GetID(), fleet.paused[0])
 }
 
-// TestKill_GuardShortCircuitsOnNoWorktree proves the kill action runs (the
-// routing is wired) but short-circuits at the GetGitWorktree pre-flight when
-// the instance has no started worktree — no syscall is issued. This is the
-// defense-in-depth guard living in the TUI before the kernel syscall.
-func TestKill_GuardShortCircuitsOnNoWorktree(t *testing.T) {
+// TestKill_RoutesArchiveThroughKernel proves the D key issues an Archive
+// syscall (soft delete) on the selected instance's ID, NOT a Kill. The user
+// sees a delete, but the worktree+branch are preserved for the retention
+// window.
+func TestKill_RoutesArchiveThroughKernel(t *testing.T) {
 	fleet := &fakeFleetClient{}
 	inst := newReadyInstance(t, "w1")
 	h := newMutationHome(t, fleet, inst)
@@ -96,9 +96,25 @@ func TestKill_GuardShortCircuitsOnNoWorktree(t *testing.T) {
 	_, _ = h.handleKeyPress(tea.KeyMsg{Type: tea.KeyRunes, Runes: []rune("D")})
 	require.Equal(t, stateConfirm, h.state, "D opens the confirmation modal")
 	require.NotNil(t, h.confirmationOverlay)
-	// Confirm runs the killAction; with no started worktree it errors at
-	// GetGitWorktree before reaching the syscall.
-	h.confirmationOverlay.OnConfirm()
+	cmd := h.confirmationOverlay.OnConfirm()
+	require.NotNil(t, cmd)
+	_ = cmd()
 
-	assert.Empty(t, fleet.killed, "kill guard short-circuits before the syscall")
+	require.Len(t, fleet.archived, 1, "archive routed through the kernel")
+	assert.Equal(t, inst.GetID(), fleet.archived[0])
+	assert.Empty(t, fleet.killed, "hard kill not triggered")
+}
+
+// TestKill_ConfirmationMessageShowsRetention proves the confirmation modal
+// mentions the retention window so the user knows the delete is soft.
+func TestKill_ConfirmationMessageShowsRetention(t *testing.T) {
+	fleet := &fakeFleetClient{}
+	inst := newReadyInstance(t, "w1")
+	h := newMutationHome(t, fleet, inst)
+	h.keySent = true
+
+	_, _ = h.handleKeyPress(tea.KeyMsg{Type: tea.KeyRunes, Runes: []rune("D")})
+	require.NotNil(t, h.confirmationOverlay)
+	assert.Contains(t, h.confirmationOverlay.Render(), "archived",
+		"confirmation mentions archival, not hard kill")
 }

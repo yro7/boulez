@@ -298,3 +298,26 @@ func TestReconcileFleet_UntrackedLocalInstanceIsDropped(t *testing.T) {
 type assertErr string
 
 func (e assertErr) Error() string { return string(e) }
+
+// TestReconcileFleet_HidesArchivedInstances proves a soft-deleted (Archived)
+// instance is filtered out of the normal fleet view — the user hit Ctrl+D,
+// so it should disappear from the list. The instance remains in the kernel
+// (restorable until ReapArchived) but is not shown.
+func TestReconcileFleet_HidesArchivedInstances(t *testing.T) {
+	fleet := &fakeFleetClient{
+		list: []session.InstanceData{
+			instData("w1", "w1", session.Running, session.KindWorker),
+			instData("w2", "w2", session.Archived, session.KindWorker),
+			instData("w3", "w3", session.Ready, session.KindWorker),
+		},
+	}
+	h := newReconcileHome(t, fleet)
+	require.NoError(t, h.refreshFleetFromKernel())
+
+	got := h.list.GetInstances()
+	require.Len(t, got, 2, "archived instance hidden from the view")
+	for _, inst := range got {
+		assert.NotEqual(t, session.Archived, inst.Status,
+			"no archived instance in the list")
+	}
+}

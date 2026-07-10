@@ -164,6 +164,15 @@ func (socketFleetClient) Restore(id string) error {
 // Compile-time check that socketFleetClient satisfies the seam.
 var _ fleetClient = socketFleetClient{}
 
+// archiveRetentionHours returns the configured soft-delete retention
+// window (default 24h), used in the Ctrl+D confirmation message.
+func (m *home) archiveRetentionHours() int {
+	if m.appConfig == nil || m.appConfig.ArchiveRetentionHours <= 0 {
+		return 24
+	}
+	return m.appConfig.ArchiveRetentionHours
+}
+
 // resolveFleet returns the home's fleet client, defaulting to the socket-backed
 // production client when nil (so a bare &home{} test construct still works).
 // Mirrors the landCaller lazy-default pattern.
@@ -228,6 +237,13 @@ func (m *home) reconcileFleet(data []session.InstanceData) {
 	seen := make(map[string]struct{}, len(data))
 	out := make([]*session.Instance, 0, len(data))
 	for _, d := range data {
+		// Archived instances are hidden from the normal fleet view: the user
+		// hit Ctrl+D (soft delete), so the instance should disappear from the
+		// list. They remain in the kernel and are restorable (from the archived
+		// view) until ReapArchived truly destroys them.
+		if d.Status == session.Archived {
+			continue
+		}
 		seen[d.ID] = struct{}{}
 		if inst, ok := byID[d.ID]; ok {
 			// Reuse the existing view handle: keep its tmux/worktree binding,
