@@ -723,6 +723,26 @@ func (i *Instance) Kill() error {
 	return i.combineErrors(errs)
 }
 
+// Archive kills the tmux session but PRESERVES the git worktree and branch.
+// It is the soft-delete half of Kill: the instance becomes invisible to the
+// normal fleet view and restorable for a retention window, while its work is
+// kept on disk. The caller (the kernel's Archive syscall) records the
+// archive time and persists the record so the retention survives a restart.
+// Does not touch the worktree or branch — that is ReapArchived's job once the
+// retention expires.
+func (i *Instance) Archive() error {
+	if !i.started {
+		return nil
+	}
+	if i.tmuxSession != nil {
+		if err := i.tmuxSession.Close(); err != nil {
+			return fmt.Errorf("failed to close tmux session: %w", err)
+		}
+	}
+	i.SetStatus(Archived)
+	return nil
+}
+
 // combineErrors combines multiple errors into a single error
 func (i *Instance) combineErrors(errs []error) error {
 	if len(errs) == 0 {
