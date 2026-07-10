@@ -159,3 +159,25 @@ func backdateInstance(t *testing.T, k *Kernel, id string, age time.Duration) {
 	inst.SetArchivedAt(time.Now().Add(-age))
 }
 
+// TestReconcileLiveness_DoesNotDemoteArchived is the regression: after Archive
+// kills the tmux session, the daemon's ReconcileLiveness poll (which runs every
+// second) must NOT demote the instance to Dead. An Archived instance
+// intentionally has no live tmux session — that is the whole point of the soft
+// delete. Before the fix, ReconcileLiveness saw the dead tmux and set the
+// status to Dead, so the user's U (restore) found no Archived instances.
+func TestReconcileLiveness_DoesNotDemoteArchived(t *testing.T) {
+	k, _, _ := newStorageKernel(t)
+	id, err := k.Spawn(CallerContext{}, SpawnOptions{Repo: "/r", Title: "soft", Program: "bash"})
+	require.NoError(t, err)
+	require.NoError(t, k.Archive(id))
+	require.Equal(t, "archived", k.LiveInstances()[0].Status.String())
+
+	// This is what the daemon calls every tick.
+	k.ReconcileLiveness()
+
+	inst, err := k.InstanceByID(id)
+	require.NoError(t, err)
+	assert.Equal(t, "archived", inst.Status.String(),
+		"ReconcileLiveness must not demote an Archived instance to Dead")
+}
+

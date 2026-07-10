@@ -174,7 +174,7 @@ func (k *Kernel) ReconcileLiveness() {
 	// before shelling out to tmux (DoesSessionExist blocks on a subprocess).
 	candidates := make([]*session.Instance, 0, len(instances))
 	for _, inst := range instances {
-		if !inst.Started() || inst.Paused() || inst.Status == session.Dead {
+		if !inst.Started() || inst.Paused() || inst.Status == session.Dead || inst.Status == session.Archived {
 			continue
 		}
 		candidates = append(candidates, inst)
