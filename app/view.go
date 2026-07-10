@@ -59,6 +59,12 @@ func (m *home) View() string {
 			return mainView
 		}
 		return overlay.PlaceOverlay(0, 0, m.presetSelector.Render(), mainView, true, true)
+	} else if m.state == stateArchiveSelect {
+		if m.archiveSelector == nil {
+			log.ErrorLog.Printf("archive selector is nil")
+			return mainView
+		}
+		return overlay.PlaceOverlay(0, 0, m.archiveSelector.Render(), mainView, true, true)
 	}
 
 	return mainView

@@ -71,6 +71,11 @@ const (
 	// completion, multi-line, IME) is the authority. The PreviewPane only
 	// renders a `-- INSERT --` banner.
 	stateInsert
+	// stateArchiveSelect is the state when the user is browsing soft-deleted
+	// (Archived) instances to restore one (KeyRestore / U). The overlay lists
+	// archived instances still within their retention window with a countdown
+	// until ReapArchived destroys them.
+	stateArchiveSelect
 )
 
 type home struct {
@@ -139,6 +144,10 @@ type home struct {
 	// repo picker). The chosen host is stored in pendingHost and applied to
 	// the instance in startNewInstance.
 	hostSelector *overlay.HostSelector
+	// archiveSelector displays the soft-deleted (Archived) instances picker
+	// (KeyRestore / U), letting the user restore one before ReapArchived
+	// destroys it. Backed by the shared ListSelector.
+	archiveSelector *overlay.ArchiveSelector
 	// pendingHost is the host chosen in the host selector, carried into the
 	// repo selector and finally into the instance.
 	pendingHost host.Host
@@ -304,6 +313,9 @@ func (m *home) updateHandleWindowSizeEvent(msg tea.WindowSizeMsg) {
 	}
 	if m.presetSelector != nil {
 		m.presetSelector.SetWidth(int(float32(msg.Width) * 0.6))
+	}
+	if m.archiveSelector != nil {
+		m.archiveSelector.SetWidth(int(float32(msg.Width) * 0.6))
 	}
 
 	previewWidth, previewHeight := m.tabbedWindow.GetPreviewSize()
@@ -536,7 +548,7 @@ func (m *home) handleMenuHighlighting(msg tea.KeyMsg) (cmd tea.Cmd, returnEarly 
 		m.keySent = false
 		return nil, false
 	}
-	if m.state == statePrompt || m.state == stateHelp || m.state == stateConfirm || m.state == stateRepoSelect || m.state == stateHostSelect || m.state == statePresetSelect || m.state == stateInsert {
+	if m.state == statePrompt || m.state == stateHelp || m.state == stateConfirm || m.state == stateRepoSelect || m.state == stateHostSelect || m.state == statePresetSelect || m.state == stateInsert || m.state == stateArchiveSelect {
 		return nil, false
 	}
 	// If it's in the global keymap, we should try to highlight it.
@@ -583,6 +595,10 @@ func (m *home) handleKeyPress(msg tea.KeyMsg) (mod tea.Model, cmd tea.Cmd) {
 
 	if m.state == stateRepoSelect {
 		return m.handleRepoSelectState(msg)
+	}
+
+	if m.state == stateArchiveSelect {
+		return m.handleArchiveSelectState(msg)
 	}
 
 	if m.state == stateNew {
@@ -703,6 +719,8 @@ func (m *home) handleKeyPress(msg tea.KeyMsg) (mod tea.Model, cmd tea.Cmd) {
 		// Show confirmation modal
 		message := fmt.Sprintf("[!] Delete session '%s'? (archived %dh)", selected.Title, m.archiveRetentionHours())
 		return m, m.confirmAction(message, archiveAction)
+	case keys.KeyRestore:
+		return m, m.openArchiveSelector()
 	case keys.KeySubmit:
 		selected := m.list.GetSelectedInstance()
 		if selected == nil || selected.Status == session.Loading {
