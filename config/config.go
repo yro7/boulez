@@ -82,7 +82,10 @@ type Config struct {
 	// AutoYes is a flag to automatically accept all prompts.
 	AutoYes bool `json:"auto_yes"`
 	// NotifyOnReady fires a desktop notification when an instance finishes a
-	// turn and becomes idle (Ready). Off by default to stay unobtrusive.
+	// turn and becomes idle (Ready). On by default: the whole point of
+	// spawning background agents is knowing when they finish, and a desktop
+	// notification is unobtrusive enough to warrant opt-out rather than
+	// opt-in.
 	NotifyOnReady bool `json:"notify_on_ready"`
 	// DaemonPollInterval is the interval (ms) at which the daemon polls sessions for autoyes mode.
 	DaemonPollInterval int `json:"daemon_poll_interval"`
@@ -154,6 +157,7 @@ func DefaultConfig() *Config {
 	return &Config{
 		DefaultProgram:     program,
 		AutoYes:            false,
+		NotifyOnReady:      true,
 		DaemonPollInterval: 1000,
 		ArchiveRetentionHours: 24,
 		// BranchPrefix is a neutral, non-personal prefix for boulez-created branches.
