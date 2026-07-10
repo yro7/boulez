@@ -316,10 +316,27 @@ func (k *Kernel) SendPrompt(id, prompt string) error {
 // real transition avoids a disk write per poll tick for an idle instance.
 // Best-effort persistence: a save failure is logged, not returned, matching
 // the other mutating syscalls.
+//
+// An Archived instance is never moved by the status-authority path: Archived
+// is a soft-deleted state exited only by the Restore syscall (which sets
+// Ready directly) or reaped by ReapArchived (Kill). The daemon's poll loop
+// skips Archived instances, but a journaling adapter (Pi) leaves its .jsonl
+// journal on disk after Archive kills the tmux session, so a stray probe would
+// Detect "Ready" from the stale journal and flip Archived → Ready here —
+// resurrecting the instance in the view with no live tmux session (the
+// auto-repop + "error capturing pane content" regression). This guard is the
+// defense-in-depth: even if a future caller forgets to skip Archived, the
+// status cannot flip via the steady-state path.
 func (k *Kernel) UpdateStatus(id string, status session.Status) {
 	k.mu.Lock()
 	inst, ok := k.findLocked(id)
 	if !ok {
+		k.mu.Unlock()
+		return
+	}
+	if inst.Status == session.Archived {
+		// Only Restore/ReapArchived touch an Archived instance; the
+		// steady-state observation path must not.
 		k.mu.Unlock()
 		return
 	}

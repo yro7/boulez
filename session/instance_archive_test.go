@@ -5,6 +5,7 @@ import (
 	"strings"
 	"sync/atomic"
 	"testing"
+	"time"
 
 	"github.com/stretchr/testify/assert"
 	"github.com/stretchr/testify/require"
@@ -64,4 +65,56 @@ func TestInstance_Archive_KillsTmuxKeepsWorktree(t *testing.T) {
 
 	assert.Equal(t, int32(1), atomic.LoadInt32(&kills), "kill-session invoked once")
 	assert.Equal(t, Archived, inst.Status, "status is Archived")
+}
+
+// TestFromInstanceData_ArchivedBindsTmuxHandle is the regression test for the
+// daemon-restart half of the restore bug. After a daemon restart, an Archived
+// instance is rebuilt via FromInstanceData. Previously the Archived branch set
+// started=true but left tmuxSession nil, so Restore hit "cannot restore: no
+// tmux session handle" — an archived instance became permanently un-restorable
+// across a restart. The Archived branch must bind a fresh tmuxSession handle
+// (like the Paused branch) so Restore can recreate the session on demand.
+// Asserting the unexported field is honest here: the contract is precisely "a
+// handle is bound", observed in-package to avoid shelling out to tmux.
+func TestFromInstanceData_ArchivedBindsTmuxHandle(t *testing.T) {
+	data := InstanceData{
+		ID:     "arch-1",
+		Title:  "soft",
+		Status: Archived,
+		Kind:   KindWorker,
+		Worktree: GitWorktreeData{
+			RepoPath:     "/repo",
+			WorktreePath: "/wt",
+			SessionName:  "soft-aaaaaaaa",
+			BranchName:   "feat",
+		},
+		Program:    "bash",
+		ArchivedAt: time.Now().Add(-1 * time.Hour),
+	}
+	inst, err := FromInstanceData(data)
+	require.NoError(t, err)
+	assert.Equal(t, Archived, inst.Status, "status preserved")
+	assert.True(t, inst.Started(), "started so Restore knows the worktree is set up")
+	require.NotNil(t, inst.tmuxSession, "Archived instance must have a tmux handle so Restore works after a daemon restart")
+}
+
+// TestInstance_Restore_RequiresArchived proves Restore's status guard: only
+// an Archived instance can be restored. Documents the invariant the kernel's
+// UpdateStatus guard relies on — Archived is exited only via Restore (which
+// sets Ready directly), never via the steady-state status path.
+func TestInstance_Restore_RequiresArchived(t *testing.T) {
+	mockExec := cmd_test.MockCmdExec{
+		RunFunc:    func(c *exec.Cmd) error { return nil },
+		OutputFunc: func(c *exec.Cmd) ([]byte, error) { return []byte{}, nil },
+	}
+	inst, err := NewInstance(InstanceOptions{Title: "soft", Path: "/repo", Kind: KindWorker})
+	require.NoError(t, err)
+	inst.gitWorktree = archiveFakeWorktree{}
+	inst.started = true
+	inst.SetTmuxSession(tmux.NewTmuxSessionWithDeps("soft", "bash", mockExec))
+	inst.SetStatus(Running) // not Archived
+
+	err = inst.Restore()
+	require.Error(t, err)
+	assert.Contains(t, err.Error(), "can only restore archived instances")
 }

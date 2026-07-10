@@ -75,3 +75,33 @@ func TestKernel_UpdateStatus_NoOpWhenUnknownID(t *testing.T) {
 
 	assert.NotPanics(t, func() { k.UpdateStatus("does-not-exist", session.Ready) })
 }
+
+// TestKernel_UpdateStatus_DoesNotFlipArchived is the regression test for the
+// "archived instance repops after ~10s" bug. Archive kills the tmux session
+// but, for a journaling adapter (Pi), leaves the .jsonl journal on disk; the
+// daemon's poll loop would Detect "Ready" from the stale journal and call
+// UpdateStatus(id, Ready), flipping Archived → Ready without a live tmux
+// session — so the instance reappeared in the view and its preview errored
+// ("error capturing pane content"). Archived is exited only by Restore
+// (SetStatus directly) or ReapArchived (Kill); the steady-state observation
+// path must never move it.
+func TestKernel_UpdateStatus_DoesNotFlipArchived(t *testing.T) {
+	k, _, state := newStorageKernel(t)
+
+	id, err := k.Spawn(CallerContext{}, SpawnOptions{
+		Repo: "/r", Title: "soft", Program: "pi",
+	})
+	require.NoError(t, err)
+	require.NoError(t, k.Archive(id))
+	require.Equal(t, session.Archived, k.LiveInstances()[0].Status)
+
+	// Simulate the poll loop's spurious probe: a stale journal yields Ready.
+	k.UpdateStatus(id, session.Ready)
+
+	inst, err := k.GetInstance(id)
+	require.NoError(t, err)
+	assert.Equal(t, session.Archived, inst.Status,
+		"UpdateStatus must not resurrect an Archived instance")
+	assert.Equal(t, session.Archived, storedStatusByTitle(t, state)["soft"],
+		"persisted status stays Archived (no resurrection on restart)")
+}
