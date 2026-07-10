@@ -160,8 +160,16 @@ func RunDaemon(cfg *config.Config) error {
 			for _, instance := range live {
 				// We only store started instances, but check anyway. A Paused
 				// instance has no live tmux session (Pause kills it), so probing it
-				// would error; skip it entirely.
-				if !instance.Started() || instance.Paused() {
+				// would error; skip it entirely. An Archived instance is the same
+				// situation but worse for journaling adapters (Pi): its .jsonl
+				// journal file survives on disk after Archive kills the tmux
+				// session, so HasUpdated reads the stale journal, Detect sees the
+				// last stopReason (Ready), and Stabilize flips Archived -> Ready -
+				// resurrecting the instance in the view without a live tmux session
+				// (the auto-repop + "error capturing pane content" regression). Skip
+				// Archived instances entirely: only Restore (which recreates the
+				// tmux session) returns them to a probeable status.
+				if !instance.Started() || instance.Paused() || instance.Status == session.Archived {
 					continue
 				}
 				seen[instance.GetID()] = struct{}{}
