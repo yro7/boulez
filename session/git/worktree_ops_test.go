@@ -125,6 +125,57 @@ func anyCmdContains(cmds []string, needle string) bool {
 	return false
 }
 
+// TestSetup_InitializesSubmodules proves Setup initializes git submodules
+// recursively in the worktree: `git worktree add` alone leaves submodule
+// directories empty, so without initSubmodules an agent working in the
+// worktree could not read or modify submodule files.
+func TestSetup_InitializesSubmodules(t *testing.T) {
+	tempHome := t.TempDir()
+	originalHome := os.Getenv("HOME")
+	require.NoError(t, os.Setenv("HOME", tempHome))
+	defer func() { _ = os.Setenv("HOME", originalHome) }()
+
+	// Newer git blocks the file:// transport used by local submodules
+	// (CVE-2022-39253). Allow it for this test only — the config propagates
+	// to the clone subprocess git spawns during submodule add/update.
+	require.NoError(t, os.Setenv("GIT_CONFIG_COUNT", "1"))
+	require.NoError(t, os.Setenv("GIT_CONFIG_KEY_0", "protocol.file.allow"))
+	require.NoError(t, os.Setenv("GIT_CONFIG_VALUE_0", "always"))
+	defer func() {
+		_ = os.Unsetenv("GIT_CONFIG_COUNT")
+		_ = os.Unsetenv("GIT_CONFIG_KEY_0")
+		_ = os.Unsetenv("GIT_CONFIG_VALUE_0")
+	}()
+
+	// A submodule repo with one committed file.
+	subRepo := filepath.Join(t.TempDir(), "sub")
+	mustRunGit(t, "", "init", subRepo)
+	mustRunGit(t, subRepo, "config", "user.name", "T")
+	mustRunGit(t, subRepo, "config", "user.email", "t@e.com")
+	require.NoError(t, os.WriteFile(filepath.Join(subRepo, "sub.txt"), []byte("sub-content\n"), 0o644))
+	mustRunGit(t, subRepo, "add", "sub.txt")
+	mustRunGit(t, subRepo, "commit", "-m", "sub init")
+
+	// Main repo that embeds the submodule at vendor/sub.
+	repoPath := filepath.Join(t.TempDir(), "repo")
+	mustRunGit(t, "", "init", repoPath)
+	mustRunGit(t, repoPath, "config", "user.name", "T")
+	mustRunGit(t, repoPath, "config", "user.email", "t@e.com")
+	mustRunGit(t, repoPath, "submodule", "add", subRepo, "vendor/sub")
+	mustRunGit(t, repoPath, "commit", "-m", "add submodule")
+
+	g, _, err := NewGitWorktreeWithDeps(repoPath, "sess", cmd.MakeExecutor(), fs.LocalFS{}, filepath.Join(t.TempDir(), "worktrees"))
+	require.NoError(t, err)
+	require.NoError(t, g.Setup())
+
+	// The submodule file must be present in the worktree — git worktree add
+	// alone would leave vendor/sub empty.
+	subFile := filepath.Join(g.GetWorktreePath(), "vendor", "sub", "sub.txt")
+	data, err := os.ReadFile(subFile)
+	require.NoError(t, err, "submodule must be initialized in the worktree")
+	assert.Equal(t, "sub-content\n", string(data))
+}
+
 // TestCleanupWorktrees_MultiRepoDeletesBranchFromEachRepo is the regression
 // test for dette #1: the old CleanupWorktrees ran `git worktree list` and
 // `git branch -D` WITHOUT -C, operating on whatever repo was in the cwd — a
