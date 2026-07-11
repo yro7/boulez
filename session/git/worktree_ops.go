@@ -24,15 +24,24 @@ func (g *GitWorktree) Setup() error {
 	// If this worktree uses a pre-existing branch, always set up from that branch
 	// (it may exist locally or only on the remote).
 	if g.isExistingBranch {
-		return g.setupFromExistingBranch()
+		if err := g.setupFromExistingBranch(); err != nil {
+			return err
+		}
+		return g.initSubmodules()
 	}
 
 	// Check if branch exists using git CLI (much faster than go-git PlainOpen)
 	_, err := g.runGitCommand(g.repoPath, "show-ref", "--verify", fmt.Sprintf("refs/heads/%s", g.branchName))
 	if err == nil {
-		return g.setupFromExistingBranch()
+		if err := g.setupFromExistingBranch(); err != nil {
+			return err
+		}
+		return g.initSubmodules()
 	}
-	return g.setupNewWorktree()
+	if err := g.setupNewWorktree(); err != nil {
+		return err
+	}
+	return g.initSubmodules()
 }
 
 // setupFromExistingBranch creates a worktree from an existing branch
@@ -97,6 +106,17 @@ func (g *GitWorktree) setupNewWorktree() error {
 		return fmt.Errorf("failed to create worktree from commit %s: %w", headCommit, err)
 	}
 
+	return nil
+}
+
+// initSubmodules initializes the worktree's git submodules recursively so an
+// agent working in the worktree can read and modify submodule files. Runs in
+// the worktree path via the injected executor, so it lands on the right host
+// (local or SSH). A repo without submodules is a no-op (git exits 0).
+func (g *GitWorktree) initSubmodules() error {
+	if _, err := g.runGitCommand(g.worktreePath, "submodule", "update", "--init", "--recursive"); err != nil {
+		return fmt.Errorf("failed to initialize submodules in worktree %s: %w", g.worktreePath, err)
+	}
 	return nil
 }
 
